@@ -607,12 +607,13 @@ private fun ChannelBrowser(
     onOpenSettings: (Int) -> Unit
 ) {
     val allGroup = "All channels"
-    var isSidebarExpanded by remember { mutableStateOf(true) }
+    var isSidebarExpanded by remember { mutableStateOf(false) }
     var selectedGroup by remember(playlist) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
     fun selectChannel(channel: PlaylistChannel) {
         selectedChannel = channel
+        isSidebarExpanded = false
     }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(epgGuide) {
@@ -715,11 +716,13 @@ private fun ChannelBrowser(
                     item(key = "group_all_channels") {
                         GroupItem(allGroup, playlist.channels.size, selectedGroup == allGroup) {
                             selectedGroup = allGroup
+                            isSidebarExpanded = false
                         }
                     }
                     items(playlist.groups, key = { it }) { group ->
                         GroupItem(group, groupCounts[group] ?: 0, selectedGroup == group) {
                             selectedGroup = group
+                            isSidebarExpanded = false
                         }
                     }
                 }
