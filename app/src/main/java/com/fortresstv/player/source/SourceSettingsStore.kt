@@ -131,6 +131,12 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putInt("epg_time_shift_hours", hours).apply()
     }
 
+    fun getLanguage(): String = preferences.getString("app_language", "en") ?: "en"
+
+    fun setLanguage(lang: String) {
+        preferences.edit().putString("app_language", lang).apply()
+    }
+
     private fun lastLegacyPlaylistUpdate(): Long = preferences.getLong("playlist_last_update", 0L)
 
     private fun saveSource(prefix: String, source: ContentSource) {
