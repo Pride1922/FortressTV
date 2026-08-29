@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,15 +39,19 @@ import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.playlist.searchChannels
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.XmlTvParser
+import com.fortresstv.player.epg.snapshot
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceReader
 import com.fortresstv.player.source.SourceSettingsStore
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.util.zip.GZIPInputStream
+import java.time.Instant
+import coil.compose.AsyncImage
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -329,6 +334,13 @@ private fun ChannelBrowser(
     var selectedGroup by remember(playlist) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
+    var scheduleNow by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(epgGuide) {
+        while (true) {
+            scheduleNow = Instant.now()
+            delay(60_000)
+        }
+    }
     val channelsInGroup = if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
     val visibleChannels = channelsInGroup.searchChannels(searchQuery)
 
@@ -400,6 +412,7 @@ private fun ChannelBrowser(
                         ChannelRow(
                             channel = channel,
                             epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                            nowPlaying = epgGuide?.snapshot(channel.tvgId, scheduleNow)?.current?.title,
                             selected = selectedChannel == channel,
                             onClick = { selectedChannel = channel }
                         )
@@ -414,7 +427,7 @@ private fun ChannelBrowser(
                 }
                 selectedChannel?.let { channel ->
                     Spacer(Modifier.width(16.dp))
-                    PlayerPanel(channel = channel, modifier = Modifier.weight(1f).fillMaxHeight())
+                    PlayerPanel(channel = channel, epgGuide = epgGuide, modifier = Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
@@ -439,6 +452,7 @@ private fun GroupItem(name: String, count: Int, selected: Boolean, onClick: () -
 private fun ChannelRow(
     channel: PlaylistChannel,
     epgChannel: com.fortresstv.player.epg.EpgChannel?,
+    nowPlaying: String?,
     selected: Boolean,
     onClick: () -> Unit
 ) {
@@ -450,18 +464,16 @@ private fun ChannelRow(
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.background),
-                contentAlignment = Alignment.Center
-            ) { Text(channel.name.take(1).uppercase(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+            ChannelLogo(channel, epgChannel)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     when {
+                        nowPlaying != null -> nowPlaying
                         channel.tvgId == null -> "No EPG ID"
-                        epgChannel != null -> "EPG matched · ${channel.tvgId}"
-                        else -> channel.tvgId
+                        epgChannel != null -> "No current programme"
+                        else -> "No EPG data"
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
@@ -473,15 +485,38 @@ private fun ChannelRow(
     }
 }
 
+@Composable
+private fun ChannelLogo(channel: PlaylistChannel, epgChannel: com.fortresstv.player.epg.EpgChannel?) {
+    val logoUrl = channel.logoUrl ?: epgChannel?.iconUrl
+    var failed by remember(logoUrl) { mutableStateOf(false) }
+    Box(
+        Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center
+    ) {
+        if (logoUrl != null && !failed) {
+            AsyncImage(
+                model = logoUrl,
+                contentDescription = "${channel.name} logo",
+                contentScale = ContentScale.Fit,
+                onError = { failed = true },
+                modifier = Modifier.fillMaxSize().padding(5.dp)
+            )
+        } else {
+            Text(channel.name.take(1).uppercase(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
 @UnstableApi
 @Composable
-private fun PlayerPanel(channel: PlaylistChannel, modifier: Modifier = Modifier) {
+private fun PlayerPanel(channel: PlaylistChannel, epgGuide: EpgGuide?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val player = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = true }
     }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    val schedule = epgGuide?.snapshot(channel.tvgId)
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -520,6 +555,8 @@ private fun PlayerPanel(channel: PlaylistChannel, modifier: Modifier = Modifier)
                         controllerAutoShow = true
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         keepScreenOn = true
+                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
+                            android.view.View.GONE
                     }
                 },
                 update = { it.player = player },
@@ -545,7 +582,24 @@ private fun PlayerPanel(channel: PlaylistChannel, modifier: Modifier = Modifier)
         }
         Spacer(Modifier.height(16.dp))
         Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text("Live channel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        schedule?.current?.let { current ->
+            Spacer(Modifier.height(8.dp))
+            Text("NOW", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(current.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            current.description?.let { description ->
+                Text(
+                    description,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        } ?: Text("No current programme information", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        schedule?.next?.let { next ->
+            Spacer(Modifier.height(14.dp))
+            Text("NEXT", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(next.title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
