@@ -22,7 +22,12 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -357,6 +362,9 @@ private fun ChannelBrowser(
     var selectedGroup by remember(playlist) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
+    fun selectChannel(channel: PlaylistChannel) {
+        selectedChannel = channel
+    }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(epgGuide) {
         while (true) {
@@ -437,7 +445,7 @@ private fun ChannelBrowser(
                             epgChannel = epgGuide?.channels?.get(channel.tvgId),
                             nowPlaying = epgGuide?.snapshot(channel.tvgId, scheduleNow)?.current?.title,
                             selected = selectedChannel == channel,
-                            onClick = { selectedChannel = channel }
+                            onClick = { selectChannel(channel) }
                         )
                     }
                     if (visibleChannels.isEmpty()) {
@@ -454,7 +462,7 @@ private fun ChannelBrowser(
                         channel = channel,
                         epgGuide = epgGuide,
                         channels = playlist.channels,
-                        onChannelSelected = { selectedChannel = it },
+                        onChannelSelected = ::selectChannel,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -585,6 +593,7 @@ private fun PlayerPanel(
                 playbackState = playbackState,
                 playbackError = playbackError,
                 fullscreen = false,
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
             onFullscreen = { fullscreen = true },
             onControlsVisibilityChanged = {},
                 onRetry = {
@@ -643,6 +652,7 @@ private fun VideoSurface(
     playbackState: Int,
     playbackError: String?,
     fullscreen: Boolean,
+    resizeMode: Int,
     onFullscreen: () -> Unit,
     onControlsVisibilityChanged: (Boolean) -> Unit,
     onRetry: () -> Unit,
@@ -679,7 +689,7 @@ private fun VideoSurface(
                     useController = true
                     controllerAutoShow = true
                     controllerShowTimeoutMs = 5_000
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    this.resizeMode = resizeMode
                     keepScreenOn = true
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
@@ -692,7 +702,10 @@ private fun VideoSurface(
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_minimal_fullscreen)?.visibility = android.view.View.GONE
                 }
             },
-            update = { it.player = player },
+            update = {
+                it.player = player
+                it.resizeMode = resizeMode
+            },
             modifier = Modifier.fillMaxSize()
         )
         if (playbackState == Player.STATE_BUFFERING) {
@@ -772,7 +785,39 @@ private fun FullscreenPlayer(
     var controlsVisible by remember { mutableStateOf(true) }
     var showChannels by remember { mutableStateOf(false) }
     var showGuide by remember { mutableStateOf(false) }
-    val schedule = epgGuide?.snapshot(channel.tvgId)
+    var locked by remember { mutableStateOf(false) }
+    var lockPromptVisible by remember { mutableStateOf(false) }
+    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var resizeModeNotice by remember { mutableStateOf<String?>(null) }
+    var scheduleNow by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(channel, epgGuide) {
+        while (true) {
+            scheduleNow = Instant.now()
+            delay(30_000)
+        }
+    }
+    LaunchedEffect(lockPromptVisible) {
+        if (lockPromptVisible) {
+            delay(2_500)
+            lockPromptVisible = false
+        }
+    }
+    LaunchedEffect(resizeModeNotice) {
+        if (resizeModeNotice != null) {
+            delay(1_200)
+            resizeModeNotice = null
+        }
+    }
+    val schedule = epgGuide?.snapshot(channel.tvgId, scheduleNow)
+    val channelIndex = channels.indexOf(channel)
+    val previousChannel = channels.getOrNull(channelIndex - 1)
+    val nextChannel = channels.getOrNull(channelIndex + 1)
+    val currentStart = schedule?.current?.start?.let(XmlTvTime::parse)
+    val currentStop = schedule?.current?.stop?.let(XmlTvTime::parse)
+    val programmeProgress = if (currentStart != null && currentStop != null && currentStop > currentStart) {
+        ((scheduleNow.toEpochMilli() - currentStart.toEpochMilli()).toFloat() /
+            (currentStop.toEpochMilli() - currentStart.toEpochMilli()).toFloat()).coerceIn(0f, 1f)
+    } else null
     Dialog(
         onDismissRequest = onExit,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -784,6 +829,7 @@ private fun FullscreenPlayer(
                 playbackState = playbackState,
                 playbackError = playbackError,
                 fullscreen = true,
+                resizeMode = resizeMode,
                 onFullscreen = onExit,
                 onControlsVisibilityChanged = { controlsVisible = it },
                 onRetry = onRetry,
@@ -814,6 +860,54 @@ private fun FullscreenPlayer(
                                 contentColor = Color.White
                             )
                         ) { Icon(Icons.Default.DateRange, contentDescription = "Programme guide") }
+                        FilledIconButton(
+                            onClick = { previousChannel?.let(onChannelSelected) },
+                            enabled = previousChannel != null,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f),
+                                contentColor = Color.White,
+                                disabledContainerColor = Color.Black.copy(alpha = .35f),
+                                disabledContentColor = Color.White.copy(alpha = .35f)
+                            )
+                        ) { Icon(Icons.Default.SkipPrevious, contentDescription = "Previous channel") }
+                        FilledIconButton(
+                            onClick = { nextChannel?.let(onChannelSelected) },
+                            enabled = nextChannel != null,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f),
+                                contentColor = Color.White,
+                                disabledContainerColor = Color.Black.copy(alpha = .35f),
+                                disabledContentColor = Color.White.copy(alpha = .35f)
+                            )
+                        ) { Icon(Icons.Default.SkipNext, contentDescription = "Next channel") }
+                        FilledIconButton(
+                            onClick = {
+                                resizeMode = when (resizeMode) {
+                                    AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                    AspectRatioFrameLayout.RESIZE_MODE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                }
+                                resizeModeNotice = when (resizeMode) {
+                                    AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
+                                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
+                                    else -> "Fit"
+                                }
+                            },
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f), contentColor = Color.White
+                            )
+                        ) { Icon(Icons.Default.AspectRatio, contentDescription = "Change picture size") }
+                        FilledIconButton(
+                            onClick = {
+                                locked = true
+                                showChannels = false
+                                showGuide = false
+                                lockPromptVisible = true
+                            },
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f), contentColor = Color.White
+                            )
+                        ) { Icon(Icons.Default.Lock, contentDescription = "Lock controls") }
                     }
                     Surface(
                         color = Color.Black.copy(alpha = .76f),
@@ -827,6 +921,18 @@ private fun FullscreenPlayer(
                                 Text(channel.name, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                                 schedule?.current?.let {
                                     Text(it.title, color = MaterialTheme.colorScheme.primary, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (programmeProgress != null && currentStart != null && currentStop != null) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(formatProgrammeTime(currentStart), color = Color.White.copy(alpha = .65f), fontSize = 11.sp)
+                                            LinearProgressIndicator(
+                                                progress = { programmeProgress },
+                                                modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                trackColor = Color.White.copy(alpha = .22f)
+                                            )
+                                            Text(formatProgrammeTime(currentStop), color = Color.White.copy(alpha = .65f), fontSize = 11.sp)
+                                        }
+                                    }
                                 } ?: Text("No current programme information", color = Color.White.copy(alpha = .68f))
                             }
                             schedule?.next?.let {
@@ -860,9 +966,47 @@ private fun FullscreenPlayer(
                     modifier = Modifier.align(Alignment.CenterEnd)
                 )
             }
+            AnimatedVisibility(
+                visible = resizeModeNotice != null && !locked,
+                enter = fadeIn(), exit = fadeOut(),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(color = Color.Black.copy(alpha = .76f), shape = RoundedCornerShape(14.dp)) {
+                    Text(resizeModeNotice.orEmpty(), color = Color.White, fontSize = 20.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp))
+                }
+            }
+            if (locked) {
+                Box(
+                    Modifier.fillMaxSize().clickable {
+                        lockPromptVisible = true
+                    }
+                ) {
+                    AnimatedVisibility(
+                        visible = lockPromptVisible,
+                        enter = fadeIn(), exit = fadeOut(),
+                        modifier = Modifier.align(Alignment.Center)
+                    ) {
+                        FilledIconButton(
+                            onClick = {
+                                locked = false
+                                lockPromptVisible = false
+                                controlsVisible = true
+                            },
+                            modifier = Modifier.size(68.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .76f), contentColor = Color.White
+                            )
+                        ) { Icon(Icons.Default.LockOpen, contentDescription = "Unlock controls", modifier = Modifier.size(32.dp)) }
+                    }
+                }
+            }
         }
     }
 }
+
+private val programmeTimeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
+
+private fun formatProgrammeTime(instant: Instant): String = programmeTimeFormatter.format(instant)
 
 @Composable
 private fun FullscreenGuideDrawer(
