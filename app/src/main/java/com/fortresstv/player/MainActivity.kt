@@ -29,6 +29,9 @@ import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.XmlTvParser
+import com.fortresstv.player.source.ContentSource
+import com.fortresstv.player.source.SourceReader
+import com.fortresstv.player.source.SourceSettingsStore
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -48,75 +51,193 @@ class MainActivity : ComponentActivity() {
 private fun FortressTVApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val settings = remember { SourceSettingsStore(context.applicationContext) }
     var playlist by remember { mutableStateOf<Playlist?>(null) }
+    var playlistSource by remember { mutableStateOf<ContentSource?>(null) }
     var sourceName by remember { mutableStateOf<String?>(null) }
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
+    var epgSource by remember { mutableStateOf<ContentSource?>(null) }
     var epgSourceName by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var urlTarget by remember { mutableStateOf<UrlTarget?>(null) }
+    var removeTarget by remember { mutableStateOf<UrlTarget?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    suspend fun parsePlaylist(source: ContentSource): Playlist = withContext(Dispatchers.IO) {
+        SourceReader.open(context, source).bufferedReader().use { M3uParser.parse(it.readText()) }
+    }
+
+    suspend fun parseEpg(source: ContentSource): EpgGuide = withContext(Dispatchers.IO) {
+        SourceReader.open(context, source).use { raw ->
+            BufferedInputStream(raw).use { buffered ->
+                buffered.mark(2)
+                val first = buffered.read()
+                val second = buffered.read()
+                buffered.reset()
+                val stream = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
+                XmlTvParser.parse(stream)
+            }
+        }
+    }
+
+    fun loadPlaylist(source: ContentSource, save: Boolean) {
         loading = true
         error = null
         scope.launch {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                withContext(Dispatchers.IO) {
-                    val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                        ?: error("The selected playlist could not be opened")
-                    M3uParser.parse(text)
+            runCatching { parsePlaylist(source) }
+                .onSuccess { parsed ->
+                    if (parsed.channels.isEmpty()) error = "No channels were found in this playlist."
+                    else {
+                        playlist = parsed
+                        playlistSource = source
+                        sourceName = source.displayName
+                        if (save) settings.savePlaylist(source)
+                    }
                 }
-            }.onSuccess { parsed ->
-                if (parsed.channels.isEmpty()) {
-                    error = "No channels were found in this file."
-                } else {
-                    playlist = parsed
-                    sourceName = uri.lastPathSegment?.substringAfterLast('/') ?: "M3U playlist"
-                }
-            }.onFailure { error = it.message ?: "Could not load this playlist." }
+                .onFailure { error = it.message ?: "Could not load this playlist." }
             loading = false
         }
     }
 
-    val epgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    fun loadEpg(source: ContentSource, save: Boolean) {
         loading = true
         error = null
         scope.launch {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                withContext(Dispatchers.IO) {
-                    val raw = context.contentResolver.openInputStream(uri)
-                        ?: error("The selected EPG file could not be opened")
-                    BufferedInputStream(raw).use { buffered ->
-                        buffered.mark(2)
-                        val first = buffered.read()
-                        val second = buffered.read()
-                        buffered.reset()
-                        val stream = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
-                        XmlTvParser.parse(stream)
-                    }
+            runCatching { parseEpg(source) }
+                .onSuccess { guide ->
+                    epgGuide = guide
+                    epgSource = source
+                    epgSourceName = source.displayName
+                    if (save) settings.saveEpg(source)
                 }
-            }.onSuccess { guide ->
-                epgGuide = guide
-                epgSourceName = uri.lastPathSegment?.substringAfterLast('/') ?: "XMLTV guide"
-            }.onFailure { error = it.message ?: "Could not load this EPG file." }
+                .onFailure { error = it.message ?: "Could not load this EPG source." }
             loading = false
         }
+    }
+
+    LaunchedEffect(Unit) {
+        loading = true
+        settings.playlistSource()?.let { source ->
+            runCatching { parsePlaylist(source) }.onSuccess {
+                if (it.channels.isNotEmpty()) {
+                    playlist = it
+                    playlistSource = source
+                    sourceName = source.displayName
+                }
+            }.onFailure { error = "Saved playlist: ${it.message ?: "could not be loaded"}" }
+        }
+        settings.epgSource()?.let { source ->
+            runCatching { parseEpg(source) }.onSuccess {
+                epgGuide = it
+                epgSource = source
+                epgSourceName = source.displayName
+            }.onFailure { error = "Saved EPG: ${it.message ?: "could not be loaded"}" }
+        }
+        loading = false
+    }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        loadPlaylist(ContentSource.LocalFile(uri.toString(), uri.lastPathSegment?.substringAfterLast('/') ?: "M3U playlist"), true)
+    }
+
+    val epgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        loadEpg(ContentSource.LocalFile(uri.toString(), uri.lastPathSegment?.substringAfterLast('/') ?: "XMLTV guide"), true)
+    }
+
+    if (urlTarget != null) {
+        val editingSource = if (urlTarget == UrlTarget.PLAYLIST) playlistSource else epgSource
+        SourceUrlDialog(
+            target = urlTarget!!,
+            initialValue = (editingSource as? ContentSource.RemoteUrl)?.value.orEmpty(),
+            onDismiss = { urlTarget = null },
+            onConfirm = { value ->
+                val source = ContentSource.RemoteUrl(value.trim(), value.substringAfterLast('/').ifBlank { value })
+                if (urlTarget == UrlTarget.PLAYLIST) loadPlaylist(source, true) else loadEpg(source, true)
+                urlTarget = null
+            }
+        )
+    }
+
+    if (removeTarget != null) {
+        val target = removeTarget!!
+        AlertDialog(
+            onDismissRequest = { removeTarget = null },
+            title = { Text(if (target == UrlTarget.PLAYLIST) "Remove playlist?" else "Remove EPG?") },
+            text = {
+                Text(
+                    if (target == UrlTarget.PLAYLIST)
+                        "FortressTV will forget this playlist source. The EPG setting will be kept."
+                    else "FortressTV will forget this EPG source. Your playlist will be kept."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (target == UrlTarget.PLAYLIST) {
+                        settings.clearPlaylist()
+                        playlist = null
+                        playlistSource = null
+                        sourceName = null
+                    } else {
+                        settings.clearEpg()
+                        epgGuide = null
+                        epgSource = null
+                        epgSourceName = null
+                    }
+                    error = null
+                    removeTarget = null
+                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { removeTarget = null }) { Text("Cancel") } }
+        )
+    }
+
+    if (showSettings) {
+        SourceSettingsDialog(
+            playlistSource = playlistSource,
+            playlistName = sourceName,
+            epgSource = epgSource,
+            epgName = epgSourceName,
+            loading = loading,
+            onDismiss = { showSettings = false },
+            onPlaylistFile = {
+                showSettings = false
+                filePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*"))
+            },
+            onPlaylistUrl = {
+                showSettings = false
+                urlTarget = UrlTarget.PLAYLIST
+            },
+            onRemovePlaylist = {
+                showSettings = false
+                removeTarget = UrlTarget.PLAYLIST
+            },
+            onEpgFile = {
+                showSettings = false
+                epgPicker.launch(arrayOf("application/xml", "text/xml", "application/gzip", "*/*"))
+            },
+            onEpgUrl = {
+                showSettings = false
+                urlTarget = UrlTarget.EPG
+            },
+            onRemoveEpg = {
+                showSettings = false
+                removeTarget = UrlTarget.EPG
+            }
+        )
     }
 
     if (playlist == null) {
         WelcomeScreen(
             loading = loading,
             error = error,
-            onOpenFile = { filePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) }
+            onOpenFile = { filePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
+            onOpenUrl = { urlTarget = UrlTarget.PLAYLIST },
+            onOpenSettings = { showSettings = true }
         )
     } else {
         ChannelBrowser(
@@ -126,14 +247,21 @@ private fun FortressTVApp() {
             epgSourceName = epgSourceName,
             loading = loading,
             error = error,
-            onReplacePlaylist = { filePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
-            onOpenEpg = { epgPicker.launch(arrayOf("application/xml", "text/xml", "application/gzip", "*/*")) }
+            onOpenSettings = { showSettings = true }
         )
     }
 }
 
+private enum class UrlTarget { PLAYLIST, EPG }
+
 @Composable
-private fun WelcomeScreen(loading: Boolean, error: String?, onOpenFile: () -> Unit) {
+private fun WelcomeScreen(
+    loading: Boolean,
+    error: String?,
+    onOpenFile: () -> Unit,
+    onOpenUrl: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
             Column(
@@ -152,8 +280,8 @@ private fun WelcomeScreen(loading: Boolean, error: String?, onOpenFile: () -> Un
                     Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
                         Text(if (loading) "Loading…" else "Open M3U file")
                     }
-                    OutlinedButton(onClick = { }, enabled = false, modifier = Modifier.weight(1f).height(56.dp)) {
-                        Text("Playlist URL — next")
+                    OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
+                        Text("Enter playlist URL")
                     }
                 }
                 if (error != null) {
@@ -162,6 +290,7 @@ private fun WelcomeScreen(loading: Boolean, error: String?, onOpenFile: () -> Un
                 }
                 Spacer(Modifier.height(20.dp))
                 Text("Playlist details stay on this device.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onOpenSettings) { Text("Settings") }
             }
         }
     }
@@ -175,12 +304,18 @@ private fun ChannelBrowser(
     epgSourceName: String?,
     loading: Boolean,
     error: String?,
-    onReplacePlaylist: () -> Unit,
-    onOpenEpg: () -> Unit
+    onOpenSettings: () -> Unit
 ) {
     val allGroup = "All channels"
     var selectedGroup by remember(playlist) { mutableStateOf(allGroup) }
-    val visibleChannels = if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
+    var searchQuery by remember(playlist) { mutableStateOf("") }
+    val channelsInGroup = if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
+    val normalizedQuery = searchQuery.trim()
+    val visibleChannels = if (normalizedQuery.isEmpty()) channelsInGroup else channelsInGroup.filter { channel ->
+        channel.name.contains(normalizedQuery, ignoreCase = true) ||
+            channel.tvgName?.contains(normalizedQuery, ignoreCase = true) == true ||
+            channel.tvgId?.contains(normalizedQuery, ignoreCase = true) == true
+    }
 
     Row(Modifier.fillMaxSize().systemBarsPadding()) {
         Column(
@@ -195,9 +330,7 @@ private fun ChannelBrowser(
             }
             Spacer(Modifier.weight(1f))
             if (epgGuide == null) {
-                Button(onClick = onOpenEpg, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (loading) "Loading EPG…" else "Load XMLTV EPG")
-                }
+                Text("EPG not configured", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 val matched = playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
                 Text("EPG: $matched/${playlist.channels.size} matched", fontWeight = FontWeight.SemiBold)
@@ -207,19 +340,45 @@ private fun ChannelBrowser(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                TextButton(onClick = onOpenEpg, enabled = !loading) { Text("Replace EPG") }
             }
             if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = onReplacePlaylist, modifier = Modifier.fillMaxWidth()) { Text("Replace playlist") }
+            OutlinedButton(onClick = onOpenSettings, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+                Text("Settings")
+            }
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 28.dp, vertical = 20.dp)) {
             Text(selectedGroup, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("${visibleChannels.size} channels · original playlist order", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(18.dp))
+            Text(
+                if (normalizedQuery.isEmpty()) "${visibleChannels.size} channels · original playlist order"
+                else "${visibleChannels.size} of ${channelsInGroup.size} channels",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Search channels") },
+                placeholder = { Text("Name or EPG ID") },
+                singleLine = true,
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        TextButton(onClick = { searchQuery = "" }) { Text("Clear") }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(14.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
                     ChannelRow(channel, epgGuide?.channels?.get(channel.tvgId))
+                }
+                if (visibleChannels.isEmpty()) {
+                    item {
+                        Box(Modifier.fillParentMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                            Text("No channels match your search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
             }
         }
@@ -274,6 +433,112 @@ private fun ShieldMark() {
     ) { Text("F", color = Color(0xFF061B19), fontSize = 52.sp, fontWeight = FontWeight.Black) }
 }
 
+@Composable
+private fun SourceSettingsDialog(
+    playlistSource: ContentSource?,
+    playlistName: String?,
+    epgSource: ContentSource?,
+    epgName: String?,
+    loading: Boolean,
+    onDismiss: () -> Unit,
+    onPlaylistFile: () -> Unit,
+    onPlaylistUrl: () -> Unit,
+    onRemovePlaylist: () -> Unit,
+    onEpgFile: () -> Unit,
+    onEpgUrl: () -> Unit,
+    onRemoveEpg: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("FortressTV settings") },
+        text = {
+            Column(Modifier.widthIn(min = 520.dp, max = 680.dp)) {
+                Text("Playlist", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    playlistName ?: "Not configured",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onPlaylistFile, enabled = !loading) {
+                        Text(if (playlistSource is ContentSource.LocalFile) "Replace file" else "Use file")
+                    }
+                    OutlinedButton(onClick = onPlaylistUrl, enabled = !loading) {
+                        Text(if (playlistSource is ContentSource.RemoteUrl) "Edit URL" else "Use URL")
+                    }
+                    TextButton(onClick = onRemovePlaylist, enabled = playlistSource != null && !loading) {
+                        Text("Remove", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                HorizontalDivider(Modifier.padding(vertical = 20.dp))
+                Text("Programme guide (XMLTV)", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    epgName ?: "Not configured",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onEpgFile, enabled = !loading) {
+                        Text(if (epgSource is ContentSource.LocalFile) "Replace file" else "Use file")
+                    }
+                    OutlinedButton(onClick = onEpgUrl, enabled = !loading) {
+                        Text(if (epgSource is ContentSource.RemoteUrl) "Edit URL" else "Use URL")
+                    }
+                    TextButton(onClick = onRemoveEpg, enabled = epgSource != null && !loading) {
+                        Text("Remove", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    "Saved source locations are encrypted on this device. Sources are refreshed when FortressTV starts.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
+}
+
+@Composable
+private fun SourceUrlDialog(
+    target: UrlTarget,
+    initialValue: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var value by remember(target, initialValue) { mutableStateOf(initialValue) }
+    val label = if (target == UrlTarget.PLAYLIST) "Playlist URL" else "XMLTV EPG URL"
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initialValue.isBlank()) label else "Edit $label") },
+        text = {
+            Column {
+                Text("Enter a direct HTTP or HTTPS URL. It will be encrypted on this device.")
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    label = { Text(label) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(value) },
+                enabled = value.startsWith("https://", true) || value.startsWith("http://", true)
+            ) { Text("Load") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
 @Composable
-private fun WelcomePreview() = FortressTVTheme { WelcomeScreen(false, null) {} }
+private fun WelcomePreview() = FortressTVTheme { WelcomeScreen(false, null, {}, {}, {}) }
