@@ -11,7 +11,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -658,6 +660,15 @@ private fun ChannelBrowser(
     val strings = LocalAppStrings.current
     val allGroup = strings.allChannels
     var isSidebarExpanded by remember { mutableStateOf(false) }
+    var sidebarInteractionCount by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(isSidebarExpanded, sidebarInteractionCount) {
+        if (isSidebarExpanded) {
+            delay(5_000)
+            isSidebarExpanded = false
+        }
+    }
+
     var selectedGroup by remember(playlist, allGroup) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
@@ -699,7 +710,19 @@ private fun ChannelBrowser(
             exit = shrinkHorizontally() + fadeOut()
         ) {
             Column(
-                modifier = Modifier.width(260.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(16.dp)
+                modifier = Modifier
+                    .width(260.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            while (true) {
+                                awaitPointerEvent()
+                                sidebarInteractionCount = System.currentTimeMillis()
+                            }
+                        }
+                    }
+                    .padding(16.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
