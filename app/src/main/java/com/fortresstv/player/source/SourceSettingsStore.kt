@@ -131,7 +131,12 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putInt("epg_time_shift_hours", hours).apply()
     }
 
-    fun getLanguage(): String = preferences.getString("app_language", "en") ?: "en"
+    fun getLanguage(): String {
+        val saved = preferences.getString("app_language", null)
+        if (saved != null) return saved
+        val systemLang = java.util.Locale.getDefault().language.lowercase()
+        return if (systemLang == "pt") "pt" else "en"
+    }
 
     fun setLanguage(lang: String) {
         preferences.edit().putString("app_language", lang).apply()

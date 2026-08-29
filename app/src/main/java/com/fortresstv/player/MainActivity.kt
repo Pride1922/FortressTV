@@ -122,7 +122,7 @@ private fun FortressTVApp() {
     val settings = remember { SourceSettingsStore(context.applicationContext) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
-    var appLanguage by remember { mutableStateOf(AppLanguage.ENGLISH) }
+    var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     val strings = getStringsFor(appLanguage)
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }

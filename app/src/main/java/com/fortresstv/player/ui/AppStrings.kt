@@ -8,8 +8,18 @@ enum class AppLanguage(val code: String, val displayName: String, val flag: Stri
     PORTUGUESE("pt", "Português (Portugal)", "🇵🇹");
 
     companion object {
-        fun fromCode(code: String): AppLanguage =
-            entries.find { it.code.equals(code, ignoreCase = true) } ?: ENGLISH
+        fun fromCode(code: String): AppLanguage {
+            val normalized = code.lowercase()
+            return when {
+                normalized.startsWith("pt") -> PORTUGUESE
+                else -> ENGLISH
+            }
+        }
+
+        fun fromSystemLocale(): AppLanguage {
+            val systemLang = java.util.Locale.getDefault().language.lowercase()
+            return if (systemLang.startsWith("pt")) PORTUGUESE else ENGLISH
+        }
     }
 }
 
