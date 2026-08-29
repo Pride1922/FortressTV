@@ -106,11 +106,32 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import coil.compose.AsyncImage
+import coil.Coil
+import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val imageLoader = ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.05)
+                    .build()
+            }
+            .crossfade(true)
+            .build()
+        Coil.setImageLoader(imageLoader)
+
         setContent { FortressTVTheme { FortressTVApp() } }
     }
 }
@@ -153,11 +174,13 @@ private fun FortressTVApp() {
         }
     }
 
-    suspend fun parsePlaylist(stream: java.io.InputStream): Playlist = withContext(Dispatchers.IO) {
+    suspend fun parsePlaylist(stream: java.io.InputStream): Playlist = withContext(Dispatchers.Default) {
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         stream.bufferedReader().use { M3uParser.parse(it.readText()) }
     }
 
-    suspend fun parseEpg(stream: java.io.InputStream): EpgGuide = withContext(Dispatchers.IO) {
+    suspend fun parseEpg(stream: java.io.InputStream): EpgGuide = withContext(Dispatchers.Default) {
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         BufferedInputStream(stream).use { buffered ->
             buffered.mark(2)
             val first = buffered.read()

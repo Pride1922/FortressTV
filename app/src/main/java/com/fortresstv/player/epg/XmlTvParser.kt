@@ -6,15 +6,18 @@ import java.io.InputStream
 import javax.xml.parsers.SAXParserFactory
 
 object XmlTvParser {
-    fun parse(input: InputStream): EpgGuide {
-        val handler = XmlTvHandler()
+    fun parse(input: InputStream, referenceTimeMillis: Long = System.currentTimeMillis()): EpgGuide {
+        val handler = XmlTvHandler(referenceTimeMillis)
         SAXParserFactory.newInstance().apply {
             isNamespaceAware = false
         }.newSAXParser().parse(input, handler)
         return handler.guide()
     }
 
-    private class XmlTvHandler : DefaultHandler() {
+    private class XmlTvHandler(private val referenceTime: Long) : DefaultHandler() {
+        private val pastCutoff = if (referenceTime > 0L) referenceTime - (6 * 3600_000L) else Long.MIN_VALUE
+        private val futureCutoff = if (referenceTime > 0L) referenceTime + (96 * 3600_000L) else Long.MAX_VALUE
+
         private val channels = linkedMapOf<String, EpgChannel>()
         private val programmes = linkedMapOf<String, MutableList<EpgProgramme>>()
         private val text = StringBuilder()
@@ -56,16 +59,21 @@ object XmlTvParser {
                 }?.let {
                     val startEpoch = XmlTvTime.parseToEpoch(it.start) ?: 0L
                     val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s) }
-                    programmes.getOrPut(it.channelId) { mutableListOf() } += EpgProgramme(
-                        channelId = it.channelId,
-                        start = it.start,
-                        stop = it.stop,
-                        title = it.title.orEmpty(),
-                        description = it.description,
-                        category = it.category,
-                        startEpochMilli = startEpoch,
-                        stopEpochMilli = stopEpoch
-                    )
+                    val isObsolete = (stopEpoch != null && stopEpoch < pastCutoff) || (startEpoch > 0L && startEpoch < pastCutoff && stopEpoch == null)
+                    val isTooFarFuture = startEpoch > futureCutoff
+
+                    if (!isObsolete && !isTooFarFuture) {
+                        programmes.getOrPut(it.channelId) { mutableListOf() } += EpgProgramme(
+                            channelId = it.channelId,
+                            start = it.start,
+                            stop = it.stop,
+                            title = it.title.orEmpty(),
+                            description = it.description,
+                            category = it.category,
+                            startEpochMilli = startEpoch,
+                            stopEpochMilli = stopEpoch
+                        )
+                    }
                 }.also { programme = null }
             }
             text.setLength(0)

@@ -17,23 +17,32 @@ fun EpgGuide.snapshot(
     timeShiftHours: Int = 0
 ): ProgrammeSnapshot {
     if (channelId == null) return ProgrammeSnapshot(null, null)
-    val list = programmes[channelId] ?: return ProgrammeSnapshot(null, null)
+    val list = programmes[channelId]
+    if (list.isNullOrEmpty()) return ProgrammeSnapshot(null, null)
     val targetNow = now.toEpochMilli() - (timeShiftHours * 3600_000L)
+
+    val binaryIndex = list.binarySearchBy(targetNow) { it.startEpochMilli }
+    val candidateIndex = if (binaryIndex >= 0) binaryIndex else (-binaryIndex - 1) - 1
 
     var current: EpgProgramme? = null
     var next: EpgProgramme? = null
 
-    for (i in list.indices) {
-        val prog = list[i]
-        val start = prog.startEpochMilli
-        val stop = prog.stopEpochMilli
-        if (start <= targetNow && (stop == null || stop > targetNow)) {
-            current = prog
-        } else if (start > targetNow) {
-            next = prog
-            break
+    if (candidateIndex in list.indices) {
+        val candidate = list[candidateIndex]
+        val stop = candidate.stopEpochMilli
+        if (candidate.startEpochMilli <= targetNow && (stop == null || stop > targetNow)) {
+            current = candidate
+            next = list.getOrNull(candidateIndex + 1)
         }
     }
+
+    if (current == null) {
+        val nextIdx = if (binaryIndex >= 0) binaryIndex + 1 else -binaryIndex - 1
+        if (nextIdx in list.indices) {
+            next = list[nextIdx]
+        }
+    }
+
     return ProgrammeSnapshot(current, next)
 }
 
