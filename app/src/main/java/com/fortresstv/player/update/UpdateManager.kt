@@ -24,7 +24,7 @@ data class AppUpdateInfo(
 
 object UpdateManager {
     // URL pointing to your Nextcloud version.json
-    var updateEndpointUrl: String = "https://cloud.ameyerocha.com/s/2TYXawD6kCQ62iN/download"
+    var updateEndpointUrl: String = "https://cloud.ameyerocha.com/s/iL89c8t5PmzBAjA/download"
 
     suspend fun checkForUpdates(
         currentVersion: String = BuildConfig.VERSION_NAME,
