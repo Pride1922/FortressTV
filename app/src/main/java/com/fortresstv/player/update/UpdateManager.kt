@@ -19,20 +19,36 @@ data class AppUpdateInfo(
     val versionName: String,
     val releaseNotes: String,
     val downloadUrl: String,
-    val htmlUrl: String
+    val htmlUrl: String = ""
 )
 
 object UpdateManager {
-    private const val GITHUB_API_URL = "https://api.github.com/repos/Pride1922/FortressTV/releases/latest"
+    // URL pointing to your Nextcloud version.json
+    var updateEndpointUrl: String = "https://cloud.ameyerocha.com/s/2TYXawD6kCQ62iN/download"
 
-    suspend fun checkForUpdates(currentVersion: String = BuildConfig.VERSION_NAME): AppUpdateInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(
+        currentVersion: String = BuildConfig.VERSION_NAME,
+        endpointUrl: String = updateEndpointUrl
+    ): AppUpdateInfo? = withContext(Dispatchers.IO) {
         runCatching {
-            val url = URL(GITHUB_API_URL)
-            val connection = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 8000
+            val url = URL(endpointUrl)
+            var connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10000
+                readTimeout = 10000
                 setRequestProperty("User-Agent", "FortressTV-App")
-                setRequestProperty("Accept", "application/vnd.github.v3+json")
+                instanceFollowRedirects = true
+            }
+
+            var redirectCount = 0
+            while (connection.responseCode in listOf(301, 302, 303, 307, 308) && redirectCount < 5) {
+                val newUrl = connection.getHeaderField("Location")
+                connection.disconnect()
+                connection = (URL(newUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10000
+                    readTimeout = 10000
+                    setRequestProperty("User-Agent", "FortressTV-App")
+                }
+                redirectCount++
             }
 
             if (connection.responseCode != 200) return@runCatching null
@@ -40,24 +56,24 @@ object UpdateManager {
             val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(jsonText)
 
-            val tagName = json.optString("tag_name", "").removePrefix("v").removePrefix("V").trim()
-            val releaseNotes = json.optString("body", "").trim()
+            val tagName = json.optString("version", json.optString("tag_name", "")).removePrefix("v").removePrefix("V").trim()
+            val releaseNotes = json.optString("notes", json.optString("body", "")).trim()
             val htmlUrl = json.optString("html_url", "")
 
             if (tagName.isBlank() || !isNewerVersion(currentVersion, tagName)) {
                 return@runCatching null
             }
 
-            var downloadUrl = ""
-            val assets = json.optJSONArray("assets")
-            if (assets != null) {
-                for (i in 0 until assets.length()) {
-                    val asset = assets.getJSONObject(i)
-                    val assetName = asset.optString("name", "")
-                    if (assetName.endsWith(".apk", ignoreCase = true)) {
-                        downloadUrl = asset.optString("browser_download_url", "")
-                        if (assetName.contains("release", ignoreCase = true)) {
-                            break // Prioritize release APK asset
+            var downloadUrl = json.optString("downloadUrl", json.optString("apkUrl", "")).trim()
+            if (downloadUrl.isBlank()) {
+                val assets = json.optJSONArray("assets")
+                if (assets != null) {
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.getJSONObject(i)
+                        val assetName = asset.optString("name", "")
+                        if (assetName.endsWith(".apk", ignoreCase = true)) {
+                            downloadUrl = asset.optString("browser_download_url", "")
+                            if (assetName.contains("release", ignoreCase = true)) break
                         }
                     }
                 }
