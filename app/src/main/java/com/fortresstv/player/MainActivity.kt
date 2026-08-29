@@ -1328,44 +1328,76 @@ private fun FullscreenPlayer(
                         ) { Icon(Icons.Default.SkipNext, contentDescription = "Next channel", modifier = Modifier.size(30.dp)) }
                     }
                     Surface(
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(18.dp),
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
                         shape = RoundedCornerShape(18.dp),
-                        color = Color.Black.copy(alpha = .78f)
+                        color = Color.Black.copy(alpha = .85f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = .15f))
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            ChannelLogo(channel, epgGuide?.channels?.get(channel.tvgId))
-                            Spacer(Modifier.width(16.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(channel.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                                schedule?.current?.let {
-                                    Text(it.title, color = MaterialTheme.colorScheme.primary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                    if (programmeProgress != null && currentStart != null && currentStop != null) {
-                                        Spacer(Modifier.height(6.dp))
-                                        LinearProgressIndicator(
-                                            progress = { programmeProgress },
-                                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ChannelLogo(channel, epgGuide?.channels?.get(channel.tvgId))
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(channel.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    schedule?.current?.let { current ->
+                                        Text(
+                                            current.title,
                                             color = MaterialTheme.colorScheme.primary,
-                                            trackColor = Color.White.copy(alpha = .24f)
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        Spacer(Modifier.height(4.dp))
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text(
-                                                formatProgrammeTime(currentStart),
-                                                color = Color.White.copy(alpha = .65f),
-                                                fontSize = 11.sp
-                                            )
-                                            Text(formatProgrammeTime(currentStop), color = Color.White.copy(alpha = .65f), fontSize = 11.sp)
+                                    } ?: Text("No current programme information", color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
+                                }
+                                schedule?.next?.let { next ->
+                                    Spacer(Modifier.width(16.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color.White.copy(alpha = .1f),
+                                        modifier = Modifier.widthIn(max = 280.dp)
+                                    ) {
+                                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("WHAT'S NEXT", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                next.start?.let { nextStart ->
+                                                    val parsedStart = XmlTvTime.parse(nextStart, epgTimeShiftHours)
+                                                    if (parsedStart != null) {
+                                                        Spacer(Modifier.width(6.dp))
+                                                        Text("· ${formatProgrammeTime(parsedStart)}", color = Color.White.copy(alpha = .6f), fontSize = 10.sp)
+                                                    }
+                                                }
+                                            }
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(next.title, color = Color.White.copy(alpha = .85f), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                     }
-                                } ?: Text("No current programme information", color = Color.White.copy(alpha = .68f))
+                                }
                             }
-                            schedule?.next?.let {
-                                Column(Modifier.widthIn(max = 420.dp)) {
-                                    Text("NEXT", color = Color.White.copy(alpha = .55f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    Text(it.title, color = Color.White.copy(alpha = .82f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                            if (programmeProgress != null && currentStart != null && currentStop != null) {
+                                Spacer(Modifier.height(10.dp))
+                                LinearProgressIndicator(
+                                    progress = { programmeProgress },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = Color.White.copy(alpha = .24f)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(
+                                        formatProgrammeTime(currentStart),
+                                        color = Color.White.copy(alpha = .65f),
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        "Ends at ${formatProgrammeTime(currentStop)}",
+                                        color = Color.White.copy(alpha = .65f),
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                         }
