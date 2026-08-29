@@ -574,6 +574,8 @@ private fun FortressTVApp() {
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
                 epgTimeShiftHours = epgTimeShiftHours,
+                playlist = playlist,
+                epgGuide = epgGuide,
                 loading = loading,
                 onDismiss = { showSettings = false },
                 onSelectPlaylist = { profile ->
@@ -2490,6 +2492,8 @@ private fun SettingsDialog(
     epgSourceName: String?,
     epgLastUpdate: Long,
     epgTimeShiftHours: Int,
+    playlist: Playlist?,
+    epgGuide: EpgGuide?,
     loading: Boolean,
     onDismiss: () -> Unit,
     onSelectPlaylist: (PlaylistProfile) -> Unit,
@@ -2571,6 +2575,8 @@ private fun SettingsDialog(
                             epgSourceName = epgSourceName,
                             epgLastUpdate = epgLastUpdate,
                             epgTimeShiftHours = epgTimeShiftHours,
+                            playlist = playlist,
+                            epgGuide = epgGuide,
                             loading = loading,
                             onEpgUrl = onEpgUrl,
                             onEpgFile = onEpgFile,
@@ -2803,6 +2809,8 @@ private fun EpgTab(
     epgSourceName: String?,
     epgLastUpdate: Long,
     epgTimeShiftHours: Int,
+    playlist: Playlist?,
+    epgGuide: EpgGuide?,
     loading: Boolean,
     onEpgUrl: () -> Unit,
     onEpgFile: () -> Unit,
@@ -2813,6 +2821,15 @@ private fun EpgTab(
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
+
+    val matchedCount = remember(playlist, epgGuide) {
+        if (epgGuide == null || playlist == null) 0 else playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
+    }
+    val unmatchedChannels = remember(playlist, epgGuide) {
+        if (epgGuide == null || playlist == null) emptyList()
+        else playlist.channels.filter { it.tvgId.isNullOrBlank() || !epgGuide.channels.containsKey(it.tvgId) }
+    }
+    var showUnmatchedInSettings by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Text(strings.xmltvSource, fontSize = if (isCompact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
@@ -2919,6 +2936,59 @@ private fun EpgTab(
                         }
                     }
                 }
+            }
+        }
+
+        if (epgGuide != null && playlist != null) {
+            Spacer(Modifier.height(14.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                        else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                border = BorderStroke(1.dp, if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
+                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                strings.epgMatched(matchedCount, playlist.channels.size),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                if (unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (unmatchedChannels.isNotEmpty()) {
+                            Button(
+                                onClick = { showUnmatchedInSettings = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(strings.viewUnmatchedChannels, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (showUnmatchedInSettings) {
+                UnmatchedEpgDialog(
+                    unmatchedChannels = unmatchedChannels,
+                    onDismiss = { showUnmatchedInSettings = false },
+                    onSelectChannel = { showUnmatchedInSettings = false }
+                )
             }
         }
 
