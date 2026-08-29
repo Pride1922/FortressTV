@@ -54,13 +54,17 @@ object XmlTvParser {
                 "programme" -> programme?.takeIf {
                     it.channelId.isNotBlank() && it.start.isNotBlank() && !it.title.isNullOrBlank()
                 }?.let {
+                    val startEpoch = XmlTvTime.parseToEpoch(it.start) ?: 0L
+                    val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s) }
                     programmes.getOrPut(it.channelId) { mutableListOf() } += EpgProgramme(
                         channelId = it.channelId,
                         start = it.start,
                         stop = it.stop,
                         title = it.title.orEmpty(),
                         description = it.description,
-                        category = it.category
+                        category = it.category,
+                        startEpochMilli = startEpoch,
+                        stopEpochMilli = stopEpoch
                     )
                 }.also { programme = null }
             }
@@ -69,7 +73,7 @@ object XmlTvParser {
 
         fun guide() = EpgGuide(
             channels = channels,
-            programmes = programmes.mapValues { (_, entries) -> entries.toList() }
+            programmes = programmes.mapValues { (_, entries) -> entries.sortedBy { it.startEpochMilli } }
         )
 
         private data class MutableChannel(

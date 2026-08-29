@@ -17,6 +17,8 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -772,13 +774,17 @@ private fun ChannelBrowser(
                 ) {
                     items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
                         val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
-                        val start = currentProg?.start?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-                        val stop = currentProg?.stop?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-                        val progress = if (start != null && stop != null && stop > start) {
-                            ((scheduleNow.toEpochMilli() - start.toEpochMilli()).toFloat() /
-                                (stop.toEpochMilli() - start.toEpochMilli()).toFloat()).coerceIn(0f, 1f)
+                        val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
+                            val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                            val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                            if (adjustedStop > adjustedStart) {
+                                ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                            } else null
                         } else null
-                        val endTime = stop?.let { "until ${formatProgrammeTime(it)}" }
+                        val endTime = if (currentProg?.stopEpochMilli != null) {
+                            val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                            "until ${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                        } else null
                         ChannelRow(
                             channel = channel,
                             epgChannel = epgGuide?.channels?.get(channel.tvgId),
@@ -989,16 +995,16 @@ private fun PlayerPanel(
         Spacer(Modifier.height(16.dp))
         Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         schedule?.current?.let { current ->
-            val start = current.start.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-            val stop = current.stop?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-            val progress = if (start != null && stop != null && stop > start) {
-                ((Instant.now().toEpochMilli() - start.toEpochMilli()).toFloat() /
-                    (stop.toEpochMilli() - start.toEpochMilli()).toFloat()).coerceIn(0f, 1f)
+            val startEpoch = current.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+            val stopEpoch = current.stopEpochMilli?.let { it + (epgTimeShiftHours * 3600_000L) }
+            val nowMilli = Instant.now().toEpochMilli()
+            val progress = if (stopEpoch != null && stopEpoch > startEpoch) {
+                ((nowMilli - startEpoch).toFloat() / (stopEpoch - startEpoch).toFloat()).coerceIn(0f, 1f)
             } else null
             Spacer(Modifier.height(8.dp))
             Text("NOW", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Text(current.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            if (progress != null && start != null && stop != null) {
+            if (progress != null && stopEpoch != null) {
                 Spacer(Modifier.height(6.dp))
                 LinearProgressIndicator(
                     progress = { progress },
@@ -1008,8 +1014,8 @@ private fun PlayerPanel(
                 )
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatProgrammeTime(start), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                    Text(formatProgrammeTime(stop), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(formatProgrammeTime(Instant.ofEpochMilli(startEpoch)), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(formatProgrammeTime(Instant.ofEpochMilli(stopEpoch)), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
             }
             current.description?.let { description ->
@@ -1217,11 +1223,11 @@ private fun FullscreenPlayer(
     val channelIndex = channels.indexOf(channel)
     val previousChannel = channels.getOrNull(channelIndex - 1)
     val nextChannel = channels.getOrNull(channelIndex + 1)
-    val currentStart = schedule?.current?.start?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-    val currentStop = schedule?.current?.stop?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-    val programmeProgress = if (currentStart != null && currentStop != null && currentStop > currentStart) {
-        ((scheduleNow.toEpochMilli() - currentStart.toEpochMilli()).toFloat() /
-            (currentStop.toEpochMilli() - currentStart.toEpochMilli()).toFloat()).coerceIn(0f, 1f)
+    val currentStartEpoch = schedule?.current?.let { it.startEpochMilli + (epgTimeShiftHours * 3600_000L) }
+    val currentStopEpoch = schedule?.current?.stopEpochMilli?.let { it + (epgTimeShiftHours * 3600_000L) }
+    val nowMilli = scheduleNow.toEpochMilli()
+    val programmeProgress = if (currentStartEpoch != null && currentStopEpoch != null && currentStopEpoch > currentStartEpoch) {
+        ((nowMilli - currentStartEpoch).toFloat() / (currentStopEpoch - currentStartEpoch).toFloat()).coerceIn(0f, 1f)
     } else null
     Dialog(
         onDismissRequest = onExit,
@@ -1363,12 +1369,10 @@ private fun FullscreenPlayer(
                                         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Text("WHAT'S NEXT", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                                next.start?.let { nextStart ->
-                                                    val parsedStart = XmlTvTime.parse(nextStart, epgTimeShiftHours)
-                                                    if (parsedStart != null) {
-                                                        Spacer(Modifier.width(6.dp))
-                                                        Text("· ${formatProgrammeTime(parsedStart)}", color = Color.White.copy(alpha = .6f), fontSize = 10.sp)
-                                                    }
+                                                val nextStartEpoch = next.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                                if (nextStartEpoch > 0L) {
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text("· ${formatProgrammeTime(Instant.ofEpochMilli(nextStartEpoch))}", color = Color.White.copy(alpha = .6f), fontSize = 10.sp)
                                                 }
                                             }
                                             Spacer(Modifier.height(2.dp))
@@ -1378,7 +1382,7 @@ private fun FullscreenPlayer(
                                 }
                             }
 
-                            if (programmeProgress != null && currentStart != null && currentStop != null) {
+                            if (programmeProgress != null && currentStartEpoch != null && currentStopEpoch != null) {
                                 Spacer(Modifier.height(10.dp))
                                 LinearProgressIndicator(
                                     progress = { programmeProgress },
@@ -1389,12 +1393,12 @@ private fun FullscreenPlayer(
                                 Spacer(Modifier.height(4.dp))
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(
-                                        formatProgrammeTime(currentStart),
+                                        formatProgrammeTime(Instant.ofEpochMilli(currentStartEpoch)),
                                         color = Color.White.copy(alpha = .65f),
                                         fontSize = 11.sp
                                     )
                                     Text(
-                                        "Ends at ${formatProgrammeTime(currentStop)}",
+                                        "Ends at ${formatProgrammeTime(Instant.ofEpochMilli(currentStopEpoch))}",
                                         color = Color.White.copy(alpha = .65f),
                                         fontSize = 11.sp
                                     )
@@ -1404,27 +1408,36 @@ private fun FullscreenPlayer(
                     }
                 }
             }
-            if (showChannels) {
+            AnimatedVisibility(
+                visible = showChannels,
+                enter = slideInHorizontally { -it } + fadeIn(),
+                exit = slideOutHorizontally { -it } + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterStart)
+            ) {
                 FullscreenChannelDrawer(
                     channels = channels,
                     selectedChannel = channel,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    scheduleNow = scheduleNow,
                     onChannelSelected = {
                         onChannelSelected(it)
                         showChannels = false
                     },
-                    onClose = { showChannels = false },
-                    modifier = Modifier.align(Alignment.CenterStart)
+                    onClose = { showChannels = false }
                 )
             }
-            if (showGuide) {
+            AnimatedVisibility(
+                visible = showGuide,
+                enter = slideInHorizontally { it } + fadeIn(),
+                exit = slideOutHorizontally { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
                 FullscreenGuideDrawer(
                     channel = channel,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
-                    onClose = { showGuide = false },
-                    modifier = Modifier.align(Alignment.CenterEnd)
+                    onClose = { showGuide = false }
                 )
             }
             AnimatedVisibility(
@@ -1480,7 +1493,7 @@ private fun FullscreenGuideDrawer(
     val now = Instant.now()
     val programmes = epgGuide?.programmes?.get(channel.tvgId).orEmpty()
         .filter { programme -> XmlTvTime.parse(programme.stop ?: programme.start, epgTimeShiftHours)?.let { it > now } == true }
-        .sortedBy { XmlTvTime.parse(it.start, epgTimeShiftHours) }
+        .sortedBy { it.startEpochMilli }
     Surface(
         modifier = modifier.fillMaxHeight().width(560.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
@@ -1541,12 +1554,23 @@ private fun FullscreenChannelDrawer(
     selectedChannel: PlaylistChannel,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
+    scheduleNow: Instant,
     onChannelSelected: (PlaylistChannel) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var query by remember { mutableStateOf("") }
     val visibleChannels = channels.searchChannels(query)
+    val listState = rememberLazyListState()
+    val selectedIndex = remember(channels, selectedChannel) {
+        channels.indexOf(selectedChannel).coerceAtLeast(0)
+    }
+    LaunchedEffect(Unit) {
+        if (selectedIndex > 0) {
+            listState.scrollToItem(selectedIndex)
+        }
+    }
+
     Surface(
         modifier = modifier.fillMaxHeight().width(430.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
@@ -1568,16 +1592,20 @@ private fun FullscreenChannelDrawer(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(12.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visibleChannels, key = { "fullscreen:${it.position}:${it.streamUrl}" }) { item ->
-                    val currentProg = epgGuide?.snapshot(item.tvgId, timeShiftHours = epgTimeShiftHours)?.current
-                    val start = currentProg?.start?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-                    val stop = currentProg?.stop?.let { XmlTvTime.parse(it, epgTimeShiftHours) }
-                    val progress = if (start != null && stop != null && stop > start) {
-                        ((Instant.now().toEpochMilli() - start.toEpochMilli()).toFloat() /
-                            (stop.toEpochMilli() - start.toEpochMilli()).toFloat()).coerceIn(0f, 1f)
+                    val currentProg = epgGuide?.snapshot(item.tvgId, scheduleNow, epgTimeShiftHours)?.current
+                    val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
+                        val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                        val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                        if (adjustedStop > adjustedStart) {
+                            ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                        } else null
                     } else null
-                    val endTime = stop?.let { "until ${formatProgrammeTime(it)}" }
+                    val endTime = if (currentProg?.stopEpochMilli != null) {
+                        val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                        "until ${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                    } else null
                     ChannelRow(
                         channel = item,
                         epgChannel = epgGuide?.channels?.get(item.tvgId),
