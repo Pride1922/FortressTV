@@ -2126,6 +2126,9 @@ private fun PlaylistsTab(
             ) {
                 items(playlists, key = { it.id }) { item ->
                     val isActive = item.id == activeProfile?.id
+                    val configuration = LocalConfiguration.current
+                    val isCompact = configuration.screenWidthDp < 600
+
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
@@ -2134,67 +2137,130 @@ private fun PlaylistsTab(
                         else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                if (item.source is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.FolderOpen,
-                                contentDescription = null,
-                                tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
+                        if (isCompact) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(item.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    if (isActive) {
-                                        Spacer(Modifier.width(8.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            contentColor = MaterialTheme.colorScheme.onPrimary
-                                        ) {
-                                            Text(
-                                                strings.active.uppercase(),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
+                                    Icon(
+                                        if (item.source is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.FolderOpen,
+                                        contentDescription = null,
+                                        tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(item.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            if (isActive) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                                ) {
+                                                    Text(
+                                                        strings.active.uppercase(),
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            "${if (item.channelCount > 0) "${strings.channelsCount(item.channelCount)} · " else ""}${formatLastUpdated(item.lastUpdated)}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (!isActive) {
+                                        OutlinedButton(onClick = { onSelectPlaylist(item) }, enabled = !loading, modifier = Modifier.height(34.dp)) {
+                                            Text(strings.switchAction, fontSize = 12.sp)
+                                        }
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    if (item.source is ContentSource.RemoteUrl) {
+                                        IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
+                                            Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(18.dp))
                                         }
                                     }
+                                    IconButton(onClick = { onRenamePlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
+                                        Icon(Icons.Default.Edit, contentDescription = strings.rename, modifier = Modifier.size(18.dp))
+                                    }
+                                    IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
+                                        Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                    }
                                 }
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    "${if (item.channelCount > 0) "${strings.channelsCount(item.channelCount)} · " else ""}${formatLastUpdated(item.lastUpdated)}",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    item.source.value,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
                             }
-                            Spacer(Modifier.width(10.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                if (!isActive) {
-                                    OutlinedButton(onClick = { onSelectPlaylist(item) }, enabled = !loading) {
-                                        Text(strings.switchAction)
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    if (item.source is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.FolderOpen,
+                                    contentDescription = null,
+                                    tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(item.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        if (isActive) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                contentColor = MaterialTheme.colorScheme.onPrimary
+                                            ) {
+                                                Text(
+                                                    strings.active.uppercase(),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
                                     }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        "${if (item.channelCount > 0) "${strings.channelsCount(item.channelCount)} · " else ""}${formatLastUpdated(item.lastUpdated)}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        item.source.value,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
-                                if (item.source is ContentSource.RemoteUrl) {
-                                    IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading) {
-                                        Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist)
+                                Spacer(Modifier.width(10.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (!isActive) {
+                                        OutlinedButton(onClick = { onSelectPlaylist(item) }, enabled = !loading) {
+                                            Text(strings.switchAction)
+                                        }
                                     }
-                                }
-                                IconButton(onClick = { onRenamePlaylist(item) }, enabled = !loading) {
-                                    Icon(Icons.Default.Edit, contentDescription = strings.rename)
-                                }
-                                IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading) {
-                                    Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error)
+                                    if (item.source is ContentSource.RemoteUrl) {
+                                        IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading) {
+                                            Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist)
+                                        }
+                                    }
+                                    IconButton(onClick = { onRenamePlaylist(item) }, enabled = !loading) {
+                                        Icon(Icons.Default.Edit, contentDescription = strings.rename)
+                                    }
+                                    IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading) {
+                                        Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error)
+                                    }
                                 }
                             }
                         }
@@ -2219,15 +2285,18 @@ private fun EpgTab(
     onEpgTimeShiftChanged: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(strings.xmltvSource, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(strings.xmltvSource, fontSize = if (isCompact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Schedule listings and channel programme timelines.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 13.sp
+            fontSize = 12.sp
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
         Surface(
             shape = RoundedCornerShape(14.dp),
@@ -2235,21 +2304,28 @@ private fun EpgTab(
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(Modifier.padding(16.dp)) {
+            Column(Modifier.padding(if (isCompact) 14.dp else 16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        if (epgSource is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.DateRange,
+                        contentDescription = null,
+                        tint = if (epgSource != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
                             epgSourceName ?: strings.noEpgConfiguredMsg,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         if (epgSource != null) {
+                            Spacer(Modifier.height(2.dp))
                             Text(
                                 formatLastUpdated(epgLastUpdate),
                                 fontSize = 12.sp,
@@ -2259,24 +2335,61 @@ private fun EpgTab(
                         }
                     }
                     if (epgSource is ContentSource.RemoteUrl) {
-                        Button(onClick = onRefreshEpg, enabled = !loading) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.refresh)
+                        IconButton(onClick = onRefreshEpg, enabled = !loading) {
+                            Icon(Icons.Default.Refresh, contentDescription = strings.refresh, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onEpgUrl, enabled = !loading) {
-                        Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl)
-                    }
-                    OutlinedButton(onClick = onEpgFile, enabled = !loading) {
-                        Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile)
+
+                Spacer(Modifier.height(14.dp))
+
+                if (isCompact) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onEpgUrl,
+                            enabled = !loading,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl, maxLines = 1, fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onEpgFile,
+                            enabled = !loading,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile, maxLines = 1, fontSize = 12.sp)
+                        }
                     }
                     if (epgSource != null) {
-                        TextButton(onClick = onRemoveEpg, enabled = !loading) {
-                            Text(strings.removeEpg, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(6.dp))
+                        TextButton(
+                            onClick = onRemoveEpg,
+                            enabled = !loading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.removeEpg, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                        }
+                    }
+                } else {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(onClick = onEpgUrl, enabled = !loading) {
+                            Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl)
+                        }
+                        OutlinedButton(onClick = onEpgFile, enabled = !loading) {
+                            Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile)
+                        }
+                        if (epgSource != null) {
+                            TextButton(onClick = onRemoveEpg, enabled = !loading) {
+                                Text(strings.removeEpg, color = MaterialTheme.colorScheme.error)
+                            }
                         }
                     }
                 }
@@ -2285,52 +2398,66 @@ private fun EpgTab(
 
         Spacer(Modifier.height(20.dp))
         HorizontalDivider()
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
 
-        Text(strings.timeShift, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(strings.timeShift, fontSize = if (isCompact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             strings.timeShiftDesc,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 13.sp
+            fontSize = 12.sp
         )
         Spacer(Modifier.height(12.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            OutlinedButton(
-                onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
-                enabled = epgTimeShiftHours > -23 && !loading
-            ) {
-                Text("-1 h", fontWeight = FontWeight.Bold)
-            }
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.defaultMinSize(minWidth = 110.dp)
-            ) {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
-                    val shiftDisplay = when {
-                        epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
-                        epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
-                        else -> "0 h"
-                    }
-                    Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-            OutlinedButton(
-                onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
-                enabled = epgTimeShiftHours < 23 && !loading
-            ) {
-                Text("+1 h", fontWeight = FontWeight.Bold)
-            }
-            if (epgTimeShiftHours != 0) {
-                TextButton(
-                    onClick = { onEpgTimeShiftChanged(0) },
-                    enabled = !loading
+            Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(strings.retry)
+                    FilledTonalButton(
+                        onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
+                        enabled = epgTimeShiftHours > -23 && !loading
+                    ) {
+                        Text("-1 h", fontWeight = FontWeight.Bold)
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.widthIn(min = 90.dp)
+                    ) {
+                        Box(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+                            val shiftDisplay = when {
+                                epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
+                                epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
+                                else -> "0 h"
+                            }
+                            Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+
+                    FilledTonalButton(
+                        onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
+                        enabled = epgTimeShiftHours < 23 && !loading
+                    ) {
+                        Text("+1 h", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (epgTimeShiftHours != 0) {
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { onEpgTimeShiftChanged(0) },
+                        enabled = !loading
+                    ) {
+                        Text(strings.retry)
+                    }
                 }
             }
         }
