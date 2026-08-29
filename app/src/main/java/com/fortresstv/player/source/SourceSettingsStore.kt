@@ -4,6 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.fortresstv.player.playlist.PlaylistProfile
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -13,17 +16,122 @@ import javax.crypto.spec.GCMParameterSpec
 class SourceSettingsStore(context: Context) {
     private val preferences = context.getSharedPreferences("fortress_sources", Context.MODE_PRIVATE)
 
-    fun playlistSource(): ContentSource? = readSource("playlist")
+    fun getPlaylists(): List<PlaylistProfile> {
+        val raw = preferences.getString("playlist_profiles_json", null)?.let(::decrypt)
+        if (raw.isNullOrBlank()) {
+            val legacy = readSource("playlist")
+            if (legacy != null) {
+                val profile = PlaylistProfile(
+                    id = "default_playlist",
+                    name = legacy.displayName.ifBlank { "My Playlist" },
+                    source = legacy,
+                    lastUpdated = lastLegacyPlaylistUpdate(),
+                    channelCount = 0
+                )
+                val list = listOf(profile)
+                savePlaylistsList(list)
+                setActivePlaylistId(profile.id)
+                return list
+            }
+            return emptyList()
+        }
+
+        return parsePlaylistsJson(raw)
+    }
+
+    private fun parsePlaylistsJson(json: String): List<PlaylistProfile> = runCatching {
+        val array = JSONArray(json)
+        val list = mutableListOf<PlaylistProfile>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val id = obj.getString("id")
+            val name = obj.getString("name")
+            val type = obj.getString("type")
+            val value = obj.getString("value")
+            val displayName = obj.optString("displayName", name)
+            val lastUpdated = obj.optLong("lastUpdated", 0L)
+            val channelCount = obj.optInt("channelCount", 0)
+            val source = if (type == "file") ContentSource.LocalFile(value, displayName) else ContentSource.RemoteUrl(value, displayName)
+            list.add(PlaylistProfile(id, name, source, lastUpdated, channelCount))
+        }
+        list
+    }.getOrElse { emptyList() }
+
+    fun savePlaylistProfile(profile: PlaylistProfile) {
+        val current = getPlaylists().toMutableList()
+        val index = current.indexOfFirst { it.id == profile.id }
+        if (index >= 0) {
+            current[index] = profile
+        } else {
+            current.add(profile)
+        }
+        savePlaylistsList(current)
+        if (getActivePlaylistId() == null) {
+            setActivePlaylistId(profile.id)
+        }
+    }
+
+    fun deletePlaylistProfile(id: String) {
+        val current = getPlaylists().filter { it.id != id }
+        savePlaylistsList(current)
+        if (getActivePlaylistId() == id) {
+            val nextActive = current.firstOrNull()?.id
+            if (nextActive != null) setActivePlaylistId(nextActive)
+            else preferences.edit().remove("active_playlist_id").apply()
+        }
+    }
+
+    private fun savePlaylistsList(list: List<PlaylistProfile>) {
+        val array = JSONArray()
+        for (p in list) {
+            val obj = JSONObject().apply {
+                put("id", p.id)
+                put("name", p.name)
+                put("type", if (p.source is ContentSource.LocalFile) "file" else "url")
+                put("value", p.source.value)
+                put("displayName", p.source.displayName)
+                put("lastUpdated", p.lastUpdated)
+                put("channelCount", p.channelCount)
+            }
+            array.put(obj)
+        }
+        preferences.edit().putString("playlist_profiles_json", encrypt(array.toString())).apply()
+    }
+
+    fun getActivePlaylistId(): String? = preferences.getString("active_playlist_id", null)
+
+    fun setActivePlaylistId(id: String) {
+        preferences.edit().putString("active_playlist_id", id).apply()
+    }
+
+    fun getActivePlaylist(): PlaylistProfile? {
+        val playlists = getPlaylists()
+        val activeId = getActivePlaylistId()
+        return playlists.find { it.id == activeId } ?: playlists.firstOrNull()
+    }
 
     fun epgSource(): ContentSource? = readSource("epg")
 
-    fun savePlaylist(source: ContentSource) = saveSource("playlist", source)
-
     fun saveEpg(source: ContentSource) = saveSource("epg", source)
 
-    fun clearPlaylist() = clearSource("playlist")
+    fun clearEpg() {
+        clearSource("epg")
+        preferences.edit().remove("epg_last_update").apply()
+    }
 
-    fun clearEpg() = clearSource("epg")
+    fun lastEpgUpdate(): Long = preferences.getLong("epg_last_update", 0L)
+
+    fun setLastEpgUpdate(time: Long) {
+        preferences.edit().putLong("epg_last_update", time).apply()
+    }
+
+    fun epgTimeShiftHours(): Int = preferences.getInt("epg_time_shift_hours", 0)
+
+    fun saveEpgTimeShiftHours(hours: Int) {
+        preferences.edit().putInt("epg_time_shift_hours", hours).apply()
+    }
+
+    private fun lastLegacyPlaylistUpdate(): Long = preferences.getLong("playlist_last_update", 0L)
 
     private fun saveSource(prefix: String, source: ContentSource) {
         preferences.edit()

@@ -1,5 +1,7 @@
 package com.fortresstv.player.playlist
 
+import com.fortresstv.player.source.ContentSource
+
 data class PlaylistChannel(
     val position: Int,
     val name: String,
@@ -15,3 +17,11 @@ data class Playlist(
 ) {
     val groups: List<String> = channels.mapNotNull { it.group }.distinct()
 }
+
+data class PlaylistProfile(
+    val id: String,
+    val name: String,
+    val source: ContentSource,
+    val lastUpdated: Long = 0L,
+    val channelCount: Int = 0
+)
