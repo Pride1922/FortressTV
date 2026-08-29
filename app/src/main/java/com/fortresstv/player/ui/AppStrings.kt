@@ -120,6 +120,8 @@ interface Strings {
     val downloadingUpdate: String
     val updateNow: String
     val installUpdate: String
+    val later: String
+    val newUpdateAvailable: String
     fun updateFailed(error: String): String
 }
 
@@ -221,6 +223,8 @@ object EnglishStrings : Strings {
     override val downloadingUpdate = "Downloading update..."
     override val updateNow = "Update Now"
     override val installUpdate = "Install Update"
+    override val later = "Later"
+    override val newUpdateAvailable = "New Update Available"
     override fun updateFailed(error: String) = "Update failed: $error"
 }
 
@@ -322,6 +326,8 @@ object PortugueseStrings : Strings {
     override val downloadingUpdate = "A transferir atualização..."
     override val updateNow = "Atualizar Agora"
     override val installUpdate = "Instalar Atualização"
+    override val later = "Mais Tarde"
+    override val newUpdateAvailable = "Nova Atualização Disponível"
     override fun updateFailed(error: String) = "Falha na atualização: $error"
 }
 

@@ -176,6 +176,19 @@ private fun FortressTVApp() {
     var showEpgUrlDialog by remember { mutableStateOf(false) }
     var showRemoveEpgConfirm by remember { mutableStateOf(false) }
 
+    var startupUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var startupUpdateProgress by remember { mutableFloatStateOf(-1f) }
+    var startupUpdateError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
+            if (info != null) {
+                startupUpdateInfo = info
+            }
+        }
+    }
+
     fun onLanguageChanged(newLang: AppLanguage) {
         appLanguage = newLang
         scope.launch(Dispatchers.IO) {
@@ -562,6 +575,32 @@ private fun FortressTVApp() {
                 onEpgTimeShiftChanged = { shift ->
                     epgTimeShiftHours = shift
                     settings.saveEpgTimeShiftHours(shift)
+                }
+            )
+        }
+
+        startupUpdateInfo?.let { updateInfo ->
+            StartupUpdateDialog(
+                updateInfo = updateInfo,
+                progress = startupUpdateProgress,
+                error = startupUpdateError,
+                onDismiss = {
+                    startupUpdateInfo = null
+                    startupUpdateProgress = -1f
+                    startupUpdateError = null
+                },
+                onStartUpdate = {
+                    startupUpdateProgress = 0f
+                    startupUpdateError = null
+                    scope.launch {
+                        val result = UpdateManager.downloadAndInstall(context, updateInfo.downloadUrl) { p ->
+                            startupUpdateProgress = p
+                        }
+                        if (result.isFailure) {
+                            startupUpdateProgress = -1f
+                            startupUpdateError = result.exceptionOrNull()?.localizedMessage ?: "Download failed"
+                        }
+                    }
                 }
             )
         }
@@ -2860,6 +2899,124 @@ private fun SourceUrlDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }
     )
+}
+
+@Composable
+private fun StartupUpdateDialog(
+    updateInfo: AppUpdateInfo,
+    progress: Float,
+    error: String?,
+    onDismiss: () -> Unit,
+    onStartUpdate: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    Dialog(onDismissRequest = { if (progress < 0f) onDismiss() }) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(Modifier.padding(24.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.SystemUpdate,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            strings.newUpdateAvailable,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            "v${updateInfo.versionName}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                if (updateInfo.releaseNotes.isNotBlank()) {
+                    Spacer(Modifier.height(16.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(
+                                updateInfo.releaseNotes,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 5,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                if (progress >= 0f) {
+                    Spacer(Modifier.height(16.dp))
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(strings.downloadingUpdate, fontSize = 13.sp)
+                            Text("${(progress * 100).toInt()}%", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
+                        )
+                    }
+                }
+
+                if (error != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        strings.updateFailed(error),
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (progress < 0f) {
+                        TextButton(onClick = onDismiss) {
+                            Text(strings.later)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = onStartUpdate) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.updateNow)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
