@@ -593,7 +593,7 @@ private fun FortressTVApp() {
                     startupUpdateProgress = 0f
                     startupUpdateError = null
                     scope.launch {
-                        val result = UpdateManager.downloadAndInstall(context, updateInfo.downloadUrl) { p ->
+                        val result = UpdateManager.downloadAndInstall(context, updateInfo.downloadUrl, updateInfo.sha256) { p ->
                             startupUpdateProgress = p
                         }
                         if (result.isFailure) {
@@ -2537,7 +2537,7 @@ private fun AboutTab(
         downloadProgress = 0f
         updateError = null
         scope.launch {
-            val result = UpdateManager.downloadAndInstall(context, info.downloadUrl) { progress ->
+            val result = UpdateManager.downloadAndInstall(context, info.downloadUrl, info.sha256) { progress ->
                 downloadProgress = progress
             }
             if (result.isFailure) {

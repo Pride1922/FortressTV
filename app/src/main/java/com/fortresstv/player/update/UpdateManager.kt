@@ -2,6 +2,8 @@ package com.fortresstv.player.update
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -14,11 +16,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 data class AppUpdateInfo(
     val versionName: String,
     val releaseNotes: String,
     val downloadUrl: String,
+    val sha256: String,
     val htmlUrl: String = ""
 )
 
@@ -32,6 +36,7 @@ object UpdateManager {
     ): AppUpdateInfo? = withContext(Dispatchers.IO) {
         runCatching {
             val url = URL(endpointUrl)
+            require(url.protocol.equals("https", true)) { "Update checks require HTTPS." }
             var connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10000
                 readTimeout = 10000
@@ -41,9 +46,10 @@ object UpdateManager {
 
             var redirectCount = 0
             while (connection.responseCode in listOf(301, 302, 303, 307, 308) && redirectCount < 5) {
-                val newUrl = connection.getHeaderField("Location")
+                val newUrl = URL(connection.url, connection.getHeaderField("Location"))
+                require(newUrl.protocol.equals("https", true)) { "Update redirects must use HTTPS." }
                 connection.disconnect()
-                connection = (URL(newUrl).openConnection() as HttpURLConnection).apply {
+                connection = (newUrl.openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10000
                     readTimeout = 10000
                     setRequestProperty("User-Agent", "FortressTV-App")
@@ -59,6 +65,7 @@ object UpdateManager {
             val tagName = json.optString("version", json.optString("tag_name", "")).removePrefix("v").removePrefix("V").trim()
             val releaseNotes = json.optString("notes", json.optString("body", "")).trim()
             val htmlUrl = json.optString("html_url", "")
+            val sha256 = json.optString("sha256", json.optString("apkSha256", "")).trim().lowercase()
 
             if (tagName.isBlank() || !isNewerVersion(currentVersion, tagName)) {
                 return@runCatching null
@@ -87,6 +94,7 @@ object UpdateManager {
                 versionName = tagName,
                 releaseNotes = releaseNotes,
                 downloadUrl = downloadUrl,
+                sha256 = sha256,
                 htmlUrl = htmlUrl
             )
         }.getOrNull()
@@ -109,10 +117,17 @@ object UpdateManager {
     suspend fun downloadAndInstall(
         context: Context,
         downloadUrl: String,
+        expectedSha256: String,
         onProgress: (Float) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        val updateDir = context.cacheDir.resolve("updates").apply { mkdirs() }
+        val apkFile = File(updateDir, "FortressTV-update.apk").apply { delete() }
         runCatching {
             val url = URL(downloadUrl)
+            require(url.protocol.equals("https", true)) { "Updates must be downloaded over HTTPS." }
+            require(expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) {
+                "The update metadata does not contain a valid SHA-256 checksum."
+            }
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15000
                 readTimeout = 30000
@@ -124,9 +139,10 @@ object UpdateManager {
             var finalConnection = connection
             var redirectCount = 0
             while (finalConnection.responseCode in listOf(301, 302, 303, 307, 308) && redirectCount < 5) {
-                val newUrl = finalConnection.getHeaderField("Location")
+                val newUrl = URL(finalConnection.url, finalConnection.getHeaderField("Location"))
+                require(newUrl.protocol.equals("https", true)) { "Update redirects must use HTTPS." }
                 finalConnection.disconnect()
-                finalConnection = (URL(newUrl).openConnection() as HttpURLConnection).apply {
+                finalConnection = (newUrl.openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000
                     readTimeout = 30000
                     setRequestProperty("User-Agent", "FortressTV-App")
@@ -134,11 +150,12 @@ object UpdateManager {
                 redirectCount++
             }
 
+            require(finalConnection.responseCode == HttpURLConnection.HTTP_OK) {
+                "Update download failed with HTTP ${finalConnection.responseCode}."
+            }
             val totalBytes = finalConnection.contentLengthLong
-            val updateDir = context.cacheDir.resolve("updates").apply { mkdirs() }
-            val apkFile = File(updateDir, "FortressTV-update.apk")
-            if (apkFile.exists()) apkFile.delete()
-
+            val maxUpdateBytes = 100L * 1024L * 1024L
+            require(totalBytes <= 0L || totalBytes <= maxUpdateBytes) { "The update file is too large." }
             finalConnection.inputStream.use { input ->
                 FileOutputStream(apkFile).use { output ->
                     val buffer = ByteArray(8192)
@@ -147,6 +164,7 @@ object UpdateManager {
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         output.write(buffer, 0, bytesRead)
                         totalRead += bytesRead
+                        require(totalRead <= maxUpdateBytes) { "The update file is too large." }
                         if (totalBytes > 0) {
                             val progress = (totalRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
                             withContext(Dispatchers.Main) { onProgress(progress) }
@@ -155,9 +173,72 @@ object UpdateManager {
                 }
             }
 
+            val actualSha256 = apkFile.inputStream().use { input ->
+                val digest = MessageDigest.getInstance("SHA-256")
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+                digest.digest().joinToString("") { "%02x".format(it) }
+            }
+            require(actualSha256.equals(expectedSha256, true)) {
+                apkFile.delete()
+                "The update checksum does not match. The file was deleted."
+            }
+            verifyDownloadedApk(context, apkFile)
+
             withContext(Dispatchers.Main) {
                 installApk(context, apkFile)
             }
+        }.onFailure { apkFile.delete() }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyDownloadedApk(context: Context, apkFile: File) {
+        val packageManager = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+        val archiveInfo = packageManager.getPackageArchiveInfo(apkFile.absolutePath, flags)
+            ?: run {
+                apkFile.delete()
+                error("The downloaded file is not a valid APK.")
+            }
+        require(archiveInfo.packageName == context.packageName) {
+            apkFile.delete()
+            "The update belongs to a different application. The file was deleted."
+        }
+        val installedInfo = packageManager.getPackageInfo(context.packageName, flags)
+        require(versionCode(archiveInfo) > versionCode(installedInfo)) {
+            apkFile.delete()
+            "The downloaded APK is not newer than the installed version."
+        }
+        val archiveCertificates = signingCertificates(archiveInfo)
+        val installedCertificates = signingCertificates(installedInfo)
+        require(archiveCertificates.isNotEmpty() && archiveCertificates == installedCertificates) {
+            apkFile.delete()
+            "The update signature does not match FortressTV. The file was deleted."
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun versionCode(info: PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+
+    @Suppress("DEPRECATION")
+    private fun signingCertificates(info: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners.orEmpty()
+        } else {
+            info.signatures.orEmpty()
+        }
+        return signatures.mapTo(mutableSetOf()) { signature ->
+            MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                .joinToString("") { "%02x".format(it) }
         }
     }
 
