@@ -24,6 +24,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.fortresstv.player.playlist.M3uParser
 import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
@@ -320,6 +328,7 @@ private fun ChannelBrowser(
     val allGroup = "All channels"
     var selectedGroup by remember(playlist) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
+    var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
     val channelsInGroup = if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
     val visibleChannels = channelsInGroup.searchChannels(searchQuery)
 
@@ -382,16 +391,30 @@ private fun ChannelBrowser(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
-                    ChannelRow(channel, epgGuide?.channels?.get(channel.tvgId))
-                }
-                if (visibleChannels.isEmpty()) {
-                    item {
-                        Box(Modifier.fillParentMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                            Text("No channels match your search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(430.dp).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
+                        ChannelRow(
+                            channel = channel,
+                            epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                            selected = selectedChannel == channel,
+                            onClick = { selectedChannel = channel }
+                        )
+                    }
+                    if (visibleChannels.isEmpty()) {
+                        item {
+                            Box(Modifier.fillParentMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                                Text("No channels match your search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
+                }
+                selectedChannel?.let { channel ->
+                    Spacer(Modifier.width(16.dp))
+                    PlayerPanel(channel = channel, modifier = Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
@@ -413,10 +436,17 @@ private fun GroupItem(name: String, count: Int, selected: Boolean, onClick: () -
 }
 
 @Composable
-private fun ChannelRow(channel: PlaylistChannel, epgChannel: com.fortresstv.player.epg.EpgChannel?) {
+private fun ChannelRow(
+    channel: PlaylistChannel,
+    epgChannel: com.fortresstv.player.epg.EpgChannel?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
     Surface(
+        onClick = onClick,
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .18f)
+        else MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -440,6 +470,82 @@ private fun ChannelRow(channel: PlaylistChannel, epgChannel: com.fortresstv.play
             }
             Text("#${channel.position + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@UnstableApi
+@Composable
+private fun PlayerPanel(channel: PlaylistChannel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val player = remember {
+        ExoPlayer.Builder(context).build().apply { playWhenReady = true }
+    }
+    var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = error.message ?: "This channel could not be played."
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+
+    LaunchedEffect(channel.streamUrl) {
+        playbackError = null
+        player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+        player.prepare()
+        player.play()
+    }
+
+    Column(modifier) {
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(14.dp)).background(Color.Black)
+        ) {
+            AndroidView(
+                factory = { viewContext ->
+                    PlayerView(viewContext).apply {
+                        this.player = player
+                        useController = true
+                        controllerAutoShow = true
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        keepScreenOn = true
+                    }
+                },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxSize()
+            )
+            if (playbackState == Player.STATE_BUFFERING) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.primary)
+            }
+            playbackError?.let { message ->
+                Column(
+                    Modifier.align(Alignment.Center).padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(message, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = {
+                        playbackError = null
+                        player.prepare()
+                        player.play()
+                    }) { Text("Retry") }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text("Live channel", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
