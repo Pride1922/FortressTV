@@ -21,6 +21,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.AspectRatio
@@ -810,6 +812,7 @@ private fun ChannelBrowser(
                         epgGuide = epgGuide,
                         epgTimeShiftHours = epgTimeShiftHours,
                         channels = playlist.channels,
+                        groups = playlist.groups,
                         onChannelSelected = ::selectChannel,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
@@ -938,6 +941,7 @@ private fun PlayerPanel(
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
+    groups: List<String> = emptyList(),
     onChannelSelected: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1044,6 +1048,7 @@ private fun PlayerPanel(
             epgGuide = epgGuide,
             epgTimeShiftHours = epgTimeShiftHours,
             channels = channels,
+            groups = groups,
             onChannelSelected = onChannelSelected,
             onExit = { fullscreen = false },
             onRetry = {
@@ -1068,12 +1073,12 @@ private fun VideoSurface(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var controlsVisible by remember(fullscreen) { mutableStateOf(true) }
+    var controlsVisible by remember { mutableStateOf(true) }
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     var gestureLevel by remember { mutableStateOf<GestureLevel?>(null) }
     LaunchedEffect(gestureLevel) {
         if (gestureLevel != null) {
-            delay(850)
+            delay(1_500)
             gestureLevel = null
         }
     }
@@ -1161,20 +1166,15 @@ private fun VideoSurface(
                 }
             }
         }
-        AnimatedVisibility(
-            visible = !fullscreen || controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopEnd)
-        ) {
+        if (!fullscreen) {
             TextButton(
                 onClick = onFullscreen,
-                modifier = Modifier.padding(8.dp),
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 colors = ButtonDefaults.textButtonColors(
                     containerColor = Color.Black.copy(alpha = .62f),
                     contentColor = Color.White
                 )
-            ) { Text(if (fullscreen) "Exit fullscreen" else "Fullscreen") }
+            ) { Text("Fullscreen") }
         }
     }
 }
@@ -1189,6 +1189,7 @@ private fun FullscreenPlayer(
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
+    groups: List<String> = emptyList(),
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
     onRetry: () -> Unit
@@ -1257,6 +1258,13 @@ private fun FullscreenPlayer(
                         modifier = Modifier.align(Alignment.TopStart).padding(14.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        FilledIconButton(
+                            onClick = onExit,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f),
+                                contentColor = Color.White
+                            )
+                        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                         FilledIconButton(
                             onClick = { showChannels = true },
                             colors = IconButtonDefaults.filledIconButtonColors(
@@ -1416,6 +1424,7 @@ private fun FullscreenPlayer(
             ) {
                 FullscreenChannelDrawer(
                     channels = channels,
+                    groups = groups,
                     selectedChannel = channel,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
@@ -1551,6 +1560,7 @@ private fun formatProgrammeRange(start: String, stop: String?, timeShiftHours: I
 @Composable
 private fun FullscreenChannelDrawer(
     channels: List<PlaylistChannel>,
+    groups: List<String> = emptyList(),
     selectedChannel: PlaylistChannel,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
@@ -1559,39 +1569,68 @@ private fun FullscreenChannelDrawer(
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var query by remember { mutableStateOf("") }
-    val visibleChannels = channels.searchChannels(query)
-    val listState = rememberLazyListState()
-    val selectedIndex = remember(channels, selectedChannel) {
-        channels.indexOf(selectedChannel).coerceAtLeast(0)
+    val allGroup = "All"
+    var selectedGroup by remember(selectedChannel) {
+        mutableStateOf(selectedChannel.group ?: allGroup)
     }
-    LaunchedEffect(Unit) {
-        if (selectedIndex > 0) {
-            listState.scrollToItem(selectedIndex)
-        }
+    var query by remember { mutableStateOf("") }
+    val channelsInGroup = remember(channels, selectedGroup) {
+        if (selectedGroup == allGroup) channels else channels.filter { it.group == selectedGroup }
+    }
+    val visibleChannels = remember(channelsInGroup, query) {
+        channelsInGroup.searchChannels(query)
+    }
+    val listState = rememberLazyListState()
+    val selectedIndex = remember(visibleChannels, selectedChannel) {
+        visibleChannels.indexOf(selectedChannel).coerceAtLeast(0)
+    }
+    LaunchedEffect(selectedGroup, query) {
+        listState.scrollToItem(0)
     }
 
     Surface(
-        modifier = modifier.fillMaxHeight().width(430.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
-        shadowElevation = 12.dp
+        modifier = modifier.fillMaxHeight().width(460.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
+        shadowElevation = 16.dp
     ) {
         Column(Modifier.padding(18.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Channels", fontSize = 25.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Channels", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text("Close") }
             }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Search channels") },
+                placeholder = { Text("Search in ${if (selectedGroup == allGroup) "all channels" else selectedGroup}") },
                 singleLine = true,
                 trailingIcon = {
                     if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Text("×", fontSize = 24.sp) }
                 },
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(12.dp))
+            if (groups.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedGroup == allGroup,
+                            onClick = { selectedGroup = allGroup },
+                            label = { Text("All (${channels.size})", fontSize = 12.sp) }
+                        )
+                    }
+                    items(groups, key = { it }) { group ->
+                        FilterChip(
+                            selected = selectedGroup == group,
+                            onClick = { selectedGroup = group },
+                            label = { Text(group, fontSize = 12.sp) }
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visibleChannels, key = { "fullscreen:${it.position}:${it.streamUrl}" }) { item ->
                     val currentProg = epgGuide?.snapshot(item.tvgId, scheduleNow, epgTimeShiftHours)?.current
