@@ -142,6 +142,13 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putString("app_language", lang).apply()
     }
 
+    fun playChannelsFullscreen(): Boolean =
+        preferences.getBoolean("play_channels_fullscreen", false)
+
+    fun setPlayChannelsFullscreen(enabled: Boolean) {
+        preferences.edit().putBoolean("play_channels_fullscreen", enabled).apply()
+    }
+
     private fun lastLegacyPlaylistUpdate(): Long = preferences.getLong("playlist_last_update", 0L)
 
     private fun saveSource(prefix: String, source: ContentSource) {

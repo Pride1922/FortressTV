@@ -24,6 +24,7 @@ enum class AppLanguage(val code: String, val displayName: String, val flag: Stri
 }
 
 interface Strings {
+    val languageTag: String
     val appName: String
     val allChannels: String
     fun searchInGroup(group: String): String
@@ -49,6 +50,12 @@ interface Strings {
     val switchPlaylist: String
     val epgNotConfigured: String
     fun epgMatched(matched: Int, total: Int): String
+    val unmatchedEpgChannels: String
+    val allEpgMatched: String
+    val missingTvgId: String
+    fun tvgIdNotFound(id: String): String
+    fun unmatchedEpgCount(count: Int): String
+    val viewUnmatchedChannels: String
     val xmltvGuide: String
     val now: String
     val next: String
@@ -60,6 +67,11 @@ interface Strings {
     val noEpgId: String
     val noEpgData: String
     val programmeGuide: String
+    fun todayDate(dayOfMonth: Int): String
+    val watchNow: String
+    val watchLiveChannel: String
+    val zoomInTimeline: String
+    val zoomOutTimeline: String
     val channelList: String
     val aspectRatio: String
     val lockControls: String
@@ -81,6 +93,7 @@ interface Strings {
     val enterXmltvUrl: String
     val loadPlaylist: String
     val loadingPlaylist: String
+    val loadingSavedData: String
     val restoringSecureSession: String
     val selectM3uError: String
 
@@ -89,6 +102,9 @@ interface Strings {
     val tabEpg: String
     val tabGeneral: String
     val language: String
+    val playback: String
+    val playChannelsFullscreen: String
+    val playChannelsFullscreenDesc: String
     val addNewPlaylist: String
     val addPlaylist: String
     val playlistName: String
@@ -111,6 +127,9 @@ interface Strings {
     val timeShiftDesc: String
     val securityTitle: String
     val securityDesc: String
+    val openSourceSoftware: String
+    val ffmpegAttribution: String
+    val viewSourceCode: String
     val appVersion: String
     val checkForUpdates: String
     val checkingForUpdates: String
@@ -126,6 +145,7 @@ interface Strings {
 }
 
 object EnglishStrings : Strings {
+    override val languageTag = "en-GB"
     override val appName = "FortressTV"
     override val allChannels = "All channels"
     override fun searchInGroup(group: String) = "Search in $group"
@@ -151,6 +171,12 @@ object EnglishStrings : Strings {
     override val switchPlaylist = "Switch playlist"
     override val epgNotConfigured = "EPG not configured"
     override fun epgMatched(matched: Int, total: Int) = "EPG: $matched/$total matched"
+    override val unmatchedEpgChannels = "Unmatched EPG Channels"
+    override val allEpgMatched = "All channels are matched with EPG"
+    override val missingTvgId = "Missing tvg-id in playlist"
+    override fun tvgIdNotFound(id: String) = "tvg-id \"$id\" not found in XMLTV"
+    override fun unmatchedEpgCount(count: Int) = "$count missing"
+    override val viewUnmatchedChannels = "View unmatched channels"
     override val xmltvGuide = "XMLTV guide"
     override val now = "NOW"
     override val next = "NEXT"
@@ -162,6 +188,11 @@ object EnglishStrings : Strings {
     override val noEpgId = "No EPG ID"
     override val noEpgData = "No EPG data"
     override val programmeGuide = "Programme guide"
+    override fun todayDate(dayOfMonth: Int) = "Today $dayOfMonth"
+    override val watchNow = "Watch now"
+    override val watchLiveChannel = "Watch live channel"
+    override val zoomInTimeline = "Zoom in timeline"
+    override val zoomOutTimeline = "Zoom out timeline"
     override val channelList = "Channels"
     override val aspectRatio = "Aspect ratio"
     override val lockControls = "Lock controls"
@@ -183,6 +214,7 @@ object EnglishStrings : Strings {
     override val enterXmltvUrl = "https://example.com/epg.xml"
     override val loadPlaylist = "Load Playlist"
     override val loadingPlaylist = "Loading playlist..."
+    override val loadingSavedData = "Loading saved playlist and programme guide..."
     override val restoringSecureSession = "Restoring secure session..."
     override val selectM3uError = "Please enter an M3U URL or select a local file."
 
@@ -191,6 +223,9 @@ object EnglishStrings : Strings {
     override val tabEpg = "Programme Guide (EPG)"
     override val tabGeneral = "General & About"
     override val language = "Language"
+    override val playback = "Playback"
+    override val playChannelsFullscreen = "Open channels in fullscreen"
+    override val playChannelsFullscreenDesc = "Enter fullscreen immediately when you select a channel."
     override val addNewPlaylist = "Add New Playlist"
     override val addPlaylist = "Add Playlist"
     override val playlistName = "Playlist Name"
@@ -213,6 +248,9 @@ object EnglishStrings : Strings {
     override val timeShiftDesc = "Adjust this if programme times are offset from your local timezone."
     override val securityTitle = "FortressTV Security & Privacy"
     override val securityDesc = "Hardware-backed AES-256 encryption via Android KeyStore. All sources and cached stream tokens remain private on this device."
+    override val openSourceSoftware = "Open-source software"
+    override val ffmpegAttribution = "FortressTV uses FFmpeg 6.0 under the LGPL v2.1 or later to decode otherwise unsupported MPEG audio. The corresponding source and build instructions are available in the FortressTV repository."
+    override val viewSourceCode = "View source and licences"
     override val appVersion = "Version 1.0.0"
 
     override val checkForUpdates = "Check for Updates"
@@ -229,6 +267,7 @@ object EnglishStrings : Strings {
 }
 
 object PortugueseStrings : Strings {
+    override val languageTag = "pt-PT"
     override val appName = "FortressTV"
     override val allChannels = "Todos os canais"
     override fun searchInGroup(group: String) = "Pesquisar em $group"
@@ -254,8 +293,14 @@ object PortugueseStrings : Strings {
     override val switchPlaylist = "Mudar de lista"
     override val epgNotConfigured = "EPG não configurado"
     override fun epgMatched(matched: Int, total: Int) = "EPG: $matched/$total correspondidos"
+    override val unmatchedEpgChannels = "Canais sem EPG correspondente"
+    override val allEpgMatched = "Todos os canais têm EPG correspondente"
+    override val missingTvgId = "Sem atributo tvg-id na lista"
+    override fun tvgIdNotFound(id: String) = "tvg-id \"$id\" não encontrado no XMLTV"
+    override fun unmatchedEpgCount(count: Int) = "$count em falta"
+    override val viewUnmatchedChannels = "Ver canais sem correspondência"
     override val xmltvGuide = "Guia XMLTV"
-    override val now = "A DAR"
+    override val now = "Agora"
     override val next = "SEGUINTE"
     override val whatsNext = "A SEGUIR"
     override fun endsAt(time: String) = "Termina às $time"
@@ -265,6 +310,11 @@ object PortugueseStrings : Strings {
     override val noEpgId = "Sem ID de EPG"
     override val noEpgData = "Sem dados de EPG"
     override val programmeGuide = "Guia de programação"
+    override fun todayDate(dayOfMonth: Int) = "Hoje $dayOfMonth"
+    override val watchNow = "Ver agora"
+    override val watchLiveChannel = "Ver canal em direto"
+    override val zoomInTimeline = "Aumentar escala da linha temporal"
+    override val zoomOutTimeline = "Diminuir escala da linha temporal"
     override val channelList = "Canais"
     override val aspectRatio = "Proporção de ecrã"
     override val lockControls = "Bloquear controlos"
@@ -286,6 +336,7 @@ object PortugueseStrings : Strings {
     override val enterXmltvUrl = "https://exemplo.com/epg.xml"
     override val loadPlaylist = "Carregar Lista"
     override val loadingPlaylist = "A carregar lista..."
+    override val loadingSavedData = "A carregar a lista e o guia de programação guardados..."
     override val restoringSecureSession = "A restaurar sessão segura..."
     override val selectM3uError = "Por favor insira um URL M3U ou selecione um ficheiro local."
 
@@ -294,6 +345,9 @@ object PortugueseStrings : Strings {
     override val tabEpg = "Guia de Programação (EPG)"
     override val tabGeneral = "Geral e Sobre"
     override val language = "Idioma"
+    override val playback = "Reprodução"
+    override val playChannelsFullscreen = "Abrir canais em ecrã inteiro"
+    override val playChannelsFullscreenDesc = "Entrar imediatamente em ecrã inteiro ao selecionar um canal."
     override val addNewPlaylist = "Adicionar Nova Lista"
     override val addPlaylist = "Adicionar Lista"
     override val playlistName = "Nome da Lista"
@@ -316,6 +370,9 @@ object PortugueseStrings : Strings {
     override val timeShiftDesc = "Ajuste este valor se os horários dos programas não coincidirem com o seu fuso horário local."
     override val securityTitle = "Segurança e Privacidade FortressTV"
     override val securityDesc = "Encriptação AES-256 por hardware via Android KeyStore. Todas as origens e tokens de stream permanecem estritamente privados neste dispositivo."
+    override val openSourceSoftware = "Software de código aberto"
+    override val ffmpegAttribution = "O FortressTV utiliza o FFmpeg 6.0 sob a licença LGPL v2.1 ou posterior para descodificar áudio MPEG não suportado pelo dispositivo. O código-fonte correspondente e as instruções de compilação estão disponíveis no repositório do FortressTV."
+    override val viewSourceCode = "Ver código-fonte e licenças"
     override val appVersion = "Versão 1.0.0"
 
     override val checkForUpdates = "Verificar Atualizações"

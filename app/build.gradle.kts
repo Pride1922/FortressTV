@@ -25,8 +25,8 @@ android {
         applicationId = "com.fortresstv.player"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 7
+        versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -70,6 +70,7 @@ android {
 }
 
 dependencies {
+    implementation(files("libs/media3-decoder-ffmpeg-1.10.1-mp3.aar"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

@@ -20,6 +20,7 @@ import java.security.MessageDigest
 
 data class AppUpdateInfo(
     val versionName: String,
+    val versionCode: Int,
     val releaseNotes: String,
     val downloadUrl: String,
     val sha256: String,
@@ -27,11 +28,14 @@ data class AppUpdateInfo(
 )
 
 object UpdateManager {
+    private const val INSTALL_STATE = "fortresstv_update_install"
+    private const val PENDING_APK_PATH = "pending_apk_path"
+
     // URL pointing to your Nextcloud version.json
     var updateEndpointUrl: String = "https://cloud.ameyerocha.com/s/iL89c8t5PmzBAjA/download"
 
     suspend fun checkForUpdates(
-        currentVersion: String = BuildConfig.VERSION_NAME,
+        currentVersionCode: Int = BuildConfig.VERSION_CODE,
         endpointUrl: String = updateEndpointUrl
     ): AppUpdateInfo? = withContext(Dispatchers.IO) {
         runCatching {
@@ -63,11 +67,12 @@ object UpdateManager {
             val json = JSONObject(jsonText)
 
             val tagName = json.optString("version", json.optString("tag_name", "")).removePrefix("v").removePrefix("V").trim()
+            val targetVersionCode = json.optInt("versionCode", -1)
             val releaseNotes = json.optString("notes", json.optString("body", "")).trim()
             val htmlUrl = json.optString("html_url", "")
             val sha256 = json.optString("sha256", json.optString("apkSha256", "")).trim().lowercase()
 
-            if (tagName.isBlank() || !isNewerVersion(currentVersion, tagName)) {
+            if (tagName.isBlank() || targetVersionCode <= currentVersionCode) {
                 return@runCatching null
             }
 
@@ -92,6 +97,7 @@ object UpdateManager {
 
             AppUpdateInfo(
                 versionName = tagName,
+                versionCode = targetVersionCode,
                 releaseNotes = releaseNotes,
                 downloadUrl = downloadUrl,
                 sha256 = sha256,
@@ -245,20 +251,10 @@ object UpdateManager {
     fun installApk(context: Context, apkFile: File) {
         if (!apkFile.exists()) return
 
-        val apkUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            apkFile
-        )
-
-        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!context.packageManager.canRequestPackageInstalls()) {
+                context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
+                    .edit().putString(PENDING_APK_PATH, apkFile.absolutePath).apply()
                 val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                     data = Uri.parse("package:${context.packageName}")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -268,6 +264,45 @@ object UpdateManager {
             }
         }
 
+        clearPendingInstall(context)
+        launchInstaller(context, apkFile)
+    }
+
+    fun resumePendingInstall(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) return
+
+        val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
+        val pendingPath = preferences.getString(PENDING_APK_PATH, null) ?: return
+        val apkFile = File(pendingPath)
+        clearPendingInstall(context)
+        if (!apkFile.exists()) return
+
+        runCatching {
+            verifyDownloadedApk(context, apkFile)
+            launchInstaller(context, apkFile)
+        }.onFailure {
+            apkFile.delete()
+        }
+    }
+
+    private fun clearPendingInstall(context: Context) {
+        context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
+            .edit().remove(PENDING_APK_PATH).apply()
+    }
+
+    private fun launchInstaller(context: Context, apkFile: File) {
+        val apkUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            apkFile
+        )
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
         context.startActivity(installIntent)
     }
 }

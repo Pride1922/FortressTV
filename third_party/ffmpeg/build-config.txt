@@ -1,0 +1,28 @@
+FortressTV FFmpeg build configuration
+=====================================
+
+AndroidX Media3 version: 1.10.1
+AndroidX Media3 commit: 5fb306449733dd71595700c1227ad6087578c559
+FFmpeg branch: release/6.0
+FFmpeg commit: 3f92512fd1fd6f5e6d6eb45a156c352835314d69
+Android NDK: r26b (26.1.10909125)
+Host platform: linux-x86_64
+Android ABI level: 26
+Enabled decoders: mp3
+
+Official build command:
+
+./build_ffmpeg.sh \
+  <media3>/libraries/decoder_ffmpeg/src/main \
+  <android-ndk-r26b> \
+  linux-x86_64 \
+  26 \
+  mp3
+
+The AndroidX Media3 module was then packaged with:
+
+./gradlew lib-decoder-ffmpeg:clean lib-decoder-ffmpeg:assembleRelease
+
+No local changes were made to the FFmpeg source tree. GPL and non-free
+components were not enabled. The resulting FFmpeg configuration reports
+"License: LGPL version 2.1 or later".

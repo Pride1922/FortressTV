@@ -23,7 +23,10 @@ class XmlTvParserTest {
             </tv>
         """.trimIndent()
 
-        val guide = XmlTvParser.parse(xml.byteInputStream())
+        val guide = XmlTvParser.parse(
+            xml.byteInputStream(),
+            referenceTimeMillis = XmlTvTime.parseToEpoch("20260829123000 +0000")!!
+        )
 
         assertEquals("RTP 1", guide.channels.getValue("RTP1.pt").displayName)
         assertEquals("https://i.imgur.com/w7GV86i.png", guide.channels.getValue("RTP1.pt").iconUrl)

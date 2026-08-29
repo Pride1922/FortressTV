@@ -3,10 +3,13 @@ package com.fortresstv.player
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.platform.LocalConfiguration
@@ -31,6 +34,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -54,6 +58,11 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.update.UpdateManager
 import com.fortresstv.player.update.AppUpdateInfo
@@ -69,7 +78,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,11 +94,14 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.fortresstv.player.playlist.M3uParser
@@ -98,6 +112,7 @@ import com.fortresstv.player.player.GestureControl
 import com.fortresstv.player.player.GestureLevel
 import com.fortresstv.player.player.GesturePlayerView
 import com.fortresstv.player.epg.EpgGuide
+import com.fortresstv.player.epg.EpgProgramme
 import com.fortresstv.player.epg.XmlTvParser
 import com.fortresstv.player.epg.snapshot
 import com.fortresstv.player.epg.XmlTvTime
@@ -112,8 +127,11 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.util.zip.GZIPInputStream
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
 import coil.compose.AsyncImage
 import coil.Coil
 import coil.ImageLoader
@@ -121,6 +139,11 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        UpdateManager.resumePendingInstall(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -153,6 +176,7 @@ private fun FortressTVApp() {
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
+    var playChannelsFullscreen by remember { mutableStateOf(false) }
     val strings = getStringsFor(appLanguage)
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
@@ -182,7 +206,7 @@ private fun FortressTVApp() {
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
+            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_CODE)
             if (info != null) {
                 startupUpdateInfo = info
             }
@@ -284,12 +308,14 @@ private fun FortressTVApp() {
     }
 
     LaunchedEffect(Unit) {
-        val (savedLangCode, shift, epgUpdate) = withContext(Dispatchers.IO) {
-            Triple(settings.getLanguage(), settings.epgTimeShiftHours(), settings.lastEpgUpdate())
-        }
+        val savedLangCode = withContext(Dispatchers.IO) { settings.getLanguage() }
+        val shift = withContext(Dispatchers.IO) { settings.epgTimeShiftHours() }
+        val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
+        val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
         appLanguage = AppLanguage.fromCode(savedLangCode)
         epgTimeShiftHours = shift
         epgLastUpdate = epgUpdate
+        playChannelsFullscreen = savedFullscreenPreference
 
         val (savedPlaylists, currentActive) = withContext(Dispatchers.IO) {
             settings.getPlaylists() to settings.getActivePlaylist()
@@ -539,6 +565,11 @@ private fun FortressTVApp() {
                 activeProfile = activeProfile,
                 appLanguage = appLanguage,
                 onLanguageChanged = ::onLanguageChanged,
+                playChannelsFullscreen = playChannelsFullscreen,
+                onPlayChannelsFullscreenChanged = { enabled ->
+                    playChannelsFullscreen = enabled
+                    scope.launch(Dispatchers.IO) { settings.setPlayChannelsFullscreen(enabled) }
+                },
                 epgSource = epgSource,
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
@@ -606,10 +637,11 @@ private fun FortressTVApp() {
         }
 
         if (restoring) {
-            WelcomeScreen(false, null, {}, {})
+            WelcomeScreen(loading = true, showActions = false, error = null, onOpenFile = {}, onOpenUrl = {})
         } else if (playlist == null || activeProfile == null) {
             WelcomeScreen(
                 loading = loading,
+                showActions = !loading && (activeProfile == null || error != null),
                 error = error,
                 onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
                 onOpenUrl = { showAddPlaylistDialog = true }
@@ -621,6 +653,7 @@ private fun FortressTVApp() {
                 epgGuide = epgGuide,
                 epgSourceName = epgSourceName,
                 epgTimeShiftHours = epgTimeShiftHours,
+                playChannelsFullscreen = playChannelsFullscreen,
                 loading = loading,
                 error = error,
                 onOpenSettings = { tab ->
@@ -634,9 +667,19 @@ private fun FortressTVApp() {
 
 private enum class UrlTarget { PLAYLIST, EPG }
 
+private data class GuideProgrammeBlock(
+    val programme: EpgProgramme,
+    val startMinutes: Float,
+    val durationMinutes: Float,
+    val adjustedStartMillis: Long,
+    val adjustedStopMillis: Long,
+    val timeLabel: String
+)
+
 @Composable
 private fun WelcomeScreen(
     loading: Boolean,
+    showActions: Boolean,
     error: String?,
     onOpenFile: () -> Unit,
     onOpenUrl: () -> Unit
@@ -663,10 +706,12 @@ private fun WelcomeScreen(
                 )
                 Spacer(Modifier.height(if (isCompact) 24.dp else 32.dp))
                 if (loading) {
-                    LinearProgressIndicator(modifier = Modifier.width(if (isCompact) 240.dp else 320.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(if (isCompact) 38.dp else 46.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text(strings.loadingSavedData, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(20.dp))
                 }
-                if (isCompact && isPortrait) {
+                if (showActions && isCompact && isPortrait) {
                     Column(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -682,7 +727,7 @@ private fun WelcomeScreen(
                             Text(strings.remoteUrl)
                         }
                     }
-                } else {
+                } else if (showActions) {
                     Row(
                         Modifier.widthIn(max = 520.dp).fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -715,12 +760,329 @@ private fun WelcomeScreen(
 }
 
 @Composable
+private fun ProgrammeGuideScreen(
+    playlist: Playlist,
+    epgGuide: EpgGuide?,
+    epgTimeShiftHours: Int,
+    onBack: () -> Unit,
+    onWatchChannel: (PlaylistChannel) -> Unit
+) {
+    BackHandler(onBack = onBack)
+    val strings = LocalAppStrings.current
+    val guideLocale = remember(strings.languageTag) { Locale.forLanguageTag(strings.languageTag) }
+    val density = LocalDensity.current
+    val zone = remember { ZoneId.systemDefault() }
+    val today = remember { LocalDate.now(zone) }
+    val dates = remember(today) { List(5) { today.plusDays(it.toLong()) } }
+    var selectedDate by remember { mutableStateOf(today) }
+    var selectedProgramme by remember { mutableStateOf<Pair<PlaylistChannel, EpgProgramme>?>(null) }
+    var now by remember { mutableStateOf(Instant.now()) }
+    val horizontalState = rememberScrollState()
+    val channelState = rememberLazyListState()
+    val programmeState = rememberLazyListState()
+    var timelineViewportPx by remember { mutableIntStateOf(0) }
+    val timelineZoomLevels = remember { listOf(180.dp, 270.dp, 360.dp, 540.dp, 720.dp, 1080.dp, 1440.dp) }
+    var timelineZoomIndex by remember { mutableIntStateOf(1) }
+    val hourWidth = timelineZoomLevels[timelineZoomIndex]
+    val halfHourWidth = hourWidth / 2
+    val timelineWidth = hourWidth * 24
+    val rowHeight = 72.dp
+    val channelWidth = 220.dp
+    val shiftMillis = epgTimeShiftHours * 3_600_000L
+    val dayStart = remember(selectedDate, zone) { selectedDate.atStartOfDay(zone).toInstant().toEpochMilli() }
+    val dayEnd = dayStart + 24L * 3_600_000L
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Instant.now()
+            delay(60_000)
+        }
+    }
+    LaunchedEffect(programmeState) {
+        snapshotFlow { programmeState.firstVisibleItemIndex to programmeState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (channelState.firstVisibleItemIndex != index || channelState.firstVisibleItemScrollOffset != offset) {
+                    channelState.scrollToItem(index, offset)
+                }
+            }
+    }
+    LaunchedEffect(channelState) {
+        snapshotFlow { channelState.firstVisibleItemIndex to channelState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (programmeState.firstVisibleItemIndex != index || programmeState.firstVisibleItemScrollOffset != offset) {
+                    programmeState.scrollToItem(index, offset)
+                }
+            }
+    }
+    LaunchedEffect(selectedDate, timelineViewportPx, hourWidth) {
+        val targetMinutes = if (selectedDate == today) {
+            val localNow = now.atZone(zone)
+            localNow.hour * 60 + localNow.minute
+        } else 8 * 60
+        val targetPx = with(density) { (hourWidth * (targetMinutes / 60f)).roundToPx() }
+        horizontalState.scrollTo((targetPx - timelineViewportPx / 2).coerceIn(0, horizontalState.maxValue))
+    }
+
+    val selectedCurrent = selectedProgramme?.second?.let { programme ->
+        val adjustedNow = now.toEpochMilli()
+        val start = programme.startEpochMilli + shiftMillis
+        val stop = (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis
+        adjustedNow in start until stop
+    } == true
+    val guideBlocksByChannel = remember(epgGuide, playlist, dayStart, dayEnd, shiftMillis) {
+        playlist.channels.associateWith { channel ->
+            epgGuide?.programmes?.get(channel.tvgId).orEmpty().mapNotNull { programme ->
+                val adjustedStart = programme.startEpochMilli + shiftMillis
+                val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
+                val adjustedStop = rawStop + shiftMillis
+                if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
+                    null
+                } else {
+                    val clippedStart = maxOf(adjustedStart, dayStart)
+                    val clippedStop = minOf(adjustedStop, dayEnd)
+                    val durationMinutes = ((clippedStop - clippedStart) / 60_000f).coerceIn(5f, 24f * 60f)
+                    GuideProgrammeBlock(
+                        programme = programme,
+                        startMinutes = (clippedStart - dayStart) / 60_000f,
+                        durationMinutes = durationMinutes,
+                        adjustedStartMillis = adjustedStart,
+                        adjustedStopMillis = adjustedStop,
+                        timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                    )
+                }
+            }
+        }
+    }
+
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize().systemBarsPadding()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                }
+                Spacer(Modifier.width(8.dp))
+                ShieldMark(Modifier.size(38.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(strings.programmeGuide, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = { timelineZoomIndex = (timelineZoomIndex - 1).coerceAtLeast(0) },
+                    enabled = timelineZoomIndex > 0
+                ) {
+                    Icon(Icons.Default.ZoomOut, contentDescription = strings.zoomOutTimeline)
+                }
+                IconButton(
+                    onClick = { timelineZoomIndex = (timelineZoomIndex + 1).coerceAtMost(timelineZoomLevels.lastIndex) },
+                    enabled = timelineZoomIndex < timelineZoomLevels.lastIndex
+                ) {
+                    Icon(Icons.Default.ZoomIn, contentDescription = strings.zoomInTimeline)
+                }
+                FilledTonalButton(onClick = {
+                    selectedDate = today
+                    selectedProgramme = null
+                }) {
+                    Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text(strings.now)
+                }
+            }
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(dates, key = { it.toString() }) { date ->
+                    FilterChip(
+                        selected = selectedDate == date,
+                        onClick = {
+                            selectedDate = date
+                            selectedProgramme = null
+                        },
+                        label = {
+                            Text(
+                                if (date == today) strings.todayDate(date.dayOfMonth)
+                                else "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, guideLocale)} ${date.dayOfMonth}"
+                            )
+                        }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                Column(Modifier.width(channelWidth).fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
+                    Box(
+                        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(strings.channelList, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                    }
+                    HorizontalDivider()
+                    LazyColumn(
+                        state = channelState,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(playlist.channels, key = { "epg-channel-${it.position}:${it.streamUrl}" }) { channel ->
+                            Surface(
+                                onClick = { onWatchChannel(channel) },
+                                color = MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.fillMaxWidth().height(rowHeight)
+                            ) {
+                                Row(
+                                    Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ChannelLogo(
+                                        channel = channel,
+                                        epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                                        modifier = Modifier.size(42.dp)
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().onSizeChanged { timelineViewportPx = it.width }
+                ) {
+                    Column(
+                        Modifier.fillMaxHeight().horizontalScroll(horizontalState)
+                    ) {
+                        Box(Modifier.width(timelineWidth).height(44.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            repeat(48) { halfHour ->
+                                val minutes = halfHour * 30
+                                Text(
+                                    "%02d:%02d".format(minutes / 60, minutes % 60),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.offset(x = halfHourWidth * halfHour).padding(start = 8.dp, top = 12.dp)
+                                )
+                            }
+                            if (selectedDate == today) {
+                                val localNow = now.atZone(zone)
+                                val nowMinutes = localNow.hour * 60 + localNow.minute + localNow.second / 60f
+                                Box(
+                                    Modifier.offset(x = hourWidth * (nowMinutes / 60f)).width(2.dp).fillMaxHeight()
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                        }
+                        HorizontalDivider()
+                        LazyColumn(
+                            state = programmeState,
+                            modifier = Modifier.width(timelineWidth).weight(1f)
+                        ) {
+                            items(playlist.channels, key = { "epg-row-${it.position}:${it.streamUrl}" }) { channel ->
+                                val programmeBlocks = guideBlocksByChannel[channel].orEmpty()
+                                Box(Modifier.fillMaxWidth().height(rowHeight).background(MaterialTheme.colorScheme.background)) {
+                                    if (programmeBlocks.isEmpty()) {
+                                        Text(
+                                            strings.noEpgData,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.padding(14.dp)
+                                        )
+                                    }
+                                    programmeBlocks.forEach { block ->
+                                        val blockWidth = hourWidth * (block.durationMinutes / 60f) - 2.dp
+                                        val isCurrent = now.toEpochMilli() in block.adjustedStartMillis until block.adjustedStopMillis
+                                        val isSelected = selectedProgramme?.first == channel && selectedProgramme?.second == block.programme
+                                        Surface(
+                                            onClick = {
+                                                selectedProgramme = channel to block.programme
+                                            },
+                                            shape = RoundedCornerShape(5.dp),
+                                            color = when {
+                                                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                                isCurrent -> MaterialTheme.colorScheme.primary.copy(alpha = .22f)
+                                                else -> MaterialTheme.colorScheme.surfaceVariant
+                                            },
+                                            modifier = Modifier
+                                                .offset(x = hourWidth * (block.startMinutes / 60f), y = 5.dp)
+                                                .width(blockWidth)
+                                                .height(rowHeight - 10.dp)
+                                        ) {
+                                            if (blockWidth >= 42.dp) {
+                                                Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+                                                    Text(block.programme.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    if (blockWidth >= 72.dp) {
+                                                        Text(
+                                                            block.timeLabel,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            fontSize = 11.sp,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                }
+                                            } else {
+                                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        "·",
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (selectedDate == today) {
+                                        val localNow = now.atZone(zone)
+                                        val nowMinutes = localNow.hour * 60 + localNow.minute + localNow.second / 60f
+                                        Box(
+                                            Modifier.offset(x = hourWidth * (nowMinutes / 60f)).width(2.dp).fillMaxHeight()
+                                                .background(MaterialTheme.colorScheme.primary)
+                                        )
+                                    }
+                                }
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
+            selectedProgramme?.let { (channel, programme) ->
+                HorizontalDivider()
+                Surface(color = MaterialTheme.colorScheme.surface) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(programme.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${channel.name} · ${formatProgrammeTime(Instant.ofEpochMilli(programme.startEpochMilli + shiftMillis))}–${formatProgrammeTime(Instant.ofEpochMilli((programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis))}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            programme.description?.let {
+                                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Button(onClick = { onWatchChannel(channel) }) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text(if (selectedCurrent) strings.watchNow else strings.watchLiveChannel)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChannelBrowser(
     playlist: Playlist,
     activeProfile: PlaylistProfile,
     epgGuide: EpgGuide?,
     epgSourceName: String?,
     epgTimeShiftHours: Int = 0,
+    playChannelsFullscreen: Boolean,
     loading: Boolean,
     error: String?,
     onOpenSettings: (Int) -> Unit
@@ -729,6 +1091,7 @@ private fun ChannelBrowser(
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val channelPaneWidth = if (isCompact) 280.dp else 430.dp
 
     val allGroup = strings.allChannels
     var isSidebarExpanded by remember { mutableStateOf(false) }
@@ -744,6 +1107,7 @@ private fun ChannelBrowser(
     var selectedGroup by remember(playlist, allGroup) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
+    var showProgrammeGuide by remember(playlist) { mutableStateOf(false) }
     fun selectChannel(channel: PlaylistChannel) {
         selectedChannel = channel
         isSidebarExpanded = false
@@ -766,9 +1130,28 @@ private fun ChannelBrowser(
     }
     val channelListState = rememberLazyListState()
 
+    if (showProgrammeGuide) {
+        ProgrammeGuideScreen(
+            playlist = playlist,
+            epgGuide = epgGuide,
+            epgTimeShiftHours = epgTimeShiftHours,
+            onBack = { showProgrammeGuide = false },
+            onWatchChannel = { channel ->
+                selectChannel(channel)
+                showProgrammeGuide = false
+            }
+        )
+        return
+    }
+
     val matchedCount = remember(playlist, epgGuide) {
         if (epgGuide == null) 0 else playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
     }
+    val unmatchedChannels = remember(playlist, epgGuide) {
+        if (epgGuide == null) emptyList()
+        else playlist.channels.filter { it.tvgId.isNullOrBlank() || !epgGuide.channels.containsKey(it.tvgId) }
+    }
+    var showUnmatchedDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(selectedGroup, searchQuery) {
         channelListState.scrollToItem(0)
@@ -878,14 +1261,52 @@ private fun ChannelBrowser(
                 if (epgGuide == null) {
                     Text(strings.epgNotConfigured, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 } else {
-                    Text(strings.epgMatched(matchedCount, playlist.channels.size), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                    Text(
-                        epgSourceName ?: strings.xmltvGuide,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontSize = 11.sp
-                    )
+                    Surface(
+                        onClick = { if (unmatchedChannels.isNotEmpty()) showUnmatchedDialog = true },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f) else Color.Transparent,
+                        border = if (unmatchedChannels.isNotEmpty()) BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)) else null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(vertical = 6.dp, horizontal = 8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    strings.epgMatched(matchedCount, playlist.channels.size),
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                )
+                                if (unmatchedChannels.isNotEmpty()) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = strings.viewUnmatchedChannels,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                epgSourceName ?: strings.xmltvGuide,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontSize = 11.sp
+                            )
+                            if (unmatchedChannels.isNotEmpty()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    strings.unmatchedEpgCount(unmatchedChannels.size),
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
                 if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
@@ -901,7 +1322,11 @@ private fun ChannelBrowser(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = if (selectedChannel != null && !(isCompact && isPortrait)) {
+                        Modifier.width(channelPaneWidth)
+                    } else {
+                        Modifier.weight(1f)
+                    },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -909,6 +1334,12 @@ private fun ChannelBrowser(
                         FilledTonalIconButton(onClick = { isSidebarExpanded = true }) {
                             Icon(Icons.Default.Menu, contentDescription = strings.expandSidebar)
                         }
+                    }
+                    FilledTonalIconButton(
+                        onClick = { showProgrammeGuide = true },
+                        enabled = epgGuide != null
+                    ) {
+                        Icon(Icons.Default.DateRange, contentDescription = strings.programmeGuide)
                     }
                     OutlinedTextField(
                         value = searchQuery,
@@ -922,7 +1353,11 @@ private fun ChannelBrowser(
                                 }
                             }
                         },
-                        modifier = if (isCompact) Modifier.weight(1f) else Modifier.width(360.dp)
+                        modifier = when {
+                            selectedChannel != null && !(isCompact && isPortrait) -> Modifier.weight(1f)
+                            isCompact -> Modifier.weight(1f)
+                            else -> Modifier.width(360.dp)
+                        }
                     )
                 }
                 if (!isCompact) {
@@ -945,6 +1380,7 @@ private fun ChannelBrowser(
                             epgTimeShiftHours = epgTimeShiftHours,
                             channels = playlist.channels,
                             groups = playlist.groups,
+                            autoEnterFullscreen = playChannelsFullscreen,
                             onChannelSelected = ::selectChannel,
                             modifier = Modifier.fillMaxWidth().wrapContentHeight()
                         )
@@ -1038,7 +1474,7 @@ private fun ChannelBrowser(
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = channelListState,
-                        modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(if (isCompact) 280.dp else 430.dp).fillMaxHeight(),
+                        modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(channelPaneWidth).fillMaxHeight(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
@@ -1080,6 +1516,7 @@ private fun ChannelBrowser(
                             epgTimeShiftHours = epgTimeShiftHours,
                             channels = playlist.channels,
                             groups = playlist.groups,
+                            autoEnterFullscreen = playChannelsFullscreen,
                             onChannelSelected = ::selectChannel,
                             modifier = Modifier.weight(1f).fillMaxHeight()
                         )
@@ -1089,6 +1526,18 @@ private fun ChannelBrowser(
         }
     }
 }
+
+    if (showUnmatchedDialog) {
+        UnmatchedEpgDialog(
+            unmatchedChannels = unmatchedChannels,
+            onDismiss = { showUnmatchedDialog = false },
+            onSelectChannel = { channel ->
+                selectChannel(channel)
+                searchQuery = ""
+                selectedGroup = allGroup
+            }
+        )
+    }
 }
 
 @Composable
@@ -1182,11 +1631,15 @@ private fun ChannelRow(
 }
 
 @Composable
-private fun ChannelLogo(channel: PlaylistChannel, epgChannel: com.fortresstv.player.epg.EpgChannel?) {
+private fun ChannelLogo(
+    channel: PlaylistChannel,
+    epgChannel: com.fortresstv.player.epg.EpgChannel?,
+    modifier: Modifier = Modifier.size(48.dp)
+) {
     val logoUrl = remember(channel.logoUrl, epgChannel?.iconUrl) { channel.logoUrl ?: epgChannel?.iconUrl }
     var failed by remember(logoUrl) { mutableStateOf(false) }
     Box(
-        Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+        modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
         if (logoUrl != null && !failed) {
@@ -1211,13 +1664,21 @@ private fun PlayerPanel(
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
     groups: List<String> = emptyList(),
+    autoEnterFullscreen: Boolean,
     onChannelSelected: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val activity = context.findActivity()
+    val lifecycleOwner = activity as? LifecycleOwner
+    val renderersFactory = remember(context) {
+        DefaultRenderersFactory(context).setExtensionRendererMode(
+            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+        )
+    }
     val player = remember {
-        ExoPlayer.Builder(context).build().apply { playWhenReady = true }
+        ExoPlayer.Builder(context, renderersFactory).build().apply { playWhenReady = true }
     }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
@@ -1225,6 +1686,7 @@ private fun PlayerPanel(
     val schedule = epgGuide?.snapshot(channel.tvgId, timeShiftHours = epgTimeShiftHours)
 
     DisposableEffect(player) {
+        var resumePlaybackOnStart = false
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
@@ -1234,8 +1696,23 @@ private fun PlayerPanel(
                 playbackError = error.message ?: strings.playbackError
             }
         }
+        val lifecycleObserver = object : DefaultLifecycleObserver {
+            override fun onStop(owner: LifecycleOwner) {
+                resumePlaybackOnStart = player.playWhenReady
+                player.pause()
+            }
+
+            override fun onStart(owner: LifecycleOwner) {
+                if (resumePlaybackOnStart) {
+                    resumePlaybackOnStart = false
+                    player.play()
+                }
+            }
+        }
         player.addListener(listener)
+        lifecycleOwner?.lifecycle?.addObserver(lifecycleObserver)
         onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
             player.removeListener(listener)
             player.release()
         }
@@ -1246,6 +1723,7 @@ private fun PlayerPanel(
         player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
         player.prepare()
         player.play()
+        if (autoEnterFullscreen) fullscreen = true
     }
 
     Column(modifier) {
@@ -1411,9 +1889,9 @@ private fun VideoSurface(
             visible = gestureLevel != null,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(
-                if (gestureLevel?.control == GestureControl.BRIGHTNESS) Alignment.CenterStart else Alignment.CenterEnd
-            ).padding(24.dp)
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 32.dp)
         ) {
             Surface(
                 color = Color.Black.copy(alpha = .76f),
@@ -1438,14 +1916,19 @@ private fun VideoSurface(
             }
         }
         if (!fullscreen) {
-            TextButton(
+            IconButton(
                 onClick = onFullscreen,
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                colors = ButtonDefaults.textButtonColors(
-                    containerColor = Color.Black.copy(alpha = .62f),
-                    contentColor = Color.White
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = .62f), RoundedCornerShape(10.dp))
+            ) {
+                Icon(
+                    Icons.Default.Fullscreen,
+                    contentDescription = strings.fullscreen,
+                    tint = Color.White
                 )
-            ) { Text(strings.fullscreen) }
+            }
         }
     }
 }
@@ -2001,6 +2484,8 @@ private fun SettingsDialog(
     activeProfile: PlaylistProfile?,
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
+    playChannelsFullscreen: Boolean,
+    onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     epgSource: ContentSource?,
     epgSourceName: String?,
     epgLastUpdate: Long,
@@ -2095,7 +2580,9 @@ private fun SettingsDialog(
                         )
                         2 -> AboutTab(
                             appLanguage = appLanguage,
-                            onLanguageChanged = onLanguageChanged
+                            onLanguageChanged = onLanguageChanged,
+                            playChannelsFullscreen = playChannelsFullscreen,
+                            onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged
                         )
                     }
                 }
@@ -2506,7 +2993,9 @@ private fun EpgTab(
 @Composable
 private fun AboutTab(
     appLanguage: AppLanguage,
-    onLanguageChanged: (AppLanguage) -> Unit
+    onLanguageChanged: (AppLanguage) -> Unit,
+    playChannelsFullscreen: Boolean,
+    onPlayChannelsFullscreenChanged: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2523,7 +3012,7 @@ private fun AboutTab(
         upToDateNotice = false
         updateError = null
         scope.launch {
-            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
+            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_CODE)
             checkingUpdate = false
             if (info != null) {
                 updateInfo = info
@@ -2558,6 +3047,39 @@ private fun AboutTab(
         }
 
         Spacer(Modifier.height(20.dp))
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPlayChannelsFullscreenChanged(!playChannelsFullscreen) }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.playback, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(strings.playChannelsFullscreen, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Text(
+                        strings.playChannelsFullscreenDesc,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Switch(
+                    checked = playChannelsFullscreen,
+                    onCheckedChange = onPlayChannelsFullscreenChanged
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
 
         // Updates Card
         Surface(
@@ -2743,6 +3265,38 @@ private fun AboutTab(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp
                 )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text(strings.openSourceSoftware, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    strings.ffmpegAttribution,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                TextButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://github.com/Pride1922/FortressTV/tree/main/third_party/ffmpeg")
+                            )
+                        )
+                    }
+                ) {
+                    Text(strings.viewSourceCode)
+                }
             }
         }
     }
@@ -3019,6 +3573,137 @@ private fun StartupUpdateDialog(
     }
 }
 
+@Composable
+private fun UnmatchedEpgDialog(
+    unmatchedChannels: List<PlaylistChannel>,
+    onDismiss: () -> Unit,
+    onSelectChannel: (PlaylistChannel) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.85f)
+                .padding(8.dp)
+        ) {
+            Column(Modifier.fillMaxSize().padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            strings.unmatchedEpgChannels,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            strings.unmatchedEpgCount(unmatchedChannels.size),
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = strings.close)
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(unmatchedChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                onSelectChannel(channel)
+                                onDismiss()
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (channel.logoUrl != null) {
+                                            AsyncImage(
+                                                model = channel.logoUrl,
+                                                contentDescription = channel.name,
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier.size(30.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Default.LiveTv,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        channel.name,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (!channel.group.isNullOrBlank()) {
+                                        Text(
+                                            channel.group,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    val reason = when {
+                                        channel.tvgId.isNullOrBlank() -> strings.missingTvgId
+                                        else -> strings.tvgIdNotFound(channel.tvgId.orEmpty())
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        reason,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(strings.close)
+                }
+            }
+        }
+    }
+}
+
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
 @Composable
-private fun WelcomePreview() = FortressTVTheme { WelcomeScreen(false, null, {}, {}) }
+private fun WelcomePreview() = FortressTVTheme { WelcomeScreen(false, true, null, {}, {}) }
