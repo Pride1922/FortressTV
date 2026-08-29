@@ -3,11 +3,13 @@ package com.fortresstv.player
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -596,39 +598,61 @@ private fun WelcomeScreen(
     onOpenUrl: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
     Surface(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().padding(if (isCompact) 20.dp else 32.dp), contentAlignment = Alignment.Center) {
             Column(
                 modifier = Modifier.widthIn(max = 680.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                ShieldMark(Modifier.size(164.dp))
-                Spacer(Modifier.height(22.dp))
-                Text(strings.appName, fontSize = 42.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
+                ShieldMark(Modifier.size(if (isCompact) 110.dp else 164.dp))
+                Spacer(Modifier.height(if (isCompact) 14.dp else 22.dp))
+                Text(strings.appName, fontSize = if (isCompact) 32.sp else 42.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 Text(
                     strings.welcomeSubtitle,
-                    fontSize = 15.sp,
+                    fontSize = if (isCompact) 13.sp else 15.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(if (isCompact) 24.dp else 32.dp))
                 if (loading) {
-                    LinearProgressIndicator(modifier = Modifier.width(320.dp))
+                    LinearProgressIndicator(modifier = Modifier.width(if (isCompact) 240.dp else 320.dp))
                     Spacer(Modifier.height(20.dp))
                 }
-                Row(
-                    Modifier.widthIn(max = 520.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
-                        Icon(Icons.Default.FolderOpen, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
+                if (isCompact && isPortrait) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
+                        }
+                        OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                            Icon(Icons.Default.Link, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(strings.remoteUrl)
+                        }
                     }
-                    OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
-                        Icon(Icons.Default.Link, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(strings.remoteUrl)
+                } else {
+                    Row(
+                        Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
+                        }
+                        OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
+                            Icon(Icons.Default.Link, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(strings.remoteUrl)
+                        }
                     }
                 }
                 if (error != null) {
@@ -658,6 +682,10 @@ private fun ChannelBrowser(
     onOpenSettings: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
     val allGroup = strings.allChannels
     var isSidebarExpanded by remember { mutableStateOf(false) }
     var sidebarInteractionCount by remember { mutableLongStateOf(0L) }
@@ -711,7 +739,7 @@ private fun ChannelBrowser(
         ) {
             Column(
                 modifier = Modifier
-                    .width(260.dp)
+                    .width(if (isCompact) 280.dp else 260.dp)
                     .fillMaxHeight()
                     .background(MaterialTheme.colorScheme.surface)
                     .pointerInput(Unit) {
@@ -822,15 +850,16 @@ private fun ChannelBrowser(
                 }
             }
         }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 24.dp, vertical = 16.dp)) {
+        Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (!isSidebarExpanded) {
                         FilledTonalIconButton(onClick = { isSidebarExpanded = true }) {
@@ -840,74 +869,177 @@ private fun ChannelBrowser(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text(strings.searchInGroup(selectedGroup)) },
+                        placeholder = { Text(strings.searchInGroup(selectedGroup), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(onClick = { searchQuery = "" }) {
-                                    Text("×", fontSize = 26.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("×", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         },
-                        modifier = Modifier.width(360.dp)
+                        modifier = if (isCompact) Modifier.weight(1f) else Modifier.width(360.dp)
                     )
                 }
-                Text(
-                    strings.channelsCount(visibleChannels.size),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                if (!isCompact) {
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        strings.channelsCount(visibleChannels.size),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.weight(1f).fillMaxWidth()) {
-                LazyColumn(
-                    state = channelListState,
-                    modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(430.dp).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
-                        val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
-                        val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
-                            val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
-                            val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                            if (adjustedStop > adjustedStart) {
-                                ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
-                            } else null
-                        } else null
-                        val endTime = if (currentProg?.stopEpochMilli != null) {
-                            val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                            strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
-                        } else null
-                        ChannelRow(
-                            channel = channel,
-                            epgChannel = epgGuide?.channels?.get(channel.tvgId),
-                            nowPlaying = currentProg?.title,
-                            endTime = endTime,
-                            progress = progress,
-                            selected = selectedChannel == channel,
-                            onClick = { selectChannel(channel) }
+            Spacer(Modifier.height(10.dp))
+            if (isCompact && isPortrait) {
+                if (selectedChannel != null) {
+                    Column(Modifier.weight(1f).fillMaxWidth()) {
+                        PlayerPanel(
+                            channel = selectedChannel!!,
+                            epgGuide = epgGuide,
+                            epgTimeShiftHours = epgTimeShiftHours,
+                            channels = playlist.channels,
+                            groups = playlist.groups,
+                            onChannelSelected = ::selectChannel,
+                            modifier = Modifier.fillMaxWidth().wrapContentHeight()
                         )
+                        Spacer(Modifier.height(10.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            strings.channelsCount(visibleChannels.size),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        LazyColumn(
+                            state = channelListState,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
+                                val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
+                                val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
+                                    val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                    val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                    if (adjustedStop > adjustedStart) {
+                                        ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                                    } else null
+                                } else null
+                                val endTime = if (currentProg?.stopEpochMilli != null) {
+                                    val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                    strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
+                                } else null
+                                ChannelRow(
+                                    channel = channel,
+                                    epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                                    nowPlaying = currentProg?.title,
+                                    endTime = endTime,
+                                    progress = progress,
+                                    selected = selectedChannel == channel,
+                                    onClick = { selectChannel(channel) }
+                                )
+                            }
+                            if (visibleChannels.isEmpty()) {
+                                item {
+                                    Box(Modifier.fillParentMaxWidth().padding(30.dp), contentAlignment = Alignment.Center) {
+                                        Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
                     }
-                    if (visibleChannels.isEmpty()) {
-                        item {
-                            Box(Modifier.fillParentMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                                Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    LazyColumn(
+                        state = channelListState,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
+                            val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
+                            val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
+                                val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                if (adjustedStop > adjustedStart) {
+                                    ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                                } else null
+                            } else null
+                            val endTime = if (currentProg?.stopEpochMilli != null) {
+                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
+                            } else null
+                            ChannelRow(
+                                channel = channel,
+                                epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                                nowPlaying = currentProg?.title,
+                                endTime = endTime,
+                                progress = progress,
+                                selected = selectedChannel == channel,
+                                onClick = { selectChannel(channel) }
+                            )
+                        }
+                        if (visibleChannels.isEmpty()) {
+                            item {
+                                Box(Modifier.fillParentMaxWidth().padding(30.dp), contentAlignment = Alignment.Center) {
+                                    Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }
                 }
-                selectedChannel?.let { channel ->
-                    Spacer(Modifier.width(16.dp))
-                    PlayerPanel(
-                        channel = channel,
-                        epgGuide = epgGuide,
-                        epgTimeShiftHours = epgTimeShiftHours,
-                        channels = playlist.channels,
-                        groups = playlist.groups,
-                        onChannelSelected = ::selectChannel,
-                        modifier = Modifier.weight(1f).fillMaxHeight()
-                    )
+            } else {
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(
+                        state = channelListState,
+                        modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(if (isCompact) 280.dp else 430.dp).fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
+                            val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
+                            val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
+                                val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                if (adjustedStop > adjustedStart) {
+                                    ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                                } else null
+                            } else null
+                            val endTime = if (currentProg?.stopEpochMilli != null) {
+                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
+                            } else null
+                            ChannelRow(
+                                channel = channel,
+                                epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                                nowPlaying = currentProg?.title,
+                                endTime = endTime,
+                                progress = progress,
+                                selected = selectedChannel == channel,
+                                onClick = { selectChannel(channel) }
+                            )
+                        }
+                        if (visibleChannels.isEmpty()) {
+                            item {
+                                Box(Modifier.fillParentMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                                    Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    selectedChannel?.let { channel ->
+                        Spacer(Modifier.width(16.dp))
+                        PlayerPanel(
+                            channel = channel,
+                            epgGuide = epgGuide,
+                            epgTimeShiftHours = epgTimeShiftHours,
+                            channels = playlist.channels,
+                            groups = playlist.groups,
+                            onChannelSelected = ::selectChannel,
+                            modifier = Modifier.weight(1f).fillMaxHeight()
+                        )
+                    }
                 }
             }
         }
@@ -1603,19 +1735,21 @@ private fun FullscreenGuideDrawer(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
     val now = Instant.now()
     val programmes = epgGuide?.programmes?.get(channel.tvgId).orEmpty()
         .filter { programme -> XmlTvTime.parse(programme.stop ?: programme.start, epgTimeShiftHours)?.let { it > now } == true }
         .sortedBy { it.startEpochMilli }
     Surface(
-        modifier = modifier.fillMaxHeight().width(560.dp),
+        modifier = modifier.fillMaxHeight().widthIn(max = 560.dp).fillMaxWidth(if (isCompact) 0.88f else 0.5f),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
         shadowElevation = 12.dp
     ) {
-        Column(Modifier.padding(20.dp)) {
+        Column(Modifier.padding(if (isCompact) 14.dp else 20.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(strings.programmeGuide, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                    Text(strings.programmeGuide, fontSize = if (isCompact) 20.sp else 25.sp, fontWeight = FontWeight.Bold)
                     Text(channel.name, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = strings.close) }
@@ -1674,6 +1808,8 @@ private fun FullscreenChannelDrawer(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
     val allGroup = strings.allChannels
     var selectedGroup by remember(selectedChannel, allGroup) {
         mutableStateOf(selectedChannel.group ?: allGroup)
@@ -1694,13 +1830,13 @@ private fun FullscreenChannelDrawer(
     }
 
     Surface(
-        modifier = modifier.fillMaxHeight().width(460.dp),
+        modifier = modifier.fillMaxHeight().widthIn(max = 460.dp).fillMaxWidth(if (isCompact) 0.88f else 0.42f),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
         shadowElevation = 16.dp
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(Modifier.padding(if (isCompact) 14.dp else 18.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(strings.channelList, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(strings.channelList, fontSize = if (isCompact) 20.sp else 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text(strings.close) }
             }
             OutlinedTextField(
@@ -1839,6 +1975,9 @@ private fun SettingsDialog(
     onEpgTimeShiftChanged: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+
     var selectedTab by remember { mutableIntStateOf(initialTab) }
     val tabTitles = listOf(strings.tabPlaylists, strings.tabEpg, strings.tabGeneral)
 
@@ -1847,21 +1986,22 @@ private fun SettingsDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(if (isCompact) 18.dp else 24.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
             modifier = Modifier
-                .widthIn(min = 600.dp, max = 780.dp)
-                .fillMaxHeight(0.88f)
-                .padding(16.dp)
+                .widthIn(max = 780.dp)
+                .fillMaxWidth(if (isCompact) 0.95f else 0.82f)
+                .fillMaxHeight(if (isCompact) 0.92f else 0.88f)
+                .padding(if (isCompact) 8.dp else 16.dp)
         ) {
-            Column(Modifier.fillMaxSize().padding(24.dp)) {
+            Column(Modifier.fillMaxSize().padding(if (isCompact) 14.dp else 24.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(strings.settingsTitle, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text(strings.settingsTitle, fontSize = if (isCompact) 20.sp else 24.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = strings.close)
                     }
@@ -1878,7 +2018,7 @@ private fun SettingsDialog(
                         Tab(
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
-                            text = { Text(title, fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal) }
+                            text = { Text(title, fontSize = if (isCompact) 12.sp else 14.sp, fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal) }
                         )
                     }
                 }
