@@ -112,6 +112,15 @@ interface Strings {
     val securityTitle: String
     val securityDesc: String
     val appVersion: String
+    val checkForUpdates: String
+    val checkingForUpdates: String
+    val updateAvailable: String
+    fun updateAvailableDesc(version: String): String
+    val upToDate: String
+    val downloadingUpdate: String
+    val updateNow: String
+    val installUpdate: String
+    fun updateFailed(error: String): String
 }
 
 object EnglishStrings : Strings {
@@ -160,10 +169,10 @@ object EnglishStrings : Strings {
     override val aspectFill = "Aspect: Fill"
     override val aspectZoom = "Aspect: Zoom"
     override val aspectFit = "Aspect: Fit"
-    override val playbackError = "This channel could not be played."
+    override val playbackError = "Unable to play this channel."
 
     override val welcomeTitle = "Secure IPTV Player"
-    override val welcomeSubtitle = "Private by design. AES-256 encrypted source storage."
+    override val welcomeSubtitle = "Private by default. Hardware-backed AES-256 encrypted storage."
     override val playlistM3u = "Playlist (M3U / M3U8)"
     override val enterM3uUrl = "https://example.com/playlist.m3u"
     override val orSelectLocalFile = "or select a local file"
@@ -189,12 +198,12 @@ object EnglishStrings : Strings {
     override val localFile = "Local File (M3U/M3U8)"
     override val selectFile = "Select File"
     override val deletePlaylistConfirmTitle = "Delete Playlist"
-    override fun deletePlaylistConfirmMsg(name: String) = "Are you sure you want to delete \"$name\"? This cannot be undone."
+    override fun deletePlaylistConfirmMsg(name: String) = "Are you sure you want to delete \"$name\"? This action cannot be undone."
     override fun lastUpdated(time: String) = "Last updated: $time"
     override val notUpdatedYet = "Not updated yet"
     override val refreshPlaylist = "Refresh playlist"
     override val xmltvSource = "XMLTV Guide Source"
-    override val noEpgConfiguredMsg = "No XMLTV source configured"
+    override val noEpgConfiguredMsg = "No XMLTV guide configured"
     override val configureXmltv = "Configure XMLTV Guide"
     override val changeXmltv = "Change XMLTV Guide"
     override val removeEpg = "Remove EPG"
@@ -203,6 +212,16 @@ object EnglishStrings : Strings {
     override val securityTitle = "FortressTV Security & Privacy"
     override val securityDesc = "Hardware-backed AES-256 encryption via Android KeyStore. All sources and cached stream tokens remain private on this device."
     override val appVersion = "Version 1.0.0"
+
+    override val checkForUpdates = "Check for Updates"
+    override val checkingForUpdates = "Checking for updates..."
+    override val updateAvailable = "Update Available"
+    override fun updateAvailableDesc(version: String) = "Version $version is available."
+    override val upToDate = "You are using the latest version"
+    override val downloadingUpdate = "Downloading update..."
+    override val updateNow = "Update Now"
+    override val installUpdate = "Install Update"
+    override fun updateFailed(error: String) = "Update failed: $error"
 }
 
 object PortugueseStrings : Strings {
@@ -294,6 +313,16 @@ object PortugueseStrings : Strings {
     override val securityTitle = "Segurança e Privacidade FortressTV"
     override val securityDesc = "Encriptação AES-256 por hardware via Android KeyStore. Todas as origens e tokens de stream permanecem estritamente privados neste dispositivo."
     override val appVersion = "Versão 1.0.0"
+
+    override val checkForUpdates = "Verificar Atualizações"
+    override val checkingForUpdates = "A verificar atualizações..."
+    override val updateAvailable = "Atualização Disponível"
+    override fun updateAvailableDesc(version: String) = "A versão $version está disponível."
+    override val upToDate = "Está a utilizar a versão mais recente"
+    override val downloadingUpdate = "A transferir atualização..."
+    override val updateNow = "Atualizar Agora"
+    override val installUpdate = "Instalar Atualização"
+    override fun updateFailed(error: String) = "Falha na atualização: $error"
 }
 
 val LocalAppStrings = staticCompositionLocalOf<Strings> { EnglishStrings }

@@ -52,7 +52,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Download
 import com.fortresstv.player.playlist.PlaylistProfile
+import com.fortresstv.player.update.UpdateManager
+import com.fortresstv.player.update.AppUpdateInfo
+import com.fortresstv.player.BuildConfig
 import com.fortresstv.player.ui.AppLanguage
 import com.fortresstv.player.ui.LocalAppStrings
 import com.fortresstv.player.ui.getStringsFor
@@ -2337,18 +2342,173 @@ private fun AboutTab(
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val strings = LocalAppStrings.current
+
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var upToDateNotice by remember { mutableStateOf(false) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    var downloadProgress by remember { mutableFloatStateOf(-1f) }
+
+    fun doCheckForUpdates() {
+        checkingUpdate = true
+        upToDateNotice = false
+        updateError = null
+        scope.launch {
+            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_NAME)
+            checkingUpdate = false
+            if (info != null) {
+                updateInfo = info
+            } else {
+                upToDateNotice = true
+            }
+        }
+    }
+
+    fun startUpdate(info: AppUpdateInfo) {
+        downloadProgress = 0f
+        updateError = null
+        scope.launch {
+            val result = UpdateManager.downloadAndInstall(context, info.downloadUrl) { progress ->
+                downloadProgress = progress
+            }
+            if (result.isFailure) {
+                downloadProgress = -1f
+                updateError = result.exceptionOrNull()?.localizedMessage ?: "Download failed"
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ShieldMark(Modifier.size(64.dp))
             Spacer(Modifier.width(16.dp))
             Column {
                 Text(strings.appName, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                Text("${strings.appVersion} · Pride1922", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Text("Version ${BuildConfig.VERSION_NAME} · Pride1922", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             }
         }
 
         Spacer(Modifier.height(20.dp))
+
+        // Updates Card
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.checkForUpdates, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(
+                            "Installed: v${BuildConfig.VERSION_NAME}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                    }
+                    if (!checkingUpdate && downloadProgress < 0f && updateInfo == null) {
+                        FilledTonalButton(onClick = ::doCheckForUpdates) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.checkForUpdates)
+                        }
+                    }
+                }
+
+                if (checkingUpdate) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(strings.checkingForUpdates, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                if (upToDateNotice) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.upToDate, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                    }
+                }
+
+                updateInfo?.let { info ->
+                    Spacer(Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.updateAvailableDesc("v${info.versionName}"),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            if (info.releaseNotes.isNotBlank()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    info.releaseNotes,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(Modifier.height(12.dp))
+
+                            if (downloadProgress >= 0f) {
+                                Column {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(strings.downloadingUpdate, fontSize = 12.sp)
+                                        Text("${(downloadProgress * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { downloadProgress },
+                                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                                    )
+                                }
+                            } else {
+                                Button(
+                                    onClick = { startUpdate(info) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(strings.updateNow)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (updateError != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(strings.updateFailed(updateError.orEmpty()), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
 
         Surface(
             shape = RoundedCornerShape(14.dp),
