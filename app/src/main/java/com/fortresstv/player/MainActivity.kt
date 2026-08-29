@@ -245,27 +245,27 @@ private fun FortressTVApp() {
                 if (currentActive.source is ContentSource.LocalFile) {
                     runCatching {
                         parsePlaylist(SourceReader.open(context, currentActive.source))
-                    }.onSuccess {
-                        if (it.channels.isNotEmpty()) {
-                            playlist = it
+                    }.onSuccess { parsed ->
+                        if (parsed.channels.isNotEmpty()) {
+                            withContext(Dispatchers.Main) { playlist = parsed }
                             hasFastLoadedPlaylist = true
                         }
                     }
                 } else if (SourceReader.hasCache(context, cacheKey)) {
                     runCatching {
                         parsePlaylist(SourceReader.openCached(context, cacheKey))
-                    }.onSuccess {
-                        if (it.channels.isNotEmpty()) {
-                            playlist = it
+                    }.onSuccess { parsed ->
+                        if (parsed.channels.isNotEmpty()) {
+                            withContext(Dispatchers.Main) { playlist = parsed }
                             hasFastLoadedPlaylist = true
                         }
                     }
                 } else if (SourceReader.hasCache(context, "playlist")) {
                     runCatching {
                         parsePlaylist(SourceReader.openCached(context, "playlist"))
-                    }.onSuccess {
-                        if (it.channels.isNotEmpty()) {
-                            playlist = it
+                    }.onSuccess { parsed ->
+                        if (parsed.channels.isNotEmpty()) {
+                            withContext(Dispatchers.Main) { playlist = parsed }
                             hasFastLoadedPlaylist = true
                         }
                     }
@@ -274,16 +274,22 @@ private fun FortressTVApp() {
 
             val savedEpgSource = settings.epgSource()
             if (savedEpgSource != null) {
-                epgSource = savedEpgSource
-                epgSourceName = savedEpgSource.displayName
+                withContext(Dispatchers.Main) {
+                    epgSource = savedEpgSource
+                    epgSourceName = savedEpgSource.displayName
+                }
                 if (savedEpgSource is ContentSource.LocalFile) {
                     runCatching {
                         parseEpg(SourceReader.open(context, savedEpgSource))
-                    }.onSuccess { epgGuide = it }
+                    }.onSuccess { parsedGuide ->
+                        withContext(Dispatchers.Main) { epgGuide = parsedGuide }
+                    }
                 } else if (SourceReader.hasCache(context, "epg")) {
                     runCatching {
                         parseEpg(SourceReader.openCached(context, "epg"))
-                    }.onSuccess { epgGuide = it }
+                    }.onSuccess { parsedGuide ->
+                        withContext(Dispatchers.Main) { epgGuide = parsedGuide }
+                    }
                 }
             }
         }
@@ -615,9 +621,20 @@ private fun ChannelBrowser(
             delay(60_000)
         }
     }
-    val channelsInGroup = if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
-    val visibleChannels = channelsInGroup.searchChannels(searchQuery)
+    val groupCounts = remember(playlist) {
+        playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
+    }
+    val channelsInGroup = remember(playlist, selectedGroup) {
+        if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
+    }
+    val visibleChannels = remember(channelsInGroup, searchQuery) {
+        channelsInGroup.searchChannels(searchQuery)
+    }
     val channelListState = rememberLazyListState()
+
+    val matchedCount = remember(playlist, epgGuide) {
+        if (epgGuide == null) 0 else playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
+    }
 
     LaunchedEffect(selectedGroup, searchQuery) {
         channelListState.scrollToItem(0)
@@ -701,7 +718,7 @@ private fun ChannelBrowser(
                         }
                     }
                     items(playlist.groups, key = { it }) { group ->
-                        GroupItem(group, playlist.channels.count { it.group == group }, selectedGroup == group) {
+                        GroupItem(group, groupCounts[group] ?: 0, selectedGroup == group) {
                             selectedGroup = group
                         }
                     }
@@ -713,8 +730,7 @@ private fun ChannelBrowser(
                 if (epgGuide == null) {
                     Text("EPG not configured", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 } else {
-                    val matched = playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
-                    Text("EPG: $matched/${playlist.channels.size} matched", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    Text("EPG: $matchedCount/${playlist.channels.size} matched", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                     Text(
                         epgSourceName ?: "XMLTV guide",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -914,19 +930,19 @@ private fun ChannelRow(
 
 @Composable
 private fun ChannelLogo(channel: PlaylistChannel, epgChannel: com.fortresstv.player.epg.EpgChannel?) {
-    val logoUrl = channel.logoUrl ?: epgChannel?.iconUrl
+    val logoUrl = remember(channel.logoUrl, epgChannel?.iconUrl) { channel.logoUrl ?: epgChannel?.iconUrl }
     var failed by remember(logoUrl) { mutableStateOf(false) }
     Box(
-        Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.background),
+        Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
         if (logoUrl != null && !failed) {
             AsyncImage(
                 model = logoUrl,
-                contentDescription = "${channel.name} logo",
+                contentDescription = null,
                 contentScale = ContentScale.Fit,
                 onError = { failed = true },
-                modifier = Modifier.fillMaxSize().padding(5.dp)
+                modifier = Modifier.fillMaxSize().padding(4.dp)
             )
         } else {
             Text(channel.name.take(1).uppercase(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
