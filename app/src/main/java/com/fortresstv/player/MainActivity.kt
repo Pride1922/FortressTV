@@ -1,5 +1,8 @@
 package com.fortresstv.player
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,10 +12,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,12 +30,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -37,9 +54,13 @@ import com.fortresstv.player.playlist.M3uParser
 import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.playlist.searchChannels
+import com.fortresstv.player.player.GestureControl
+import com.fortresstv.player.player.GestureLevel
+import com.fortresstv.player.player.GesturePlayerView
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.XmlTvParser
 import com.fortresstv.player.epg.snapshot
+import com.fortresstv.player.epg.XmlTvTime
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceReader
 import com.fortresstv.player.source.SourceSettingsStore
@@ -51,6 +72,8 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.util.zip.GZIPInputStream
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import coil.compose.AsyncImage
 
 class MainActivity : ComponentActivity() {
@@ -427,7 +450,13 @@ private fun ChannelBrowser(
                 }
                 selectedChannel?.let { channel ->
                     Spacer(Modifier.width(16.dp))
-                    PlayerPanel(channel = channel, epgGuide = epgGuide, modifier = Modifier.weight(1f).fillMaxHeight())
+                    PlayerPanel(
+                        channel = channel,
+                        epgGuide = epgGuide,
+                        channels = playlist.channels,
+                        onChannelSelected = { selectedChannel = it },
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    )
                 }
             }
         }
@@ -509,13 +538,20 @@ private fun ChannelLogo(channel: PlaylistChannel, epgChannel: com.fortresstv.pla
 
 @UnstableApi
 @Composable
-private fun PlayerPanel(channel: PlaylistChannel, epgGuide: EpgGuide?, modifier: Modifier = Modifier) {
+private fun PlayerPanel(
+    channel: PlaylistChannel,
+    epgGuide: EpgGuide?,
+    channels: List<PlaylistChannel>,
+    onChannelSelected: (PlaylistChannel) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val player = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = true }
     }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var fullscreen by remember { mutableStateOf(false) }
     val schedule = epgGuide?.snapshot(channel.tvgId)
 
     DisposableEffect(player) {
@@ -543,42 +579,21 @@ private fun PlayerPanel(channel: PlaylistChannel, epgGuide: EpgGuide?, modifier:
     }
 
     Column(modifier) {
-        Box(
-            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(14.dp)).background(Color.Black)
-        ) {
-            AndroidView(
-                factory = { viewContext ->
-                    PlayerView(viewContext).apply {
-                        this.player = player
-                        useController = true
-                        controllerAutoShow = true
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        keepScreenOn = true
-                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
-                            android.view.View.GONE
-                    }
+        if (!fullscreen) {
+            VideoSurface(
+                player = player,
+                playbackState = playbackState,
+                playbackError = playbackError,
+                fullscreen = false,
+            onFullscreen = { fullscreen = true },
+            onControlsVisibilityChanged = {},
+                onRetry = {
+                    playbackError = null
+                    player.prepare()
+                    player.play()
                 },
-                update = { it.player = player },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp))
             )
-            if (playbackState == Player.STATE_BUFFERING) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.primary)
-            }
-            playbackError?.let { message ->
-                Column(
-                    Modifier.align(Alignment.Center).padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(message, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = {
-                        playbackError = null
-                        player.prepare()
-                        player.play()
-                    }) { Text("Retry") }
-                }
-            }
         }
         Spacer(Modifier.height(16.dp))
         Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -601,6 +616,388 @@ private fun PlayerPanel(channel: PlaylistChannel, epgGuide: EpgGuide?, modifier:
             Text(next.title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
         }
     }
+
+    if (fullscreen) {
+        FullscreenPlayer(
+            player = player,
+            playbackState = playbackState,
+            playbackError = playbackError,
+            channel = channel,
+            epgGuide = epgGuide,
+            channels = channels,
+            onChannelSelected = onChannelSelected,
+            onExit = { fullscreen = false },
+            onRetry = {
+                playbackError = null
+                player.prepare()
+                player.play()
+            }
+        )
+    }
+}
+
+@UnstableApi
+@Composable
+private fun VideoSurface(
+    player: ExoPlayer,
+    playbackState: Int,
+    playbackError: String?,
+    fullscreen: Boolean,
+    onFullscreen: () -> Unit,
+    onControlsVisibilityChanged: (Boolean) -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var controlsVisible by remember(fullscreen) { mutableStateOf(true) }
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var gestureLevel by remember { mutableStateOf<GestureLevel?>(null) }
+    LaunchedEffect(gestureLevel) {
+        if (gestureLevel != null) {
+            delay(850)
+            gestureLevel = null
+        }
+    }
+    LaunchedEffect(fullscreen, controlsVisible, playerView) {
+        if (fullscreen && controlsVisible && playerView != null) {
+            delay(5_000)
+            playerView?.hideController()
+            controlsVisible = false
+            onControlsVisibilityChanged(false)
+        }
+    }
+    Box(modifier.background(Color.Black)) {
+        AndroidView(
+            factory = { viewContext ->
+                val view = if (fullscreen) {
+                    GesturePlayerView(viewContext).apply {
+                        onGestureLevelChanged = { gestureLevel = it }
+                    }
+                } else PlayerView(viewContext)
+                view.apply {
+                    playerView = this
+                    this.player = player
+                    useController = true
+                    controllerAutoShow = true
+                    controllerShowTimeoutMs = 5_000
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    keepScreenOn = true
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            controlsVisible = visibility == android.view.View.VISIBLE
+                            onControlsVisibilityChanged(controlsVisible)
+                        }
+                    )
+                    findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility = android.view.View.GONE
+                    findViewById<android.view.View>(androidx.media3.ui.R.id.exo_fullscreen)?.visibility = android.view.View.GONE
+                    findViewById<android.view.View>(androidx.media3.ui.R.id.exo_minimal_fullscreen)?.visibility = android.view.View.GONE
+                }
+            },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (playbackState == Player.STATE_BUFFERING) {
+            CircularProgressIndicator(Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.primary)
+        }
+        playbackError?.let { message ->
+            Column(
+                Modifier.align(Alignment.Center).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(message, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onRetry) { Text("Retry") }
+            }
+        }
+        AnimatedVisibility(
+            visible = gestureLevel != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(
+                if (gestureLevel?.control == GestureControl.BRIGHTNESS) Alignment.CenterStart else Alignment.CenterEnd
+            ).padding(24.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = .76f),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        if (gestureLevel?.control == GestureControl.BRIGHTNESS) "Brightness" else "Volume",
+                        color = Color.White.copy(alpha = .75f),
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        "${((gestureLevel?.value ?: 0f) * 100).toInt()}%",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+        AnimatedVisibility(
+            visible = !fullscreen || controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopEnd)
+        ) {
+            TextButton(
+                onClick = onFullscreen,
+                modifier = Modifier.padding(8.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = Color.Black.copy(alpha = .62f),
+                    contentColor = Color.White
+                )
+            ) { Text(if (fullscreen) "Exit fullscreen" else "Fullscreen") }
+        }
+    }
+}
+
+@UnstableApi
+@Composable
+private fun FullscreenPlayer(
+    player: ExoPlayer,
+    playbackState: Int,
+    playbackError: String?,
+    channel: PlaylistChannel,
+    epgGuide: EpgGuide?,
+    channels: List<PlaylistChannel>,
+    onChannelSelected: (PlaylistChannel) -> Unit,
+    onExit: () -> Unit,
+    onRetry: () -> Unit
+) {
+    var controlsVisible by remember { mutableStateOf(true) }
+    var showChannels by remember { mutableStateOf(false) }
+    var showGuide by remember { mutableStateOf(false) }
+    val schedule = epgGuide?.snapshot(channel.tvgId)
+    Dialog(
+        onDismissRequest = onExit,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        ImmersiveSystemBars()
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            VideoSurface(
+                player = player,
+                playbackState = playbackState,
+                playbackError = playbackError,
+                fullscreen = true,
+                onFullscreen = onExit,
+                onControlsVisibilityChanged = { controlsVisible = it },
+                onRetry = onRetry,
+                modifier = Modifier.fillMaxSize()
+            )
+            AnimatedVisibility(
+                visible = controlsVisible && !showChannels && !showGuide,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier.align(Alignment.TopStart).padding(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilledIconButton(
+                            onClick = { showChannels = true },
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f),
+                                contentColor = Color.White
+                            )
+                        ) { Icon(Icons.Default.Menu, contentDescription = "Channels") }
+                        FilledIconButton(
+                            onClick = { showGuide = true },
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = .68f),
+                                contentColor = Color.White
+                            )
+                        ) { Icon(Icons.Default.DateRange, contentDescription = "Programme guide") }
+                    }
+                    Surface(
+                        color = Color.Black.copy(alpha = .76f),
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(channel.name, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                                schedule?.current?.let {
+                                    Text(it.title, color = MaterialTheme.colorScheme.primary, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                } ?: Text("No current programme information", color = Color.White.copy(alpha = .68f))
+                            }
+                            schedule?.next?.let {
+                                Column(Modifier.widthIn(max = 420.dp)) {
+                                    Text("NEXT", color = Color.White.copy(alpha = .55f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(it.title, color = Color.White.copy(alpha = .82f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (showChannels) {
+                FullscreenChannelDrawer(
+                    channels = channels,
+                    selectedChannel = channel,
+                    epgGuide = epgGuide,
+                    onChannelSelected = {
+                        onChannelSelected(it)
+                        showChannels = false
+                    },
+                    onClose = { showChannels = false },
+                    modifier = Modifier.align(Alignment.CenterStart)
+                )
+            }
+            if (showGuide) {
+                FullscreenGuideDrawer(
+                    channel = channel,
+                    epgGuide = epgGuide,
+                    onClose = { showGuide = false },
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullscreenGuideDrawer(
+    channel: PlaylistChannel,
+    epgGuide: EpgGuide?,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val now = Instant.now()
+    val programmes = epgGuide?.programmes?.get(channel.tvgId).orEmpty()
+        .filter { programme -> XmlTvTime.parse(programme.stop ?: programme.start)?.let { it > now } == true }
+        .sortedBy { XmlTvTime.parse(it.start) }
+    Surface(
+        modifier = modifier.fillMaxHeight().width(560.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
+        shadowElevation = 12.dp
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Programme guide", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                    Text(channel.name, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close guide") }
+            }
+            Spacer(Modifier.height(16.dp))
+            if (programmes.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No upcoming programme information", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(programmes, key = { "${it.channelId}:${it.start}:${it.title}" }) { programme ->
+                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                                Text(
+                                    formatProgrammeRange(programme.start, programme.stop),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(programme.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                                programme.description?.let {
+                                    Text(
+                                        it,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatProgrammeRange(start: String, stop: String?): String {
+    val formatter = DateTimeFormatter.ofPattern("EEE d MMM · HH:mm")
+    val startText = XmlTvTime.parse(start)?.atZone(ZoneId.systemDefault())?.format(formatter) ?: start
+    val stopText = stop?.let(XmlTvTime::parse)?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("HH:mm"))
+    return if (stopText == null) startText else "$startText – $stopText"
+}
+
+@Composable
+private fun FullscreenChannelDrawer(
+    channels: List<PlaylistChannel>,
+    selectedChannel: PlaylistChannel,
+    epgGuide: EpgGuide?,
+    onChannelSelected: (PlaylistChannel) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var query by remember { mutableStateOf("") }
+    val visibleChannels = channels.searchChannels(query)
+    Surface(
+        modifier = modifier.fillMaxHeight().width(430.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        shadowElevation = 12.dp
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Channels", fontSize = 25.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClose) { Text("Close") }
+            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search channels") },
+                singleLine = true,
+                trailingIcon = {
+                    if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Text("×", fontSize = 24.sp) }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(visibleChannels, key = { "fullscreen:${it.position}:${it.streamUrl}" }) { item ->
+                    ChannelRow(
+                        channel = item,
+                        epgChannel = epgGuide?.channels?.get(item.tvgId),
+                        nowPlaying = epgGuide?.snapshot(item.tvgId)?.current?.title,
+                        selected = item == selectedChannel,
+                        onClick = { onChannelSelected(item) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImmersiveSystemBars() {
+    val view = LocalView.current
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(activity, view) {
+        val dialogWindow = (view.parent as? DialogWindowProvider)?.window
+        val window = dialogWindow ?: activity?.window
+        window?.let { WindowCompat.setDecorFitsSystemWindows(it, false) }
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 @Composable
