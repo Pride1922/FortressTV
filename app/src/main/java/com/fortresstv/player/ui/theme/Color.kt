@@ -2,11 +2,13 @@ package com.fortresstv.player.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val FortressGreen = Color(0xFF36D6B7)
-val FortressGreenDark = Color(0xFF006B5B)
-val FortressNavy = Color(0xFF071513)
-val FortressSurface = Color(0xFF102421)
-val FortressSurfaceLight = Color(0xFFEAF5F2)
-val FortressText = Color(0xFFE2F4EF)
-val FortressTextDark = Color(0xFF10201D)
-val FortressMuted = Color(0xFFA5BDB7)
+val FortressGreen = Color(0xFF5EEAD4)
+val FortressGreenDark = Color(0xFF0F766E)
+val FortressNavy = Color(0xFF0B0F17)
+val FortressSurface = Color(0xFF111827)
+val FortressCard = Color(0xFF182231)
+val FortressSurfaceLight = Color(0xFFF4F7FA)
+val FortressText = Color(0xFFF1F5F9)
+val FortressTextDark = Color(0xFF111827)
+val FortressMuted = Color(0xFF94A3B8)
+val FortressOutline = Color(0xFF334155)

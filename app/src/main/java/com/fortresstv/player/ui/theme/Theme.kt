@@ -10,11 +10,15 @@ private val DarkColorScheme = darkColorScheme(
     secondary = FortressGreen,
     background = FortressNavy,
     surface = FortressNavy,
-    surfaceVariant = FortressSurface,
+    surfaceVariant = FortressCard,
+    surfaceContainer = FortressSurface,
+    surfaceContainerHigh = FortressCard,
+    surfaceContainerHighest = FortressCard,
     onPrimary = FortressNavy,
     onBackground = FortressText,
     onSurface = FortressText,
-    onSurfaceVariant = FortressMuted
+    onSurfaceVariant = FortressMuted,
+    outline = FortressOutline
 )
 
 private val LightColorScheme = lightColorScheme(

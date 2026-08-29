@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.fortresstv.player.playlist.M3uParser
 import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
+import com.fortresstv.player.playlist.searchChannels
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.XmlTvParser
 import com.fortresstv.player.source.ContentSource
@@ -60,6 +61,7 @@ private fun FortressTVApp() {
     var epgSourceName by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var restoring by remember { mutableStateOf(true) }
     var urlTarget by remember { mutableStateOf<UrlTarget?>(null) }
     var removeTarget by remember { mutableStateOf<UrlTarget?>(null) }
     var showSettings by remember { mutableStateOf(false) }
@@ -135,6 +137,7 @@ private fun FortressTVApp() {
             }.onFailure { error = "Saved EPG: ${it.message ?: "could not be loaded"}" }
         }
         loading = false
+        restoring = false
     }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -231,7 +234,9 @@ private fun FortressTVApp() {
         )
     }
 
-    if (playlist == null) {
+    if (restoring) {
+        WelcomeScreen(true, null, {}, {}, {})
+    } else if (playlist == null) {
         WelcomeScreen(
             loading = loading,
             error = error,
@@ -276,6 +281,12 @@ private fun WelcomeScreen(
                 Spacer(Modifier.height(48.dp))
                 Text("Add your playlist to start watching", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(20.dp))
+                if (loading) {
+                    LinearProgressIndicator(modifier = Modifier.width(320.dp))
+                    Spacer(Modifier.height(10.dp))
+                    Text("Loading saved playlist and programme guide…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(20.dp))
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
                         Text(if (loading) "Loading…" else "Open M3U file")
@@ -310,16 +321,12 @@ private fun ChannelBrowser(
     var selectedGroup by remember(playlist) { mutableStateOf(allGroup) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     val channelsInGroup = if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
-    val normalizedQuery = searchQuery.trim()
-    val visibleChannels = if (normalizedQuery.isEmpty()) channelsInGroup else channelsInGroup.filter { channel ->
-        channel.name.contains(normalizedQuery, ignoreCase = true) ||
-            channel.tvgName?.contains(normalizedQuery, ignoreCase = true) == true ||
-            channel.tvgId?.contains(normalizedQuery, ignoreCase = true) == true
-    }
+    val visibleChannels = channelsInGroup.searchChannels(searchQuery)
 
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
     Row(Modifier.fillMaxSize().systemBarsPadding()) {
         Column(
-            modifier = Modifier.width(250.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).padding(20.dp)
+            modifier = Modifier.width(250.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(20.dp)
         ) {
             Text("FortressTV", fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Text(sourceName, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -348,27 +355,33 @@ private fun ChannelBrowser(
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 28.dp, vertical = 20.dp)) {
-            Text(selectedGroup, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text(
-                if (normalizedQuery.isEmpty()) "${visibleChannels.size} channels · original playlist order"
-                else "${visibleChannels.size} of ${channelsInGroup.size} channels",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(14.dp))
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                label = { Text("Search channels") },
-                placeholder = { Text("Name or EPG ID") },
-                singleLine = true,
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        TextButton(onClick = { searchQuery = "" }) { Text("Clear") }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search channels") },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Text("×", fontSize = 26.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
+                    modifier = Modifier.width(380.dp)
+                )
+                Text(
+                    "${visibleChannels.size} ${if (visibleChannels.size == 1) "channel" else "channels"}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.height(12.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
                     ChannelRow(channel, epgGuide?.channels?.get(channel.tvgId))
@@ -382,6 +395,7 @@ private fun ChannelBrowser(
                 }
             }
         }
+    }
     }
 }
 
@@ -400,7 +414,11 @@ private fun GroupItem(name: String, count: Int, selected: Boolean, onClick: () -
 
 @Composable
 private fun ChannelRow(channel: PlaylistChannel, epgChannel: com.fortresstv.player.epg.EpgChannel?) {
-    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.background),
