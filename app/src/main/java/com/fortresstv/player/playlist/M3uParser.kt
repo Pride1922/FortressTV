@@ -1,0 +1,81 @@
+package com.fortresstv.player.playlist
+
+object M3uParser {
+    private val attributePattern = Regex("""([\w-]+)\s*=\s*"([^"]*)"""")
+
+    fun parse(content: String): Playlist {
+        val channels = mutableListOf<PlaylistChannel>()
+        var pendingInfo: ChannelInfo? = null
+        var pendingGroup: String? = null
+
+        content.lineSequence().forEach { rawLine ->
+            val line = rawLine.trim().removePrefix("\uFEFF")
+            when {
+                line.startsWith("#EXTINF:", ignoreCase = true) -> {
+                    pendingInfo = parseInfo(line)
+                    pendingGroup = null
+                }
+
+                line.startsWith("#EXTGRP:", ignoreCase = true) -> {
+                    pendingGroup = line.substringAfter(':').trim().ifEmpty { null }
+                }
+
+                line.isNotEmpty() && !line.startsWith('#') -> {
+                    val info = pendingInfo ?: ChannelInfo(name = line)
+                    channels += PlaylistChannel(
+                        position = channels.size,
+                        name = info.name.ifBlank { info.tvgName ?: "Channel ${channels.size + 1}" },
+                        streamUrl = line,
+                        tvgId = info.tvgId,
+                        tvgName = info.tvgName,
+                        logoUrl = info.logoUrl,
+                        group = pendingGroup ?: info.group
+                    )
+                    pendingInfo = null
+                    pendingGroup = null
+                }
+            }
+        }
+
+        return Playlist(channels)
+    }
+
+    private fun parseInfo(line: String): ChannelInfo {
+        val body = line.substringAfter(':')
+        val separator = findNameSeparator(body)
+        val metadata = if (separator >= 0) body.substring(0, separator) else body
+        val name = if (separator >= 0) body.substring(separator + 1).trim() else ""
+        val attributes = attributePattern.findAll(metadata).associate {
+            it.groupValues[1].lowercase() to it.groupValues[2].trim()
+        }
+
+        return ChannelInfo(
+            name = name,
+            tvgId = attributes["tvg-id"].nullIfBlank(),
+            tvgName = attributes["tvg-name"].nullIfBlank(),
+            logoUrl = attributes["tvg-logo"].nullIfBlank(),
+            group = attributes["group-title"].nullIfBlank()
+        )
+    }
+
+    private fun findNameSeparator(value: String): Int {
+        var inQuotes = false
+        value.forEachIndexed { index, character ->
+            when (character) {
+                '"' -> inQuotes = !inQuotes
+                ',' -> if (!inQuotes) return index
+            }
+        }
+        return -1
+    }
+
+    private fun String?.nullIfBlank(): String? = this?.ifBlank { null }
+
+    private data class ChannelInfo(
+        val name: String,
+        val tvgId: String? = null,
+        val tvgName: String? = null,
+        val logoUrl: String? = null,
+        val group: String? = null
+    )
+}
