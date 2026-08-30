@@ -137,6 +137,8 @@ interface Strings {
     fun updateAvailableDesc(version: String): String
     val upToDate: String
     val downloadingUpdate: String
+    val updateDownloaded: String
+    val installUpdateHint: String
     val updateNow: String
     val installUpdate: String
     val later: String
@@ -259,6 +261,8 @@ object EnglishStrings : Strings {
     override fun updateAvailableDesc(version: String) = "Version $version is available."
     override val upToDate = "You are using the latest version"
     override val downloadingUpdate = "Downloading update..."
+    override val updateDownloaded = "Download complete"
+    override val installUpdateHint = "If Android's installer was dismissed, tap Install Update to continue. The update will not be downloaded again."
     override val updateNow = "Update Now"
     override val installUpdate = "Install Update"
     override val later = "Later"
@@ -381,6 +385,8 @@ object PortugueseStrings : Strings {
     override fun updateAvailableDesc(version: String) = "A versão $version está disponível."
     override val upToDate = "Está a utilizar a versão mais recente"
     override val downloadingUpdate = "A transferir atualização..."
+    override val updateDownloaded = "Transferência concluída"
+    override val installUpdateHint = "Se fechou o instalador do Android, toque em Instalar Atualização para continuar. A atualização não será transferida novamente."
     override val updateNow = "Atualizar Agora"
     override val installUpdate = "Instalar Atualização"
     override val later = "Mais Tarde"

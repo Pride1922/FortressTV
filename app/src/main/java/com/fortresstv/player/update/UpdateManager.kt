@@ -30,6 +30,7 @@ data class AppUpdateInfo(
 object UpdateManager {
     private const val INSTALL_STATE = "fortresstv_update_install"
     private const val PENDING_APK_PATH = "pending_apk_path"
+    private const val INSTALLER_LAUNCHED = "installer_launched"
 
     // URL pointing to your Nextcloud version.json
     var updateEndpointUrl: String = "https://cloud.ameyerocha.com/s/iL89c8t5PmzBAjA/download"
@@ -251,10 +252,10 @@ object UpdateManager {
     fun installApk(context: Context, apkFile: File) {
         if (!apkFile.exists()) return
 
+        savePendingInstall(context, apkFile, installerLaunched = false)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!context.packageManager.canRequestPackageInstalls()) {
-                context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
-                    .edit().putString(PENDING_APK_PATH, apkFile.absolutePath).apply()
                 val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                     data = Uri.parse("package:${context.packageName}")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -264,8 +265,7 @@ object UpdateManager {
             }
         }
 
-        clearPendingInstall(context)
-        launchInstaller(context, apkFile)
+        launchPendingInstaller(context, apkFile)
     }
 
     fun resumePendingInstall(context: Context) {
@@ -275,21 +275,67 @@ object UpdateManager {
 
         val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
         val pendingPath = preferences.getString(PENDING_APK_PATH, null) ?: return
+        if (preferences.getBoolean(INSTALLER_LAUNCHED, false)) return
         val apkFile = File(pendingPath)
-        clearPendingInstall(context)
-        if (!apkFile.exists()) return
+        if (!apkFile.exists()) {
+            clearPendingInstall(context)
+            return
+        }
 
         runCatching {
             verifyDownloadedApk(context, apkFile)
-            launchInstaller(context, apkFile)
+            launchPendingInstaller(context, apkFile)
         }.onFailure {
+            clearPendingInstall(context)
             apkFile.delete()
         }
     }
 
+    fun retryPendingInstall(context: Context): Result<Unit> = runCatching {
+        val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
+        val pendingPath = preferences.getString(PENDING_APK_PATH, null)
+            ?: error("The downloaded update is no longer available. Please download it again.")
+        val apkFile = File(pendingPath)
+        require(apkFile.exists()) { "The downloaded update is no longer available. Please download it again." }
+        verifyDownloadedApk(context, apkFile)
+        installApk(context, apkFile)
+    }.onFailure {
+        if (it !is SecurityException) {
+            clearPendingInstall(context)
+        }
+    }
+
+    fun hasPendingInstall(context: Context): Boolean {
+        val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
+        val pendingPath = preferences.getString(PENDING_APK_PATH, null) ?: return false
+        val apkFile = File(pendingPath)
+        return runCatching {
+            require(apkFile.exists())
+            verifyDownloadedApk(context, apkFile)
+            true
+        }.getOrElse {
+            clearPendingInstall(context)
+            apkFile.delete()
+            false
+        }
+    }
+
+    private fun savePendingInstall(context: Context, apkFile: File, installerLaunched: Boolean) {
+        context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PENDING_APK_PATH, apkFile.absolutePath)
+            .putBoolean(INSTALLER_LAUNCHED, installerLaunched)
+            .apply()
+    }
+
+    private fun launchPendingInstaller(context: Context, apkFile: File) {
+        savePendingInstall(context, apkFile, installerLaunched = true)
+        launchInstaller(context, apkFile)
+    }
+
     private fun clearPendingInstall(context: Context) {
         context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
-            .edit().remove(PENDING_APK_PATH).apply()
+            .edit().remove(PENDING_APK_PATH).remove(INSTALLER_LAUNCHED).apply()
     }
 
     private fun launchInstaller(context: Context, apkFile: File) {

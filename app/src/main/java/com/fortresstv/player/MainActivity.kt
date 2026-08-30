@@ -219,13 +219,19 @@ private fun FortressTVApp() {
 
     var startupUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var startupUpdateProgress by remember { mutableFloatStateOf(-1f) }
+    var startupUpdateDownloaded by remember { mutableStateOf(false) }
     var startupUpdateError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_CODE)
-            if (info != null) {
-                startupUpdateInfo = info
+        val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_CODE)
+        if (info != null) {
+            val hasPendingInstall = withContext(Dispatchers.IO) {
+                UpdateManager.hasPendingInstall(context)
+            }
+            startupUpdateInfo = info
+            if (hasPendingInstall) {
+                startupUpdateProgress = 1f
+                startupUpdateDownloaded = true
             }
         }
     }
@@ -659,14 +665,17 @@ private fun FortressTVApp() {
             StartupUpdateDialog(
                 updateInfo = updateInfo,
                 progress = startupUpdateProgress,
+                downloaded = startupUpdateDownloaded,
                 error = startupUpdateError,
                 onDismiss = {
                     startupUpdateInfo = null
                     startupUpdateProgress = -1f
+                    startupUpdateDownloaded = false
                     startupUpdateError = null
                 },
                 onStartUpdate = {
                     startupUpdateProgress = 0f
+                    startupUpdateDownloaded = false
                     startupUpdateError = null
                     scope.launch {
                         val result = UpdateManager.downloadAndInstall(context, updateInfo.downloadUrl, updateInfo.sha256) { p ->
@@ -675,7 +684,17 @@ private fun FortressTVApp() {
                         if (result.isFailure) {
                             startupUpdateProgress = -1f
                             startupUpdateError = result.exceptionOrNull()?.localizedMessage ?: "Download failed"
+                        } else {
+                            startupUpdateDownloaded = true
                         }
+                    }
+                },
+                onInstallUpdate = {
+                    val result = UpdateManager.retryPendingInstall(context)
+                    if (result.isFailure) {
+                        startupUpdateDownloaded = false
+                        startupUpdateProgress = -1f
+                        startupUpdateError = result.exceptionOrNull()?.localizedMessage ?: "Installation failed"
                     }
                 }
             )
@@ -3211,6 +3230,7 @@ private fun AboutTab(
     var upToDateNotice by remember { mutableStateOf(false) }
     var updateError by remember { mutableStateOf<String?>(null) }
     var downloadProgress by remember { mutableFloatStateOf(-1f) }
+    var updateDownloaded by remember { mutableStateOf(false) }
 
     fun doCheckForUpdates() {
         checkingUpdate = true
@@ -3221,6 +3241,10 @@ private fun AboutTab(
             checkingUpdate = false
             if (info != null) {
                 updateInfo = info
+                if (withContext(Dispatchers.IO) { UpdateManager.hasPendingInstall(context) }) {
+                    downloadProgress = 1f
+                    updateDownloaded = true
+                }
             } else {
                 upToDateNotice = true
             }
@@ -3229,6 +3253,7 @@ private fun AboutTab(
 
     fun startUpdate(info: AppUpdateInfo) {
         downloadProgress = 0f
+        updateDownloaded = false
         updateError = null
         scope.launch {
             val result = UpdateManager.downloadAndInstall(context, info.downloadUrl, info.sha256) { progress ->
@@ -3237,6 +3262,8 @@ private fun AboutTab(
             if (result.isFailure) {
                 downloadProgress = -1f
                 updateError = result.exceptionOrNull()?.localizedMessage ?: "Download failed"
+            } else {
+                updateDownloaded = true
             }
         }
     }
@@ -3365,7 +3392,35 @@ private fun AboutTab(
                             }
                             Spacer(Modifier.height(12.dp))
 
-                            if (downloadProgress >= 0f) {
+                            if (updateDownloaded) {
+                                Text(
+                                    strings.updateDownloaded,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.height(5.dp))
+                                Text(
+                                    strings.installUpdateHint,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        val result = UpdateManager.retryPendingInstall(context)
+                                        if (result.isFailure) {
+                                            updateDownloaded = false
+                                            downloadProgress = -1f
+                                            updateError = result.exceptionOrNull()?.localizedMessage ?: "Installation failed"
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(strings.installUpdate)
+                                }
+                            } else if (downloadProgress >= 0f) {
                                 Column {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -3664,9 +3719,11 @@ private fun SourceUrlDialog(
 private fun StartupUpdateDialog(
     updateInfo: AppUpdateInfo,
     progress: Float,
+    downloaded: Boolean,
     error: String?,
     onDismiss: () -> Unit,
-    onStartUpdate: () -> Unit
+    onStartUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     Dialog(onDismissRequest = { if (progress < 0f) onDismiss() }) {
@@ -3727,7 +3784,20 @@ private fun StartupUpdateDialog(
                     }
                 }
 
-                if (progress >= 0f) {
+                if (downloaded) {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        strings.updateDownloaded,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        strings.installUpdateHint,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else if (progress >= 0f) {
                     Spacer(Modifier.height(16.dp))
                     Column {
                         Row(
@@ -3761,7 +3831,13 @@ private fun StartupUpdateDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (progress < 0f) {
+                    if (downloaded) {
+                        Button(onClick = onInstallUpdate) {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.installUpdate)
+                        }
+                    } else if (progress < 0f) {
                         TextButton(onClick = onDismiss) {
                             Text(strings.later)
                         }
