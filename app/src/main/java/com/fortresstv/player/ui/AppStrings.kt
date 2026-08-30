@@ -58,6 +58,8 @@ interface Strings {
     val loadingEpisodes: String
     val loadingMovieDetails: String
     val movieDetailsUnavailable: String
+    val loadingSeriesDetails: String
+    val seriesDetailsUnavailable: String
     val genre: String
     val duration: String
     val releaseDate: String
@@ -252,6 +254,8 @@ object EnglishStrings : Strings {
     override val loadingEpisodes = "Loading episodes..."
     override val loadingMovieDetails = "Loading movie details..."
     override val movieDetailsUnavailable = "More information could not be loaded."
+    override val loadingSeriesDetails = "Loading series details and episodes..."
+    override val seriesDetailsUnavailable = "Series information could not be loaded."
     override val genre = "Genre"
     override val duration = "Duration"
     override val releaseDate = "Release date"
@@ -447,6 +451,8 @@ object PortugueseStrings : Strings {
     override val loadingEpisodes = "A carregar episódios..."
     override val loadingMovieDetails = "A carregar detalhes do filme..."
     override val movieDetailsUnavailable = "Não foi possível carregar mais informações."
+    override val loadingSeriesDetails = "A carregar detalhes da série e episódios..."
+    override val seriesDetailsUnavailable = "Não foi possível carregar as informações da série."
     override val genre = "Género"
     override val duration = "Duração"
     override val releaseDate = "Data de estreia"

@@ -158,6 +158,7 @@ import com.fortresstv.player.xtream.XtreamClient
 import com.fortresstv.player.xtream.XtreamMovie
 import com.fortresstv.player.xtream.XtreamMovieDetails
 import com.fortresstv.player.xtream.XtreamSeries
+import com.fortresstv.player.xtream.XtreamSeriesDetails
 import com.fortresstv.player.xtream.XtreamEpisode
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
@@ -2342,13 +2343,16 @@ private fun SeriesEpisodesDialog(
     onPlay: (XtreamEpisode, String) -> Unit
 ) {
     val strings = LocalAppStrings.current
-    var episodes by remember(series.id) { mutableStateOf<List<XtreamEpisode>?>(null) }
-    var loadError by remember(series.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(series.id) {
-        runCatching { client.loadEpisodes(series.id) }
-            .onSuccess { episodes = it }
-            .onFailure { loadError = it.message }
+    var details by remember(series.id) { mutableStateOf<XtreamSeriesDetails?>(null) }
+    var loadError by remember(series.id) { mutableStateOf(false) }
+    var retryKey by remember(series.id) { mutableIntStateOf(0) }
+    LaunchedEffect(series.id, retryKey) {
+        loadError = false
+        runCatching { client.loadSeriesDetails(series.id) }
+            .onSuccess { details = it }
+            .onFailure { loadError = true }
     }
+    val episodes = details?.episodes
     val seasons = remember(episodes) {
         episodes?.map { it.season }?.distinct()?.sorted() ?: emptyList()
     }
@@ -2372,9 +2376,10 @@ private fun SeriesEpisodesDialog(
         ) {
             Column(Modifier.fillMaxSize().padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (!series.coverUrl.isNullOrBlank()) {
+                    val effectiveCover = details?.coverUrl ?: series.coverUrl
+                    if (!effectiveCover.isNullOrBlank()) {
                         AsyncImage(
-                            model = series.coverUrl,
+                            model = effectiveCover,
                             contentDescription = series.name,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.size(62.dp, 92.dp).clip(RoundedCornerShape(10.dp))
@@ -2383,14 +2388,41 @@ private fun SeriesEpisodesDialog(
                     }
                     Column(Modifier.weight(1f)) {
                         Text(series.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                        val meta = listOfNotNull(series.year, series.rating).joinToString(" · ")
+                        val meta = formatVodMetadata(
+                            details?.releaseDate?.take(4) ?: series.year,
+                            details?.rating ?: series.rating
+                        )
                         if (meta.isNotBlank()) {
                             Spacer(Modifier.height(2.dp))
                             Text(meta, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                         }
-                        if (!series.plot.isNullOrBlank()) {
+                        val plot = details?.plot ?: series.plot
+                        if (!plot.isNullOrBlank()) {
                             Spacer(Modifier.height(4.dp))
-                            Text(series.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
+                        details?.let { info ->
+                            Spacer(Modifier.height(6.dp))
+                            val highlights = listOfNotNull(info.genre, info.duration, info.ageRating)
+                            if (highlights.isNotEmpty()) {
+                                Text(
+                                    highlights.joinToString("  ·  "),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            val credits = listOfNotNull(
+                                info.director?.let { "${strings.director}: $it" },
+                                info.cast?.let { "${strings.cast}: $it" },
+                                info.country?.let { "${strings.country}: $it" }
+                            ).joinToString("  ·  ")
+                            if (credits.isNotBlank()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(credits, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                     OutlinedButton(onClick = onToggleFollow) {
@@ -2421,10 +2453,16 @@ private fun SeriesEpisodesDialog(
                 }
                 Spacer(Modifier.height(14.dp))
                 when {
-                    loadError != null -> Text(loadError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                    episodes == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    loadError -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(strings.seriesDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { retryKey++ }) { Text(strings.retry) }
+                        }
+                    }
+                    details == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
-                        Text(strings.loadingEpisodes, modifier = Modifier.padding(top = 72.dp))
+                        Text(strings.loadingSeriesDetails, modifier = Modifier.padding(top = 72.dp))
                     }
                     episodes!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(strings.noEpisodesAvailable)

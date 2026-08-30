@@ -246,6 +246,55 @@ class XtreamClientTest {
     }
 
     @Test
+    fun parsesSeriesMetadataAndEpisodesFromOneResponse() {
+        val client = XtreamClient(
+            sourceId = "test-source",
+            source = ContentSource.Xtream("https://example.com", "Test", "user", "pass")
+        )
+        val details = client.parseSeriesDetails(
+            """{
+                "info": {
+                    "name": "Sample Series",
+                    "plot": "A complete series synopsis",
+                    "genre": "Drama",
+                    "releaseDate": "2023-09-10",
+                    "rating": "8.276",
+                    "director": "Series Director",
+                    "cast": "Actor A, Actor B",
+                    "episode_run_time": "48",
+                    "country": "Portugal",
+                    "age": "M/12",
+                    "cover": "https://img.example/cover.jpg",
+                    "backdrop_path": ["https://img.example/series-backdrop.jpg"]
+                },
+                "episodes": {
+                    "1": [{
+                        "id": "701",
+                        "episode_num": 1,
+                        "title": "Pilot",
+                        "container_extension": "mkv",
+                        "info": {"plot": "The story begins"}
+                    }]
+                }
+            }"""
+        )
+
+        assertEquals("A complete series synopsis", details.plot)
+        assertEquals("Drama", details.genre)
+        assertEquals("2023-09-10", details.releaseDate)
+        assertEquals("8.276", details.rating)
+        assertEquals("Series Director", details.director)
+        assertEquals("Actor A, Actor B", details.cast)
+        assertEquals("48", details.duration)
+        assertEquals("Portugal", details.country)
+        assertEquals("M/12", details.ageRating)
+        assertEquals("https://img.example/cover.jpg", details.coverUrl)
+        assertEquals("https://img.example/series-backdrop.jpg", details.backdropUrl)
+        assertEquals(1, details.episodes.size)
+        assertEquals("701", details.episodes.single().id)
+    }
+
+    @Test
     fun parsesLiveChannelsCorrectly() {
         val client = XtreamClient(
             sourceId = "test-source",

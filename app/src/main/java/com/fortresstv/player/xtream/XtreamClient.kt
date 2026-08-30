@@ -60,8 +60,12 @@ class XtreamClient(
     }
 
     suspend fun loadEpisodes(seriesId: Int): List<XtreamEpisode> {
+        return loadSeriesDetails(seriesId).episodes
+    }
+
+    suspend fun loadSeriesDetails(seriesId: Int): XtreamSeriesDetails {
         val json = request("get_series_info", mapOf("series_id" to seriesId.toString()))
-        return parseEpisodes(json)
+        return parseSeriesDetails(json)
     }
 
     suspend fun loadMovieDetails(movieId: Int): XtreamMovieDetails {
@@ -85,7 +89,7 @@ class XtreamClient(
         extra: Map<String, String> = emptyMap(),
         forceRefresh: Boolean = false
     ): String = withContext(Dispatchers.IO) {
-        val cacheFile = if (context != null && action != null && action != "get_series_info") {
+        val cacheFile = if (context != null && action != null) {
             val suffix = extra.entries.sortedBy { entry -> entry.key }.joinToString("_") { entry -> "${entry.key}_${entry.value}" }
             java.io.File(context.filesDir, "xtream_${sourceId}_${action}_${suffix}.json")
         } else null
@@ -210,6 +214,32 @@ class XtreamClient(
             posterUrl = value("movie_image", "cover_big", "stream_icon"),
             backdropUrl = backdrop,
             trailerUrl = value("youtube_trailer", "trailer")
+        )
+    }
+
+    internal fun parseSeriesDetails(json: String): XtreamSeriesDetails {
+        val root = JSONObject(json)
+        val info = root.optJSONObject("info") ?: JSONObject()
+        fun value(vararg keys: String): String? = keys.firstNotNullOfOrNull { key -> info.nullableString(key) }
+        val backdrop = info.optJSONArray("backdrop_path")?.let { paths ->
+            (0 until paths.length()).firstNotNullOfOrNull { index ->
+                paths.optString(index).trim().takeIf(String::isNotEmpty)
+            }
+        } ?: value("backdrop_path")
+        return XtreamSeriesDetails(
+            plot = value("plot", "description"),
+            genre = value("genre"),
+            releaseDate = value("releaseDate", "releasedate", "year"),
+            rating = value("rating", "rating_5based"),
+            director = value("director"),
+            cast = value("cast", "actors"),
+            duration = value("episode_run_time", "duration"),
+            country = value("country"),
+            ageRating = value("age", "mpaa_rating"),
+            coverUrl = value("cover", "cover_big", "movie_image"),
+            backdropUrl = backdrop,
+            trailerUrl = value("youtube_trailer", "trailer"),
+            episodes = parseEpisodes(json)
         )
     }
 

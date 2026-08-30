@@ -43,6 +43,22 @@ data class XtreamSeries(
     val plot: String?
 )
 
+data class XtreamSeriesDetails(
+    val plot: String?,
+    val genre: String?,
+    val releaseDate: String?,
+    val rating: String?,
+    val director: String?,
+    val cast: String?,
+    val duration: String?,
+    val country: String?,
+    val ageRating: String?,
+    val coverUrl: String?,
+    val backdropUrl: String?,
+    val trailerUrl: String?,
+    val episodes: List<XtreamEpisode>
+)
+
 data class XtreamEpisode(
     val id: String,
     val title: String,
