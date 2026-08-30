@@ -721,7 +721,7 @@ private data class GuideProgrammeBlock(
     val timeLabel: String
 )
 
-private typealias GuideDayIndex = Map<LocalDate, Map<PlaylistChannel, List<GuideProgrammeBlock>>>
+private const val GUIDE_CHANNEL_BATCH_SIZE = 2
 
 @Composable
 private fun WelcomeScreen(
@@ -825,6 +825,8 @@ private fun ProgrammeGuideScreen(
     var selectedProgramme by remember { mutableStateOf<Pair<PlaylistChannel, EpgProgramme>?>(null) }
     var now by remember { mutableStateOf(Instant.now()) }
     val horizontalState = rememberScrollState()
+    var useWideTimelineWindow by remember { mutableStateOf(false) }
+    var initialTimelinePositioned by remember { mutableStateOf(false) }
     val channelState = rememberLazyListState()
     val programmeState = rememberLazyListState()
     var timelineViewportPx by remember { mutableIntStateOf(0) }
@@ -866,6 +868,12 @@ private fun ProgrammeGuideScreen(
         } else 8 * 60
         val targetPx = with(density) { (hourWidth * (targetMinutes / 60f)).roundToPx() }
         horizontalState.scrollTo((targetPx - timelineViewportPx / 2).coerceIn(0, horizontalState.maxValue))
+        initialTimelinePositioned = true
+    }
+    LaunchedEffect(horizontalState) {
+        snapshotFlow { horizontalState.isScrollInProgress }.collect { isScrolling ->
+            if (isScrolling && initialTimelinePositioned) useWideTimelineWindow = true
+        }
     }
 
     val selectedCurrent = selectedProgramme?.second?.let { programme ->
@@ -874,17 +882,21 @@ private fun ProgrammeGuideScreen(
         val stop = (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis
         adjustedNow in start until stop
     } == true
-    val guideDayIndex by produceState<GuideDayIndex>(
-        initialValue = emptyMap(),
-        epgGuide,
-        playlist,
-        dates,
-        zone,
-        shiftMillis
-    ) {
-        // Publish today first, then prepare the next two days. This keeps opening the
-        // guide responsive while preserving instant cached lookups after preparation.
-        dates.forEach { date ->
+    val todayGuideBlocks = remember(epgGuide, playlist, dates, zone, shiftMillis) {
+        mutableStateMapOf<PlaylistChannel, List<GuideProgrammeBlock>>()
+    }
+    var todayGuideReady by remember(epgGuide, playlist, dates, zone, shiftMillis) {
+        mutableStateOf(false)
+    }
+    val guideDayIndex = remember(epgGuide, playlist, dates, zone, shiftMillis) {
+        mutableStateMapOf<LocalDate, Map<PlaylistChannel, List<GuideProgrammeBlock>>>(
+            today to todayGuideBlocks
+        )
+    }
+    LaunchedEffect(epgGuide, playlist, dates, zone, shiftMillis) {
+        // Prepare today first. Publish its initially visible channels in small batches
+        // so opening the guide does not compose every programme row in one long frame.
+        dates.forEachIndexed { dayOffset, date ->
             val dayIndex = withContext(Dispatchers.Default) {
                 val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
                 val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
@@ -912,19 +924,36 @@ private fun ProgrammeGuideScreen(
                     if (blocks.isEmpty()) null else channel to blocks
                 }.toMap()
             }
-            value = value + (date to dayIndex)
+            if (dayOffset == 0) {
+                dayIndex.entries.chunked(GUIDE_CHANNEL_BATCH_SIZE).forEach { batch ->
+                    batch.forEach { (channel, blocks) -> todayGuideBlocks[channel] = blocks }
+                    withFrameNanos { }
+                }
+                todayGuideReady = true
+            } else {
+                // Future days are not visible yet, so publishing their immutable index
+                // is an O(1) state change and does not invalidate today's programme rows.
+                guideDayIndex[date] = dayIndex
+            }
         }
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
-    val visibleTimelineMinutes by remember(horizontalState, timelineViewportPx, hourWidth, density) {
+    val visibleTimelineMinutes by remember(horizontalState, timelineViewportPx, hourWidth, density, useWideTimelineWindow) {
         derivedStateOf {
             val hourWidthPx = with(density) { hourWidth.toPx() }.coerceAtLeast(1f)
             val firstMinute = horizontalState.value / hourWidthPx * 60f
-            val bucketedFirstMinute = (firstMinute / 15f).toInt() * 15f
             val visibleMinutes = timelineViewportPx / hourWidthPx * 60f
-            // Keep half an hour ready on either side so blocks do not pop in at the edge.
-            (bucketedFirstMinute - 30f).coerceAtLeast(0f) to
-                (bucketedFirstMinute + visibleMinutes + 45f).coerceAtMost(24f * 60f)
+            if (useWideTimelineWindow) {
+                // Once horizontal navigation begins, rebuild at most every two hours.
+                val bucketedFirstMinute = (firstMinute / 120f).toInt() * 120f
+                (bucketedFirstMinute - 120f).coerceAtLeast(0f) to
+                    (bucketedFirstMinute + visibleMinutes + 180f).coerceAtMost(24f * 60f)
+            } else {
+                // Opening and vertical-only navigation retain the smaller render set.
+                val bucketedFirstMinute = (firstMinute / 15f).toInt() * 15f
+                (bucketedFirstMinute - 30f).coerceAtLeast(0f) to
+                    (bucketedFirstMinute + visibleMinutes + 45f).coerceAtMost(24f * 60f)
+            }
         }
     }
 
@@ -933,6 +962,9 @@ private fun ProgrammeGuideScreen(
         color = MaterialTheme.colorScheme.background
     ) {
         Column(Modifier.fillMaxSize().systemBarsPadding()) {
+            if (todayGuideReady) {
+                Box(Modifier.size(1.dp).testTag("epg_ready"))
+            }
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1031,7 +1063,10 @@ private fun ProgrammeGuideScreen(
                         Modifier.fillMaxHeight().horizontalScroll(horizontalState)
                     ) {
                         Box(Modifier.width(timelineWidth).height(44.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                            repeat(48) { halfHour ->
+                            val (renderStartMinute, renderEndMinute) = visibleTimelineMinutes
+                            val firstHalfHour = (renderStartMinute / 30f).toInt().coerceIn(0, 47)
+                            val lastHalfHour = ((renderEndMinute + 29.999f) / 30f).toInt().coerceIn(firstHalfHour, 47)
+                            for (halfHour in firstHalfHour..lastHalfHour) {
                                 val minutes = halfHour * 30
                                 Text(
                                     "%02d:%02d".format(minutes / 60, minutes % 60),
@@ -1076,7 +1111,8 @@ private fun ProgrammeGuideScreen(
                                         val blockWidth = hourWidth * (block.durationMinutes / 60f) - 2.dp
                                         val isCurrent = now.toEpochMilli() in block.adjustedStartMillis until block.adjustedStopMillis
                                         val isSelected = selectedProgramme?.first == channel && selectedProgramme?.second == block.programme
-                                        Surface(
+                                        key(block.adjustedStartMillis, block.adjustedStopMillis, block.programme.title) {
+                                            Surface(
                                             onClick = {
                                                 selectedProgramme = channel to block.programme
                                             },
@@ -1090,26 +1126,27 @@ private fun ProgrammeGuideScreen(
                                                 .offset(x = hourWidth * (block.startMinutes / 60f), y = 5.dp)
                                                 .width(blockWidth)
                                                 .height(rowHeight - 10.dp)
-                                        ) {
-                                            if (blockWidth >= 42.dp) {
-                                                Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-                                                    Text(block.programme.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                    if (blockWidth >= 72.dp) {
+                                            ) {
+                                                if (blockWidth >= 42.dp) {
+                                                    Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+                                                        Text(block.programme.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        if (blockWidth >= 72.dp) {
+                                                            Text(
+                                                                block.timeLabel,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                fontSize = 11.sp,
+                                                                maxLines = 1
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                                         Text(
-                                                            block.timeLabel,
+                                                            "·",
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                            fontSize = 11.sp,
-                                                            maxLines = 1
+                                                            fontWeight = FontWeight.Bold
                                                         )
                                                     }
-                                                }
-                                            } else {
-                                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                    Text(
-                                                        "·",
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
                                                 }
                                             }
                                         }

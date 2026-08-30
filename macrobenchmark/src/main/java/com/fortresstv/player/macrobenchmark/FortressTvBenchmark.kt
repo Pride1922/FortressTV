@@ -83,7 +83,7 @@ class FortressTvBenchmark {
             guideButton.click()
             assertNotNull(
                 "The programme guide did not become ready",
-                device.wait(Until.findObject(By.res("epg_grid")), UI_TIMEOUT)
+                device.wait(Until.findObject(By.res("epg_ready")), UI_TIMEOUT)
             )
         }
     ) {
@@ -103,6 +103,7 @@ class FortressTvBenchmark {
         setupBlock = {
             pressHome()
             startActivityAndWait()
+            ensureChannelBrowser()
             assertNotNull(
                 "Configure a playlist and EPG before running programmeGuideOpen",
                 device.wait(Until.findObject(By.res("programme_guide_button")), UI_TIMEOUT)
@@ -112,7 +113,7 @@ class FortressTvBenchmark {
         device.findObject(By.res("programme_guide_button")).click()
         assertNotNull(
             "The programme guide did not become ready",
-            device.wait(Until.findObject(By.res("epg_grid")), UI_TIMEOUT)
+            device.wait(Until.findObject(By.res("epg_ready")), UI_TIMEOUT)
         )
         device.waitForIdle()
     }
@@ -156,6 +157,7 @@ class FortressTvBenchmark {
     private fun androidx.benchmark.macro.MacrobenchmarkScope.openProgrammeGuide() {
         pressHome()
         startActivityAndWait()
+        ensureChannelBrowser()
         val guideButton = device.wait(
             Until.findObject(By.res("programme_guide_button")),
             UI_TIMEOUT
@@ -164,8 +166,17 @@ class FortressTvBenchmark {
         guideButton.click()
         assertNotNull(
             "The programme guide did not become ready",
-            device.wait(Until.findObject(By.res("epg_grid")), UI_TIMEOUT)
+            device.wait(Until.findObject(By.res("epg_ready")), UI_TIMEOUT)
         )
+    }
+
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.ensureChannelBrowser() {
+        if (device.findObject(By.res("programme_guide_button")) == null &&
+            device.findObject(By.res("epg_grid")) != null
+        ) {
+            device.pressBack()
+            device.wait(Until.findObject(By.res("programme_guide_button")), UI_TIMEOUT)
+        }
     }
 
     private companion object {
