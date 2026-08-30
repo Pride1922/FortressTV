@@ -56,6 +56,15 @@ interface Strings {
     val searchMovies: String
     val searchSeries: String
     val loadingEpisodes: String
+    val loadingMovieDetails: String
+    val movieDetailsUnavailable: String
+    val genre: String
+    val duration: String
+    val releaseDate: String
+    val director: String
+    val cast: String
+    val country: String
+    val ageRating: String
     val noEpisodesAvailable: String
     fun seasonLabel(season: Int): String
     fun episodeLabel(season: Int, episode: Int): String
@@ -241,6 +250,15 @@ object EnglishStrings : Strings {
     override val searchMovies = "Search movies"
     override val searchSeries = "Search series"
     override val loadingEpisodes = "Loading episodes..."
+    override val loadingMovieDetails = "Loading movie details..."
+    override val movieDetailsUnavailable = "More information could not be loaded."
+    override val genre = "Genre"
+    override val duration = "Duration"
+    override val releaseDate = "Release date"
+    override val director = "Director"
+    override val cast = "Cast"
+    override val country = "Country"
+    override val ageRating = "Age rating"
     override val noEpisodesAvailable = "No episodes are available for this Series."
     override fun seasonLabel(season: Int) = "Season $season"
     override fun episodeLabel(season: Int, episode: Int) = "S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
@@ -427,6 +445,15 @@ object PortugueseStrings : Strings {
     override val searchMovies = "Pesquisar filmes"
     override val searchSeries = "Pesquisar séries"
     override val loadingEpisodes = "A carregar episódios..."
+    override val loadingMovieDetails = "A carregar detalhes do filme..."
+    override val movieDetailsUnavailable = "Não foi possível carregar mais informações."
+    override val genre = "Género"
+    override val duration = "Duração"
+    override val releaseDate = "Data de estreia"
+    override val director = "Realização"
+    override val cast = "Elenco"
+    override val country = "País"
+    override val ageRating = "Classificação etária"
     override val noEpisodesAvailable = "Não existem episódios disponíveis para esta Série."
     override fun seasonLabel(season: Int) = "Temporada $season"
     override fun episodeLabel(season: Int, episode: Int) = "T${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"

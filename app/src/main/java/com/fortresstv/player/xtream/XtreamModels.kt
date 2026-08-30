@@ -18,6 +18,21 @@ data class XtreamMovie(
     val plot: String?
 )
 
+data class XtreamMovieDetails(
+    val plot: String?,
+    val genre: String?,
+    val duration: String?,
+    val releaseDate: String?,
+    val rating: String?,
+    val director: String?,
+    val cast: String?,
+    val country: String?,
+    val ageRating: String?,
+    val posterUrl: String?,
+    val backdropUrl: String?,
+    val trailerUrl: String?
+)
+
 data class XtreamSeries(
     val id: Int,
     val name: String,
@@ -48,4 +63,3 @@ data class XtreamCatalog(
     val movies: List<XtreamMovie> = emptyList(),
     val series: List<XtreamSeries> = emptyList()
 )
-

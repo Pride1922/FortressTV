@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
@@ -61,6 +62,11 @@ class XtreamClient(
     suspend fun loadEpisodes(seriesId: Int): List<XtreamEpisode> {
         val json = request("get_series_info", mapOf("series_id" to seriesId.toString()))
         return parseEpisodes(json)
+    }
+
+    suspend fun loadMovieDetails(movieId: Int): XtreamMovieDetails {
+        val json = request("get_vod_info", mapOf("vod_id" to movieId.toString()))
+        return parseMovieDetails(json)
     }
 
     fun liveStreamUrl(streamId: Int, extension: String? = null): String {
@@ -179,6 +185,34 @@ class XtreamClient(
         )
     }
 
+    internal fun parseMovieDetails(json: String): XtreamMovieDetails {
+        val root = JSONObject(json)
+        val info = root.optJSONObject("info") ?: JSONObject()
+        val movieData = root.optJSONObject("movie_data") ?: JSONObject()
+        fun value(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
+            info.nullableString(key) ?: movieData.nullableString(key)
+        }
+        val backdrop = info.optJSONArray("backdrop_path")?.let { paths ->
+            (0 until paths.length()).firstNotNullOfOrNull { index ->
+                paths.optString(index).trim().takeIf(String::isNotEmpty)
+            }
+        } ?: value("backdrop_path")
+        return XtreamMovieDetails(
+            plot = value("plot", "description"),
+            genre = value("genre"),
+            duration = value("duration", "episode_run_time"),
+            releaseDate = value("releasedate", "releaseDate", "year"),
+            rating = value("rating", "rating_5based"),
+            director = value("director"),
+            cast = value("cast", "actors"),
+            country = value("country"),
+            ageRating = value("age", "mpaa_rating"),
+            posterUrl = value("movie_image", "cover_big", "stream_icon"),
+            backdropUrl = backdrop,
+            trailerUrl = value("youtube_trailer", "trailer")
+        )
+    }
+
     internal fun parseEpisodes(json: String): List<XtreamEpisode> {
         val root = JSONObject(json)
         val episodes = root.optJSONObject("episodes") ?: return emptyList()
@@ -206,15 +240,30 @@ class XtreamClient(
     private fun JSONArray.objects(): List<JSONObject> =
         (0 until length()).mapNotNull(::optJSONObject)
 
-    internal fun sanitizeCatalogResponse(response: String): String? = runCatching {
-        val array = JSONArray(response)
-        for (index in 0 until array.length()) {
-            array.optJSONObject(index)?.apply {
-                remove("direct_source")
+    internal fun sanitizeCatalogResponse(response: String): String? = sanitizeCachedResponse(response)
+
+    internal fun sanitizeCachedResponse(response: String): String? = runCatching {
+        val root = JSONTokener(response).nextValue()
+        removeSensitiveStreamFields(root)
+        when (root) {
+            is JSONObject, is JSONArray -> root.toString()
+            else -> null
+        }
+    }.getOrNull()
+
+    private fun removeSensitiveStreamFields(value: Any?) {
+        when (value) {
+            is JSONObject -> {
+                value.remove("direct_source")
+                value.keys().asSequence().toList().forEach { key ->
+                    removeSensitiveStreamFields(value.opt(key))
+                }
+            }
+            is JSONArray -> (0 until value.length()).forEach { index ->
+                removeSensitiveStreamFields(value.opt(index))
             }
         }
-        array.toString()
-    }.getOrNull()
+    }
 
     private fun JSONObject.nullableString(key: String): String? =
         optString(key).trim().takeIf { it.isNotEmpty() && !it.equals("null", true) }

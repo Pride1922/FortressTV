@@ -26,6 +26,22 @@ class XtreamClientTest {
     }
 
     @Test
+    fun sanitizesNestedVodDetailsBeforeCaching() {
+        val client = XtreamClient(
+            sourceId = "test-source",
+            source = ContentSource.Xtream("https://example.com", "Test", "user", "pass")
+        )
+        val sanitized = client.sanitizeCachedResponse(
+            """{"info":{"plot":"Story"},"movie_data":{"stream_id":42,"direct_source":"https://secret.example/movie"}}"""
+        )
+
+        assertNotNull(sanitized)
+        val root = org.json.JSONObject(sanitized!!)
+        assertEquals("Story", root.getJSONObject("info").getString("plot"))
+        assertEquals(false, root.getJSONObject("movie_data").has("direct_source"))
+    }
+
+    @Test
     fun normalizesServerAndPlayerApiUrls() {
         assertEquals("https://example.com:8443", XtreamClient.normalizeServerUrl("https://example.com:8443/"))
         assertEquals(
@@ -108,6 +124,46 @@ class XtreamClientTest {
         assertEquals("7.8", movies[0].rating)
         assertEquals("2023", movies[0].year)
         assertEquals("An exciting sample movie", movies[0].plot)
+    }
+
+    @Test
+    fun parsesDetailedMovieInformation() {
+        val client = XtreamClient(
+            sourceId = "test-source",
+            source = ContentSource.Xtream("https://example.com", "Test", "user", "pass")
+        )
+        val details = client.parseMovieDetails(
+            """{
+                "info": {
+                    "plot": "A detailed synopsis",
+                    "genre": "Adventure, Family",
+                    "duration": "01:42:00",
+                    "releasedate": "2024-03-15",
+                    "rating": "7.446",
+                    "director": "Test Director",
+                    "actors": "Actor One, Actor Two",
+                    "country": "Portugal",
+                    "mpaa_rating": "M/12",
+                    "movie_image": "https://img.example/poster.jpg",
+                    "backdrop_path": ["https://img.example/backdrop.jpg"],
+                    "youtube_trailer": "trailer-id"
+                },
+                "movie_data": {"stream_id": 42}
+            }"""
+        )
+
+        assertEquals("A detailed synopsis", details.plot)
+        assertEquals("Adventure, Family", details.genre)
+        assertEquals("01:42:00", details.duration)
+        assertEquals("2024-03-15", details.releaseDate)
+        assertEquals("7.446", details.rating)
+        assertEquals("Test Director", details.director)
+        assertEquals("Actor One, Actor Two", details.cast)
+        assertEquals("Portugal", details.country)
+        assertEquals("M/12", details.ageRating)
+        assertEquals("https://img.example/poster.jpg", details.posterUrl)
+        assertEquals("https://img.example/backdrop.jpg", details.backdropUrl)
+        assertEquals("trailer-id", details.trailerUrl)
     }
 
     @Test
@@ -234,4 +290,3 @@ class XtreamClientTest {
         assertEquals("News", channels[1].group)
     }
 }
-

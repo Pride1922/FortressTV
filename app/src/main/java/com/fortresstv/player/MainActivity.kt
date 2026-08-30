@@ -156,6 +156,7 @@ import com.fortresstv.player.xtream.XtreamCatalog
 import com.fortresstv.player.xtream.XtreamCategory
 import com.fortresstv.player.xtream.XtreamClient
 import com.fortresstv.player.xtream.XtreamMovie
+import com.fortresstv.player.xtream.XtreamMovieDetails
 import com.fortresstv.player.xtream.XtreamSeries
 import com.fortresstv.player.xtream.XtreamEpisode
 import com.fortresstv.player.ui.theme.FortressTVTheme
@@ -1638,6 +1639,7 @@ private fun FortressLibrary(
                 )
                 LibraryDestination.MOVIES -> XtreamMoviesScreen(
                     catalogs = xtreamCatalogs,
+                    profiles = xtreamProfiles,
                     hideAdultContent = hideAdultContent,
                     gridState = movieGridState,
                     movieWatchlistIds = movieWatchlistIds,
@@ -1804,6 +1806,7 @@ private data class CatalogCategory(
 @Composable
 private fun XtreamMoviesScreen(
     catalogs: List<XtreamCatalog>,
+    profiles: List<PlaylistProfile>,
     hideAdultContent: Boolean = false,
     gridState: LazyGridState,
     movieWatchlistIds: Set<String>,
@@ -1811,6 +1814,7 @@ private fun XtreamMoviesScreen(
     onPlay: (XtreamCatalog, XtreamMovie) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
@@ -1874,8 +1878,15 @@ private fun XtreamMoviesScreen(
         }
     }
     selectedMovie?.let { entry ->
+        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        val client = source?.let {
+            remember(entry.catalog.sourceId, it) {
+                XtreamClient(context.applicationContext, entry.catalog.sourceId, it)
+            }
+        }
         MovieDetailsDialog(
             movie = entry.movie,
+            client = client,
             sourceName = entry.catalog.sourceName.takeIf { showSourceNames },
             isWatchlisted = entry.movie.libraryId(entry.catalog.sourceId) in movieWatchlistIds,
             onDismiss = { selectedMovie = null },
@@ -2130,6 +2141,7 @@ internal fun formatVodMetadata(year: String?, rating: String?): String {
 @Composable
 private fun MovieDetailsDialog(
     movie: XtreamMovie,
+    client: XtreamClient?,
     sourceName: String?,
     isWatchlisted: Boolean,
     onDismiss: () -> Unit,
@@ -2138,8 +2150,19 @@ private fun MovieDetailsDialog(
 ) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
-    val posterRequest = remember(movie.posterUrl) {
-        movie.posterUrl?.takeIf(String::isNotBlank)?.let { url ->
+    var details by remember(movie.id, client) { mutableStateOf<XtreamMovieDetails?>(null) }
+    var detailsError by remember(movie.id, client) { mutableStateOf(false) }
+    var retryKey by remember(movie.id, client) { mutableIntStateOf(0) }
+    LaunchedEffect(movie.id, client, retryKey) {
+        if (client == null) return@LaunchedEffect
+        detailsError = false
+        runCatching { client.loadMovieDetails(movie.id) }
+            .onSuccess { details = it }
+            .onFailure { detailsError = true }
+    }
+    val effectivePoster = details?.posterUrl ?: movie.posterUrl
+    val posterRequest = remember(effectivePoster) {
+        effectivePoster?.takeIf(String::isNotBlank)?.let { url ->
             ImageRequest.Builder(context)
                 .data(url)
                 .size(600, 900)
@@ -2198,7 +2221,10 @@ private fun MovieDetailsDialog(
                                 lineHeight = 36.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            val metadata = formatVodMetadata(movie.year, movie.rating)
+                            val metadata = formatVodMetadata(
+                                details?.releaseDate?.take(4) ?: movie.year,
+                                details?.rating ?: movie.rating
+                            )
                             if (metadata.isNotBlank()) {
                                 Spacer(Modifier.height(10.dp))
                                 Text(
@@ -2212,14 +2238,41 @@ private fun MovieDetailsDialog(
                                 Spacer(Modifier.height(6.dp))
                                 Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                             }
-                            if (!movie.plot.isNullOrBlank()) {
+                            if (client != null && details == null && !detailsError) {
+                                Spacer(Modifier.height(18.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(strings.loadingMovieDetails, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            if (detailsError) {
+                                Spacer(Modifier.height(14.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(strings.movieDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.width(8.dp))
+                                    TextButton(onClick = { retryKey++ }) { Text(strings.retry) }
+                                }
+                            }
+                            val plot = details?.plot ?: movie.plot
+                            if (!plot.isNullOrBlank()) {
                                 Spacer(Modifier.height(22.dp))
                                 Text(
-                                    movie.plot,
+                                    plot,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 16.sp,
                                     lineHeight = 24.sp
                                 )
+                            }
+                            details?.let { info ->
+                                Spacer(Modifier.height(18.dp))
+                                MovieMetadataLine(strings.genre, info.genre)
+                                MovieMetadataLine(strings.duration, info.duration)
+                                MovieMetadataLine(strings.releaseDate, info.releaseDate)
+                                MovieMetadataLine(strings.director, info.director)
+                                MovieMetadataLine(strings.cast, info.cast)
+                                MovieMetadataLine(strings.country, info.country)
+                                MovieMetadataLine(strings.ageRating, info.ageRating)
                             }
                         }
                         Spacer(Modifier.height(24.dp))
@@ -2261,6 +2314,21 @@ private fun MovieDetailsDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MovieMetadataLine(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(
+            "$label:",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.widthIn(min = 100.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(value, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -2644,8 +2712,15 @@ private fun FavoriteLibraryScreen(
     }
 
     selectedMovie?.let { entry ->
+        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        val client = source?.let {
+            remember(entry.catalog.sourceId, it) {
+                XtreamClient(context.applicationContext, entry.catalog.sourceId, it)
+            }
+        }
         MovieDetailsDialog(
             movie = entry.movie,
+            client = client,
             sourceName = entry.catalog.sourceName.takeIf { catalogs.size > 1 },
             isWatchlisted = entry.movie.libraryId(entry.catalog.sourceId) in movieWatchlistIds,
             onDismiss = { selectedMovie = null },
