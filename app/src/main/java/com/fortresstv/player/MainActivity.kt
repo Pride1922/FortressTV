@@ -24,6 +24,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedVisibility
@@ -3917,7 +3918,10 @@ private fun ChannelBrowser(
                             epgGuide = epgGuide,
                             epgTimeShiftHours = epgTimeShiftHours,
                             channels = playlist.channels,
-                            groups = playlist.groups,
+                            groups = orderedCategories,
+                            favoriteChannelIds = favoriteChannelIds,
+                            recentChannelIds = recentChannelIds,
+                            onToggleFavorite = onToggleFavorite,
                             autoEnterFullscreen = playChannelsFullscreen,
                             autoPictureInPicture = autoPictureInPicture,
                             onChannelSelected = ::selectChannel,
@@ -4034,7 +4038,10 @@ private fun ChannelBrowser(
                             epgGuide = epgGuide,
                             epgTimeShiftHours = epgTimeShiftHours,
                             channels = playlist.channels,
-                            groups = playlist.groups,
+                            groups = orderedCategories,
+                            favoriteChannelIds = favoriteChannelIds,
+                            recentChannelIds = recentChannelIds,
+                            onToggleFavorite = onToggleFavorite,
                             autoEnterFullscreen = playChannelsFullscreen,
                             autoPictureInPicture = autoPictureInPicture,
                             onChannelSelected = ::selectChannel,
@@ -4270,6 +4277,9 @@ private fun PlayerPanel(
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
     groups: List<String> = emptyList(),
+    favoriteChannelIds: Set<String> = emptySet(),
+    recentChannelIds: List<String> = emptyList(),
+    onToggleFavorite: (PlaylistChannel) -> Unit = {},
     autoEnterFullscreen: Boolean,
     autoPictureInPicture: Boolean,
     onChannelSelected: (PlaylistChannel) -> Unit,
@@ -4464,6 +4474,9 @@ private fun PlayerPanel(
             epgTimeShiftHours = epgTimeShiftHours,
             channels = channels,
             groups = groups,
+            favoriteChannelIds = favoriteChannelIds,
+            recentChannelIds = recentChannelIds,
+            onToggleFavorite = onToggleFavorite,
             previousWatchedChannel = previousWatchedChannel,
             onChannelSelected = ::handleChannelSwitch,
             onExit = { fullscreen = false },
@@ -4509,7 +4522,14 @@ private fun VideoSurface(
             onControlsVisibilityChanged(false)
         }
     }
-    Box(modifier.background(Color.Black)) {
+    Box(
+        modifier
+            .background(Color.Black)
+            .clickable(enabled = fullscreen && !showTrackSettings) {
+                controlsVisible = !controlsVisible
+                onControlsVisibilityChanged(controlsVisible)
+            }
+    ) {
         AndroidView(
             factory = { viewContext ->
                 val view = if (fullscreen) {
@@ -4520,8 +4540,8 @@ private fun VideoSurface(
                 view.apply {
                     playerView = this
                     this.player = player
-                    useController = true
-                    controllerAutoShow = true
+                    useController = showTrackSettings
+                    controllerAutoShow = showTrackSettings
                     controllerShowTimeoutMs = 5_000
                     this.resizeMode = resizeMode
                     keepScreenOn = true
@@ -4536,14 +4556,27 @@ private fun VideoSurface(
                         if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_fullscreen)?.visibility = android.view.View.GONE
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_minimal_fullscreen)?.visibility = android.view.View.GONE
+                    if (!showTrackSettings) {
+                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_progress)?.visibility = android.view.View.GONE
+                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_bottom_bar)?.visibility = android.view.View.GONE
+                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility = android.view.View.GONE
+                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_basic_controls)?.visibility = android.view.View.GONE
+                    }
                 }
             },
             update = {
                 it.player = player
                 it.resizeMode = resizeMode
+                it.useController = showTrackSettings
                 it.setShowSubtitleButton(showTrackSettings)
                 it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
                     if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
+                if (!showTrackSettings) {
+                    it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_progress)?.visibility = android.view.View.GONE
+                    it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_bottom_bar)?.visibility = android.view.View.GONE
+                    it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility = android.view.View.GONE
+                    it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_basic_controls)?.visibility = android.view.View.GONE
+                }
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -4619,6 +4652,9 @@ private fun FullscreenPlayer(
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
     groups: List<String> = emptyList(),
+    favoriteChannelIds: Set<String> = emptySet(),
+    recentChannelIds: List<String> = emptyList(),
+    onToggleFavorite: (PlaylistChannel) -> Unit = {},
     previousWatchedChannel: PlaylistChannel? = null,
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
@@ -4634,6 +4670,12 @@ private fun FullscreenPlayer(
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var resizeModeNotice by remember { mutableStateOf<String?>(null) }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(controlsVisible, showChannels, showGuide, locked) {
+        if (controlsVisible && !showChannels && !showGuide && !locked) {
+            delay(5_000)
+            controlsVisible = false
+        }
+    }
     LaunchedEffect(channel, epgGuide) {
         while (true) {
             scheduleNow = Instant.now()
@@ -4667,7 +4709,18 @@ private fun FullscreenPlayer(
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
         ImmersiveSystemBars()
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        if (change.position.x < 160f && dragAmount > 18f && !showChannels && !locked && !inPictureInPicture) {
+                            showChannels = true
+                        }
+                    }
+                }
+        ) {
             VideoSurface(
                 player = player,
                 playbackState = playbackState,
@@ -4703,7 +4756,7 @@ private fun FullscreenPlayer(
                                 containerColor = Color.Black.copy(alpha = .68f),
                                 contentColor = Color.White
                             )
-                        ) { Icon(Icons.Default.Menu, contentDescription = strings.channelList) }
+                        ) { Icon(Icons.Default.Menu, contentDescription = strings.miniGuide) }
                         FilledIconButton(
                             onClick = { showGuide = true },
                             colors = IconButtonDefaults.filledIconButtonColors(
@@ -4867,12 +4920,18 @@ private fun FullscreenPlayer(
                                 Spacer(Modifier.height(10.dp))
                                 LinearProgressIndicator(
                                     progress = { programmeProgress },
-                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp)),
                                     color = MaterialTheme.colorScheme.primary,
                                     trackColor = Color.White.copy(alpha = .2f)
                                 )
                                 Spacer(Modifier.height(4.dp))
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
                                     Text(
                                         formatProgrammeTime(Instant.ofEpochMilli(currentStartEpoch)),
                                         color = Color.White.copy(alpha = .65f),
@@ -4893,19 +4952,21 @@ private fun FullscreenPlayer(
                 visible = showChannels && !inPictureInPicture,
                 enter = slideInHorizontally { -it } + fadeIn(),
                 exit = slideOutHorizontally { -it } + fadeOut(),
-                modifier = Modifier.align(Alignment.CenterStart)
+                modifier = Modifier.fillMaxSize()
             ) {
                 FullscreenChannelDrawer(
                     channels = channels,
                     groups = groups,
+                    favoriteChannelIds = favoriteChannelIds,
+                    recentChannelIds = recentChannelIds,
                     selectedChannel = channel,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
                     scheduleNow = scheduleNow,
-                    onChannelSelected = {
-                        onChannelSelected(it)
-                        showChannels = false
+                    onChannelSelected = { next ->
+                        onChannelSelected(next)
                     },
+                    onToggleFavorite = onToggleFavorite,
                     onClose = { showChannels = false }
                 )
             }
@@ -5041,11 +5102,14 @@ private fun formatProgrammeRange(startEpochMilli: Long, stopEpochMilli: Long?, t
 private fun FullscreenChannelDrawer(
     channels: List<PlaylistChannel>,
     groups: List<String> = emptyList(),
+    favoriteChannelIds: Set<String> = emptySet(),
+    recentChannelIds: List<String> = emptyList(),
     selectedChannel: PlaylistChannel,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
     scheduleNow: Instant,
     onChannelSelected: (PlaylistChannel) -> Unit,
+    onToggleFavorite: (PlaylistChannel) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -5053,12 +5117,43 @@ private fun FullscreenChannelDrawer(
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
     val allGroup = strings.allChannels
-    var selectedGroup by remember(selectedChannel, allGroup) {
-        mutableStateOf(selectedChannel.group ?: allGroup)
+    val favoritesGroup = "⭐ ${strings.navFavorites}"
+    val recentsGroup = "🕒 ${strings.recentlyWatched}"
+
+    val favoriteChannels = remember(channels, favoriteChannelIds) {
+        val channelMap = channels.associateBy { it.libraryId() }
+        favoriteChannelIds.mapNotNull { channelMap[it] }
     }
+    val recentChannels = remember(channels, recentChannelIds) {
+        val channelMap = channels.associateBy { it.libraryId() }
+        recentChannelIds.mapNotNull { channelMap[it] }
+    }
+    val effectiveGroups = remember(groups, channels) {
+        if (groups.isNotEmpty()) groups else channels.mapNotNull { it.group?.takeIf { g -> g.isNotBlank() } }.distinct()
+    }
+    val groupCounts = remember(channels, effectiveGroups) {
+        channels.groupingBy { it.group.orEmpty() }.eachCount()
+    }
+
+    var selectedGroup by remember(selectedChannel, allGroup) {
+        mutableStateOf(
+            when {
+                selectedChannel.group.isNullOrBlank() -> allGroup
+                else -> selectedChannel.group ?: allGroup
+            }
+        )
+    }
+    var isChoosingCategory by remember { mutableStateOf(false) }
+    var categorySearchQuery by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
-    val channelsInGroup = remember(channels, selectedGroup, allGroup) {
-        if (selectedGroup == allGroup) channels else channels.filter { it.group == selectedGroup }
+
+    val channelsInGroup = remember(channels, selectedGroup, allGroup, favoriteChannels, recentChannels) {
+        when (selectedGroup) {
+            allGroup -> channels
+            favoritesGroup -> favoriteChannels
+            recentsGroup -> recentChannels
+            else -> channels.filter { it.group == selectedGroup }
+        }
     }
     val visibleChannels = remember(channelsInGroup, query) {
         channelsInGroup.searchChannels(query)
@@ -5067,67 +5162,421 @@ private fun FullscreenChannelDrawer(
     val selectedIndex = remember(visibleChannels, selectedChannel) {
         visibleChannels.indexOf(selectedChannel).coerceAtLeast(0)
     }
+
     LaunchedEffect(selectedGroup, query) {
-        listState.scrollToItem(0)
+        if (query.isBlank() && selectedIndex > 0) {
+            listState.scrollToItem((selectedIndex - 2).coerceAtLeast(0))
+        } else {
+            listState.scrollToItem(0)
+        }
     }
 
-    Surface(
-        modifier = modifier.fillMaxHeight().widthIn(max = 460.dp).fillMaxWidth(if (isCompact) 0.88f else 0.42f),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
-        shadowElevation = 16.dp
-    ) {
-        Column(Modifier.padding(if (isCompact) 14.dp else 18.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(strings.channelList, fontSize = if (isCompact) 20.sp else 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                TextButton(onClick = onClose) { Text(strings.close) }
-            }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text(strings.searchInGroup(selectedGroup)) },
-                singleLine = true,
-                trailingIcon = {
-                    if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Text("×", fontSize = 24.sp) }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            if (groups.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    item {
-                        FilterChip(
-                            selected = selectedGroup == allGroup,
-                            onClick = { selectedGroup = allGroup },
-                            label = { Text("${strings.allChannels} (${channels.size})", fontSize = 12.sp) }
-                        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClose)
+        )
+
+        Surface(
+            modifier = modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .widthIn(min = 380.dp, max = 680.dp)
+                .fillMaxWidth(if (isCompact) 0.94f else 0.54f),
+            shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+            color = Color(0xFF121212).copy(alpha = 0.92f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            shadowElevation = 24.dp
+        ) {
+            Column(Modifier.padding(if (isCompact) 14.dp else 18.dp)) {
+                if (isChoosingCategory) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { isChoosingCategory = false }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back, tint = Color.White)
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                strings.selectCategory,
+                                color = Color.White,
+                                fontSize = if (isCompact) 18.sp else 20.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Default.Close, contentDescription = strings.close, tint = Color.White)
+                        }
                     }
-                    items(groups, key = { it }) { group ->
-                        FilterChip(
-                            selected = selectedGroup == group,
-                            onClick = { selectedGroup = group },
-                            label = { Text(group, fontSize = 12.sp) }
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(
-                    items = visibleChannels,
-                    key = { "fullscreen:${it.position}:${it.streamUrl}" },
-                    contentType = { "channel" }
-                ) { item ->
-                    GuideChannelRow(
-                        channel = item,
-                        epgGuide = epgGuide,
-                        scheduleNow = scheduleNow,
-                        epgTimeShiftHours = epgTimeShiftHours,
-                        selected = item == selectedChannel,
-                        onClick = { onChannelSelected(item) }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = categorySearchQuery,
+                        onValueChange = { categorySearchQuery = it },
+                        placeholder = { Text(strings.search) },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White.copy(alpha = 0.7f)) },
+                        trailingIcon = {
+                            if (categorySearchQuery.isNotEmpty()) {
+                                IconButton(onClick = { categorySearchQuery = "" }) {
+                                    Icon(Icons.Default.Clear, contentDescription = null, tint = Color.White.copy(alpha = 0.7f))
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                            cursorColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     )
+
+                    Spacer(Modifier.height(10.dp))
+
+                    val allCategoriesList = remember(allGroup, favoritesGroup, recentsGroup, effectiveGroups, favoriteChannels.size, recentChannels.size, groupCounts) {
+                        buildList {
+                            add(Triple(allGroup, channels.size, Icons.Default.FolderOpen))
+                            if (favoriteChannels.isNotEmpty()) {
+                                add(Triple(favoritesGroup, favoriteChannels.size, Icons.Default.Star))
+                            }
+                            if (recentChannels.isNotEmpty()) {
+                                add(Triple(recentsGroup, recentChannels.size, Icons.Default.Replay))
+                            }
+                            effectiveGroups.forEach { g ->
+                                add(Triple(g, groupCounts[g] ?: 0, Icons.Default.FolderOpen))
+                            }
+                        }
+                    }
+
+                    val filteredCategories = remember(allCategoriesList, categorySearchQuery) {
+                        if (categorySearchQuery.isBlank()) allCategoriesList
+                        else allCategoriesList.filter { it.first.contains(categorySearchQuery, ignoreCase = true) }
+                    }
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    ) {
+                        items(filteredCategories, key = { "cat:${it.first}" }) { (categoryName, count, icon) ->
+                            val isCurrent = categoryName == selectedGroup
+                            Surface(
+                                onClick = {
+                                    selectedGroup = categoryName
+                                    isChoosingCategory = false
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                else Color.White.copy(alpha = 0.08f),
+                                border = if (isCurrent) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                        Icon(
+                                            icon,
+                                            contentDescription = null,
+                                            tint = if (isCurrent) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Text(
+                                            categoryName,
+                                            color = Color.White,
+                                            fontSize = 15.sp,
+                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
+                                    ) {
+                                        Text(
+                                            count.toString(),
+                                            color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.7f),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                strings.miniGuide,
+                                color = Color.White,
+                                fontSize = if (isCompact) 20.sp else 22.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "${visibleChannels.size} ${strings.channelList.lowercase()}",
+                                color = Color.White.copy(alpha = 0.6f),
+                                fontSize = 12.sp
+                            )
+                        }
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Default.Close, contentDescription = strings.close, tint = Color.White)
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    Surface(
+                        onClick = { isChoosingCategory = true },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(strings.categories, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                    Text(selectedGroup, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(strings.changeCategory, fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.width(2.dp))
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text(strings.searchInGroup(selectedGroup.removePrefix("⭐ ").removePrefix("🕒 "))) },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White.copy(alpha = 0.7f)) },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(Icons.Default.Clear, contentDescription = null, tint = Color.White.copy(alpha = 0.7f))
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                            cursorColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = false,
+                                onClick = { isChoosingCategory = true },
+                                leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary) },
+                                label = { Text(strings.categories, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) }
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = selectedGroup == allGroup,
+                                onClick = { selectedGroup = allGroup },
+                                label = { Text("${strings.allChannels} (${channels.size})", fontSize = 12.sp) }
+                            )
+                        }
+                        if (favoriteChannels.isNotEmpty()) {
+                            item {
+                                FilterChip(
+                                    selected = selectedGroup == favoritesGroup,
+                                    onClick = { selectedGroup = favoritesGroup },
+                                    label = { Text("$favoritesGroup (${favoriteChannels.size})", fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                        if (recentChannels.isNotEmpty()) {
+                            item {
+                                FilterChip(
+                                    selected = selectedGroup == recentsGroup,
+                                    onClick = { selectedGroup = recentsGroup },
+                                    label = { Text("$recentsGroup (${recentChannels.size})", fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                        items(effectiveGroups, key = { "group-chip-$it" }) { group ->
+                            FilterChip(
+                                selected = selectedGroup == group,
+                                onClick = { selectedGroup = group },
+                                label = { Text(group, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    LazyColumn(
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    ) {
+                        items(
+                            items = visibleChannels,
+                            key = { "mini-guide:${it.position}:${it.streamUrl}" },
+                            contentType = { "channel" }
+                        ) { item ->
+                            val isSelected = item == selectedChannel
+                            val isFav = item.libraryId()?.let(favoriteChannelIds::contains) == true
+                            val presentation = remember(item.tvgId, item.name, epgGuide, scheduleNow, epgTimeShiftHours, strings) {
+                                val current = epgGuide?.snapshot(item.tvgId, item.name, scheduleNow, epgTimeShiftHours)?.current
+                                val shiftMillis = epgTimeShiftHours * 3_600_000L
+                                val adjustedStart = current?.startEpochMilli?.plus(shiftMillis)
+                                val adjustedStop = current?.stopEpochMilli?.plus(shiftMillis)
+                                val progress = if (adjustedStart != null && adjustedStop != null && adjustedStop > adjustedStart) {
+                                    ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() /
+                                        (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                                } else null
+                                ChannelEpgPresentation(
+                                    title = current?.title,
+                                    endTime = adjustedStop?.let { strings.until(formatProgrammeTime(Instant.ofEpochMilli(it))) },
+                                    progress = progress
+                                )
+                            }
+
+                            Surface(
+                                onClick = {
+                                    if (!isSelected) {
+                                        onChannelSelected(item)
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                else Color.White.copy(alpha = 0.08f),
+                                border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ChannelLogo(item, epgGuide?.findChannel(item.tvgId, item.name))
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (item.position > 0) {
+                                                Text(
+                                                    "${item.position}.",
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                            }
+                                            Text(
+                                                item.name,
+                                                color = Color.White,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                        Spacer(Modifier.height(2.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                presentation.title ?: strings.noCurrentProgramme,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            if (presentation.endTime != null) {
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(
+                                                    presentation.endTime,
+                                                    color = Color.White.copy(alpha = 0.5f),
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                        if (presentation.progress != null) {
+                                            Spacer(Modifier.height(4.dp))
+                                            LinearProgressIndicator(
+                                                progress = { presentation.progress },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(3.dp)
+                                                    .clip(RoundedCornerShape(1.5.dp)),
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f),
+                                                trackColor = Color.White.copy(alpha = 0.12f)
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { onToggleFavorite(item) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = if (isFav) Color(0xFFFFB800) else Color.White.copy(alpha = 0.25f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

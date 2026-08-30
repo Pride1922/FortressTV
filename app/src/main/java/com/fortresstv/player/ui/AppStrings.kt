@@ -109,6 +109,8 @@ interface Strings {
     val hideChannelFilters: String
     val previousChannel: String
     val manageCategories: String
+    val changeCategory: String
+    val selectCategory: String
     val hideCategory: String
     val showCategory: String
     val showAllCategories: String
@@ -149,6 +151,7 @@ interface Strings {
     val zoomInTimeline: String
     val zoomOutTimeline: String
     val channelList: String
+    val miniGuide: String
     val aspectRatio: String
     val lockControls: String
     val unlockControls: String
@@ -335,6 +338,8 @@ object EnglishStrings : Strings {
     override val hideChannelFilters = "Hide channel filters"
     override val previousChannel = "Previous channel"
     override val manageCategories = "Manage categories"
+    override val changeCategory = "Change Category"
+    override val selectCategory = "Select Category"
     override val hideCategory = "Hide category"
     override val showCategory = "Show category"
     override val showAllCategories = "Show all"
@@ -375,6 +380,7 @@ object EnglishStrings : Strings {
     override val zoomInTimeline = "Zoom in timeline"
     override val zoomOutTimeline = "Zoom out timeline"
     override val channelList = "Channels"
+    override val miniGuide = "Mini-Guide"
     override val aspectRatio = "Aspect ratio"
     override val lockControls = "Lock controls"
     override val unlockControls = "Unlock controls"
@@ -562,6 +568,8 @@ object PortugueseStrings : Strings {
     override val hideChannelFilters = "Ocultar filtros de canais"
     override val previousChannel = "Canal anterior"
     override val manageCategories = "Gerir categorias"
+    override val changeCategory = "Mudar categoria"
+    override val selectCategory = "Selecionar categoria"
     override val hideCategory = "Ocultar categoria"
     override val showCategory = "Mostrar categoria"
     override val showAllCategories = "Mostrar todas"
@@ -602,6 +610,7 @@ object PortugueseStrings : Strings {
     override val zoomInTimeline = "Aumentar escala da linha temporal"
     override val zoomOutTimeline = "Diminuir escala da linha temporal"
     override val channelList = "Canais"
+    override val miniGuide = "Mini-guia"
     override val aspectRatio = "Proporção de ecrã"
     override val lockControls = "Bloquear controlos"
     override val unlockControls = "Desbloquear controlos"
