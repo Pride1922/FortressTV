@@ -3,6 +3,8 @@ package com.fortresstv.player.xtream
 import android.content.Context
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.source.ContentSource
+import com.fortresstv.player.source.HttpStatusException
+import com.fortresstv.player.source.retryTransientNetwork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -86,30 +88,32 @@ class XtreamClient(
         ) {
             return@withContext cacheFile.readText()
         }
-        val parameters = linkedMapOf("username" to source.username, "password" to source.password)
-        if (action != null) parameters["action"] = action
-        parameters.putAll(extra)
-        val query = parameters.entries.joinToString("&") { "${query(it.key)}=${query(it.value)}" }
-        val connection = URI("$baseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 45_000
-        connection.instanceFollowRedirects = true
-        connection.setRequestProperty("Accept", "application/json")
-        connection.setRequestProperty("User-Agent", "FortressTV")
-        try {
-            val code = connection.responseCode
-            if (code !in 200..299) error("Xtream server returned HTTP $code")
-            connection.inputStream.bufferedReader().use { it.readText() }.also { response ->
-                if (cacheFile != null) {
-                    val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
-                    val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
-                    temp.writeText(sanitizedResponse)
-                    if (cacheFile.exists()) cacheFile.delete()
-                    temp.renameTo(cacheFile)
+        retryTransientNetwork {
+            val parameters = linkedMapOf("username" to source.username, "password" to source.password)
+            if (action != null) parameters["action"] = action
+            parameters.putAll(extra)
+            val query = parameters.entries.joinToString("&") { "${query(it.key)}=${query(it.value)}" }
+            val connection = URI("$baseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 45_000
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("User-Agent", "FortressTV")
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299) throw HttpStatusException(code)
+                connection.inputStream.bufferedReader().use { it.readText() }.also { response ->
+                    if (cacheFile != null) {
+                        val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
+                        val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
+                        temp.writeText(sanitizedResponse)
+                        if (cacheFile.exists()) cacheFile.delete()
+                        temp.renameTo(cacheFile)
+                    }
                 }
+            } finally {
+                connection.disconnect()
             }
-        } finally {
-            connection.disconnect()
         }
     }
 

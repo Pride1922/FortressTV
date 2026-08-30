@@ -40,6 +40,16 @@ interface Strings {
     val noFavoriteChannels: String
     val addFavorite: String
     val removeFavorite: String
+    val favoriteChannels: String
+    val movieWatchlist: String
+    val followedSeries: String
+    val addToWatchlist: String
+    val removeFromWatchlist: String
+    val followSeries: String
+    val unfollowSeries: String
+    val noFavorites: String
+    val noWatchlistMovies: String
+    val noFollowedSeries: String
     val noMoviesAvailable: String
     val noSeriesAvailable: String
     val allCategories: String
@@ -210,6 +220,16 @@ object EnglishStrings : Strings {
     override val noFavoriteChannels = "Favorite channels will appear here."
     override val addFavorite = "Add to Favorites"
     override val removeFavorite = "Remove from Favorites"
+    override val favoriteChannels = "Channels"
+    override val movieWatchlist = "Movies to watch"
+    override val followedSeries = "Followed series"
+    override val addToWatchlist = "Add to Watchlist"
+    override val removeFromWatchlist = "Remove from Watchlist"
+    override val followSeries = "Follow series"
+    override val unfollowSeries = "Unfollow series"
+    override val noFavorites = "Your favorite channels, movies and series will appear here."
+    override val noWatchlistMovies = "Movies added to your Watchlist will appear here."
+    override val noFollowedSeries = "Series you follow will appear here."
     override val noMoviesAvailable = "No Movies are available from the enabled Xtream sources."
     override val noSeriesAvailable = "No Series are available from the enabled Xtream sources."
     override val allCategories = "All"
@@ -381,6 +401,16 @@ object PortugueseStrings : Strings {
     override val noFavoriteChannels = "Os canais favoritos aparecerão aqui."
     override val addFavorite = "Adicionar aos Favoritos"
     override val removeFavorite = "Remover dos Favoritos"
+    override val favoriteChannels = "Canais"
+    override val movieWatchlist = "Filmes para ver"
+    override val followedSeries = "Séries seguidas"
+    override val addToWatchlist = "Adicionar à lista para ver"
+    override val removeFromWatchlist = "Remover da lista para ver"
+    override val followSeries = "Seguir série"
+    override val unfollowSeries = "Deixar de seguir série"
+    override val noFavorites = "Os seus canais, filmes e séries favoritos aparecerão aqui."
+    override val noWatchlistMovies = "Os filmes adicionados à lista para ver aparecerão aqui."
+    override val noFollowedSeries = "As séries que segue aparecerão aqui."
     override val noMoviesAvailable = "Não existem Filmes disponíveis nas fontes Xtream ativas."
     override val noSeriesAvailable = "Não existem Séries disponíveis nas fontes Xtream ativas."
     override val allCategories = "Tudo"

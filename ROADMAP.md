@@ -4,7 +4,7 @@
 
 - Phase 0: complete
 - Phase 1: complete — multiple enabled sources, independent caches, source roles/order, deterministic Live TV merging, source filters, and Uncategorized navigation
-- Phase 2: in progress — primary library navigation and persistent favorite channels are complete; broader history and watch-state work remains
+- Phase 2: in progress — primary library navigation, persistent favorite channels, Movie Watchlist, and followed Series are complete; broader history and watch-state work remains
 - Phase 3: complete — encrypted Xtream sources, cached Movie catalogues, poster grids, search, and Movie playback
 - Phase 4: complete — Xtream Series catalogues and lazy episode loading/playback
 - Phase 5: in progress — Adult (XXX) content filtering, EPG smart normalized auto-matching (fuzzy fallback for channels missing tvg-id), unmatched channels exporter, source credential/role editor with password visibility toggles
@@ -112,6 +112,15 @@ Live TV and EPG responsiveness must not regress when VOD is added.
 - Bound in-memory lists and derived UI state.
 - Benchmark cold/warm startup, Live TV scrolling, EPG opening, Movie grid scrolling, Series opening, and search with realistically large fixture catalogues.
 
+Implemented VOD catalogue safeguards:
+
+- Movie and Series grids use stable keys and reusable content types.
+- Poster requests decode to a bounded card-sized bitmap and bitmap decoding has bounded parallelism.
+- Search is debounced and catalogue filtering runs away from the main thread.
+- Movie and Series scroll positions survive switching between primary library destinations.
+- Provider category identity includes the source ID so category-number collisions cannot merge unrelated providers.
+- Remote M3U, XMLTV, and Xtream requests retry transient failures up to three attempts with backoff, then expose a manual Retry action.
+
 ## Delivery phases
 
 ### Phase 0 — Preserve the baseline
@@ -156,6 +165,7 @@ Live TV and EPG responsiveness must not regress when VOD is added.
 - Category reorder/rename where safe
 - Manual EPG assignment
 - Audio and subtitle track selection
+- Unified Favorites sections for channels, Movie Watchlist, and followed Series
 - Playback retry and network recovery
 - Backup and restore with explicit treatment of credentials
 - D-pad and Android TV navigation
@@ -175,4 +185,3 @@ These are intentionally outside the first multi-source/VOD delivery:
 - Automatic duplicate merging across providers
 
 They may be reconsidered after the multi-source library is stable and measured.
-

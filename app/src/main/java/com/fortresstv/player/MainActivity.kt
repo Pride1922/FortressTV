@@ -37,8 +37,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -170,6 +172,8 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import coil.request.ImageRequest
+import coil.size.Precision
 
 class MainActivity : ComponentActivity() {
     var pictureInPictureMode by mutableStateOf(false)
@@ -270,6 +274,9 @@ class MainActivity : ComponentActivity() {
                     .maxSizePercent(0.05)
                     .build()
             }
+            // A large VOD catalogue can expose dozens of new posters during one fling.
+            // Keep bitmap decoding from competing with Compose for every available core.
+            .bitmapFactoryMaxParallelism(2)
             // Channel logos are shown in fast-scrolling lazy lists. Crossfading every
             // newly visible logo adds animation and drawing work to the scroll frame.
             .crossfade(false)
@@ -308,6 +315,8 @@ private fun FortressTVApp() {
     val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
     val xtreamCatalogs = remember { mutableStateMapOf<String, XtreamCatalog>() }
     var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
+    var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
+    var followedSeriesIds by remember { mutableStateOf(userLibrary.followedSeriesIds()) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
     var epgSource by remember { mutableStateOf<ContentSource?>(null) }
@@ -316,6 +325,7 @@ private fun FortressTVApp() {
     var epgTimeShiftHours by remember { mutableIntStateOf(0) }
 
     var error by remember { mutableStateOf<String?>(null) }
+    var retryLoad by remember { mutableStateOf<(() -> Unit)?>(null) }
     var loading by remember { mutableStateOf(false) }
     var restoring by remember { mutableStateOf(true) }
 
@@ -391,6 +401,7 @@ private fun FortressTVApp() {
     fun loadPlaylistProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
         loading = true
         error = null
+        retryLoad = null
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val cacheKey = "playlist_${profile.id}"
@@ -417,6 +428,7 @@ private fun FortressTVApp() {
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
                     error = err.message ?: "Could not load playlist."
+                    retryLoad = { loadPlaylistProfile(profile, forceRefresh = true) }
                 }
             }
             withContext(Dispatchers.Main) {
@@ -432,6 +444,7 @@ private fun FortressTVApp() {
         playlists = settings.getPlaylists()
         loading = true
         error = null
+        retryLoad = null
         scope.launch(Dispatchers.IO) {
             runCatching {
                 XtreamClient(context.applicationContext, profile.id, source).loadCatalog(forceRefresh)
@@ -457,6 +470,7 @@ private fun FortressTVApp() {
             }.onFailure { failure ->
                 withContext(Dispatchers.Main) {
                     error = "${profile.name}: ${failure.message ?: "could not load Xtream catalogue"}"
+                    retryLoad = { loadXtreamProfile(profile, forceRefresh = true) }
                 }
             }
             withContext(Dispatchers.Main) {
@@ -469,6 +483,7 @@ private fun FortressTVApp() {
     fun loadEpg(source: ContentSource, save: Boolean, forceRefresh: Boolean = false) {
         loading = true
         error = null
+        retryLoad = null
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val stream = if (forceRefresh || !SourceReader.hasCache(context, "epg")) {
@@ -491,6 +506,7 @@ private fun FortressTVApp() {
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
                     error = err.message ?: "Could not load EPG source."
+                    retryLoad = { loadEpg(source, save = save, forceRefresh = true) }
                 }
             }
             withContext(Dispatchers.Main) {
@@ -628,7 +644,10 @@ private fun FortressTVApp() {
                         }
                     }.onFailure { err ->
                         withContext(Dispatchers.Main) {
-                            if (!hasFastLoadedPlaylist) error = "${profile.name}: ${err.message ?: "could not be loaded"}"
+                            if (!hasFastLoadedPlaylist) {
+                                error = "${profile.name}: ${err.message ?: "could not be loaded"}"
+                                retryLoad = { loadPlaylistProfile(profile, forceRefresh = true) }
+                            }
                         }
                     }
                     withContext(Dispatchers.Main) {
@@ -958,12 +977,13 @@ private fun FortressTVApp() {
         }
 
         if (restoring) {
-            WelcomeScreen(loading = true, showActions = false, error = null, onOpenFile = {}, onOpenUrl = {})
+            WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onOpenFile = {}, onOpenUrl = {})
         } else if (playlist == null || activeProfile == null) {
             WelcomeScreen(
                 loading = loading,
                 showActions = !loading && (activeProfile == null || error != null),
                 error = error,
+                onRetry = retryLoad,
                 onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
                 onOpenUrl = { showAddPlaylistDialog = true }
             )
@@ -983,12 +1003,23 @@ private fun FortressTVApp() {
                 hideAdultContent = hideAdultContent,
                 loading = loading,
                 error = error,
+                onRetryLoad = retryLoad,
                 favoriteChannelIds = favoriteChannelIds,
+                movieWatchlistIds = movieWatchlistIds,
+                followedSeriesIds = followedSeriesIds,
                 xtreamCatalogs = xtreamCatalogs.values.toList(),
                 xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
                 onToggleFavorite = { channel ->
                     val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true
                     favoriteChannelIds = userLibrary.setChannelFavorite(channel, !isFavorite)
+                },
+                onToggleMovieWatchlist = { sourceId, movie ->
+                    val isWatchlisted = movie.libraryId(sourceId) in movieWatchlistIds
+                    movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, !isWatchlisted)
+                },
+                onToggleSeriesFollow = { sourceId, series ->
+                    val isFollowed = series.libraryId(sourceId) in followedSeriesIds
+                    followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, !isFollowed)
                 },
                 onOpenSettings = { tab ->
                     settingsInitialTab = tab
@@ -1017,6 +1048,7 @@ private fun WelcomeScreen(
     loading: Boolean,
     showActions: Boolean,
     error: String?,
+    onRetry: (() -> Unit)?,
     onOpenFile: () -> Unit,
     onOpenUrl: () -> Unit
 ) {
@@ -1084,6 +1116,10 @@ private fun WelcomeScreen(
                 if (error != null) {
                     Spacer(Modifier.height(16.dp))
                     Text(error, color = MaterialTheme.colorScheme.error)
+                    if (onRetry != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = onRetry, enabled = !loading) { Text(strings.retry) }
+                    }
                 }
             }
             Text(
@@ -1486,16 +1522,17 @@ private fun ProgrammeGuideScreen(
     }
 }
 
+private val ADULT_CONTENT_PATTERNS = listOf(
+    "xxx", "adult", "adulto", "adultos", "porn", "porno", "hardcore",
+    "erotic", "erotico", "erótica", "erotica", "erótico", "18+", "+18",
+    "brazzers", "playboy", "penthouse", "hustler", "dorcel", "redlight",
+    "venus", "sextreme", "vivid", "private tv", "fetish", "for adults", "para adultos"
+)
+
 fun isAdultContent(name: String?, groupOrCategory: String?): Boolean {
     val text = "${name.orEmpty()} ${groupOrCategory.orEmpty()}".lowercase()
     if (text.isBlank()) return false
-    val patterns = listOf(
-        "xxx", "adult", "adulto", "adultos", "porn", "porno", "hardcore",
-        "erotic", "erotico", "erótica", "erotica", "erótico", "18+", "+18",
-        "brazzers", "playboy", "penthouse", "hustler", "dorcel", "redlight",
-        "venus", "sextreme", "vivid", "private tv", "fetish", "for adults", "para adultos"
-    )
-    return patterns.any { pattern -> text.contains(pattern) }
+    return ADULT_CONTENT_PATTERNS.any { pattern -> text.contains(pattern) }
 }
 
 private enum class LibraryDestination { LIVE_TV, MOVIES, SERIES, FAVORITES }
@@ -1516,9 +1553,14 @@ private fun FortressLibrary(
     loading: Boolean,
     error: String?,
     favoriteChannelIds: Set<String>,
+    movieWatchlistIds: Set<String>,
+    followedSeriesIds: Set<String>,
     xtreamCatalogs: List<XtreamCatalog>,
     xtreamProfiles: List<PlaylistProfile>,
     onToggleFavorite: (PlaylistChannel) -> Unit,
+    onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
+    onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
+    onRetryLoad: (() -> Unit)?,
     onOpenSettings: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -1526,6 +1568,9 @@ private fun FortressLibrary(
     var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var vodPlayback by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // Keep catalogue positions alive while the user moves between primary destinations.
+    val movieGridState = rememberLazyGridState()
+    val seriesGridState = rememberLazyGridState()
     val destinations = listOf(
         LibraryDestination.LIVE_TV to strings.navLiveTv,
         LibraryDestination.MOVIES to strings.navMovies,
@@ -1582,6 +1627,7 @@ private fun FortressLibrary(
                     autoPictureInPicture = autoPictureInPicture,
                     loading = loading,
                     error = error,
+                    onRetryLoad = onRetryLoad,
                     favoriteChannelIds = favoriteChannelIds,
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,
@@ -1591,6 +1637,9 @@ private fun FortressLibrary(
                 LibraryDestination.MOVIES -> XtreamMoviesScreen(
                     catalogs = xtreamCatalogs,
                     hideAdultContent = hideAdultContent,
+                    gridState = movieGridState,
+                    movieWatchlistIds = movieWatchlistIds,
+                    onToggleWatchlist = onToggleMovieWatchlist,
                     onPlay = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
@@ -1602,14 +1651,31 @@ private fun FortressLibrary(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
                     hideAdultContent = hideAdultContent,
+                    gridState = seriesGridState,
+                    followedSeriesIds = followedSeriesIds,
+                    onToggleFollow = onToggleSeriesFollow,
                     onPlay = { title, url -> vodPlayback = title to url }
                 )
-                LibraryDestination.FAVORITES -> FavoriteChannelsScreen(
+                LibraryDestination.FAVORITES -> FavoriteLibraryScreen(
                     channels = effectivePlaylist.channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true },
+                    catalogs = xtreamCatalogs,
+                    profiles = xtreamProfiles,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
                     favoriteChannelIds = favoriteChannelIds,
+                    movieWatchlistIds = movieWatchlistIds,
+                    followedSeriesIds = followedSeriesIds,
+                    hideAdultContent = hideAdultContent,
                     onToggleFavorite = onToggleFavorite,
+                    onToggleMovieWatchlist = onToggleMovieWatchlist,
+                    onToggleSeriesFollow = onToggleSeriesFollow,
+                    onPlayMovie = { catalog, movie ->
+                        val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
+                        if (source != null) {
+                            vodPlayback = movie.name to XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                        }
+                    },
+                    onPlayEpisode = { title, url -> vodPlayback = title to url },
                     onWatch = { channel ->
                         requestedChannel = channel
                         destination = LibraryDestination.LIVE_TV
@@ -1653,31 +1719,57 @@ private fun LibraryNavigationItem(
 
 private data class CatalogMovie(val catalog: XtreamCatalog, val movie: XtreamMovie)
 private data class CatalogSeries(val catalog: XtreamCatalog, val series: XtreamSeries)
+private data class CatalogCategory(
+    val sourceId: String,
+    val sourceName: String,
+    val category: XtreamCategory
+)
 
 @Composable
 private fun XtreamMoviesScreen(
     catalogs: List<XtreamCatalog>,
     hideAdultContent: Boolean = false,
+    gridState: LazyGridState,
+    movieWatchlistIds: Set<String>,
+    onToggleWatchlist: (String, XtreamMovie) -> Unit,
     onPlay: (XtreamCatalog, XtreamMovie) -> Unit
 ) {
     val strings = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf<String?>(null) }
-    val categoryMap = remember(catalogs) {
-        catalogs.flatMap { it.movieCategories }.associate { it.id to it.name }
-    }
+    var appliedQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
+    var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
+    var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
-        catalogs.flatMap { it.movieCategories }
-            .distinctBy { it.id }
-            .filter { !hideAdultContent || !isAdultContent(it.name, null) }
-    }
-    val movies = remember(catalogs, query, selectedCategory, hideAdultContent) {
         catalogs.flatMap { catalog ->
-            catalog.movies
-                .filter { selectedCategory == null || it.categoryId == selectedCategory }
-                .filter { !hideAdultContent || !isAdultContent(it.name, categoryMap[it.categoryId]) }
-                .map { CatalogMovie(catalog, it) }
-        }.filter { query.isBlank() || it.movie.name.contains(query, ignoreCase = true) }
+            catalog.movieCategories
+                .filter { !hideAdultContent || !isAdultContent(it.name, null) }
+                .map { CatalogCategory(catalog.sourceId, catalog.sourceName, it) }
+        }.distinctBy { it.sourceId to it.category.id }
+    }
+    LaunchedEffect(query) {
+        if (query.isNotBlank()) delay(250)
+        appliedQuery = query.trim()
+    }
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent) {
+        movies = withContext(Dispatchers.Default) {
+            catalogs.flatMap { catalog ->
+                val categoryNames = catalog.movieCategories.associate { it.id to it.name }
+                catalog.movies.asSequence()
+                    .filter {
+                        selectedCategory == null ||
+                            (catalog.sourceId == selectedCategory?.sourceId && it.categoryId == selectedCategory?.category?.id)
+                    }
+                    .filter { !hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]) }
+                    .filter { appliedQuery.isBlank() || it.name.contains(appliedQuery, ignoreCase = true) }
+                    .map { CatalogMovie(catalog, it) }
+                    .toList()
+            }
+        }
+    }
+    LaunchedEffect(appliedQuery, selectedCategory) {
+        if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
     LibraryCatalogScaffold(
         title = strings.navMovies,
@@ -1685,19 +1777,38 @@ private fun XtreamMoviesScreen(
         onQueryChanged = { query = it },
         searchPlaceholder = strings.searchMovies,
         categories = categories,
+        showCategorySourceNames = showSourceNames,
         selectedCategory = selectedCategory,
         onSelectCategory = { selectedCategory = it },
         emptyMessage = strings.noMoviesAvailable,
-        itemCount = movies.size
+        itemCount = movies.size,
+        gridState = gridState
     ) {
-        gridItems(movies, key = { "${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+        gridItems(
+            movies,
+            key = { "${it.catalog.sourceId}:${it.movie.id}" },
+            contentType = { "movie_poster" }
+        ) { entry ->
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
-                subtitle = listOfNotNull(entry.movie.year, entry.movie.rating).joinToString(" · "),
-                onClick = { onPlay(entry.catalog, entry.movie) }
+                subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                onClick = { selectedMovie = entry }
             )
         }
+    }
+    selectedMovie?.let { entry ->
+        MovieDetailsDialog(
+            movie = entry.movie,
+            sourceName = entry.catalog.sourceName.takeIf { showSourceNames },
+            isWatchlisted = entry.movie.libraryId(entry.catalog.sourceId) in movieWatchlistIds,
+            onDismiss = { selectedMovie = null },
+            onToggleWatchlist = { onToggleWatchlist(entry.catalog.sourceId, entry.movie) },
+            onWatch = {
+                selectedMovie = null
+                onPlay(entry.catalog, entry.movie)
+            }
+        )
     }
 }
 
@@ -1706,28 +1817,48 @@ private fun XtreamSeriesScreen(
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
     hideAdultContent: Boolean = false,
+    gridState: LazyGridState,
+    followedSeriesIds: Set<String>,
+    onToggleFollow: (String, XtreamSeries) -> Unit,
     onPlay: (String, String) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var appliedQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
-    val categoryMap = remember(catalogs) {
-        catalogs.flatMap { it.seriesCategories }.associate { it.id to it.name }
-    }
+    var series by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
+    val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
-        catalogs.flatMap { it.seriesCategories }
-            .distinctBy { it.id }
-            .filter { !hideAdultContent || !isAdultContent(it.name, null) }
-    }
-    val series = remember(catalogs, query, selectedCategory, hideAdultContent) {
         catalogs.flatMap { catalog ->
-            catalog.series
-                .filter { selectedCategory == null || it.categoryId == selectedCategory }
-                .filter { !hideAdultContent || !isAdultContent(it.name, categoryMap[it.categoryId]) }
-                .map { CatalogSeries(catalog, it) }
-        }.filter { query.isBlank() || it.series.name.contains(query, ignoreCase = true) }
+            catalog.seriesCategories
+                .filter { !hideAdultContent || !isAdultContent(it.name, null) }
+                .map { CatalogCategory(catalog.sourceId, catalog.sourceName, it) }
+        }.distinctBy { it.sourceId to it.category.id }
+    }
+    LaunchedEffect(query) {
+        if (query.isNotBlank()) delay(250)
+        appliedQuery = query.trim()
+    }
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent) {
+        series = withContext(Dispatchers.Default) {
+            catalogs.flatMap { catalog ->
+                val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+                catalog.series.asSequence()
+                    .filter {
+                        selectedCategory == null ||
+                            (catalog.sourceId == selectedCategory?.sourceId && it.categoryId == selectedCategory?.category?.id)
+                    }
+                    .filter { !hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]) }
+                    .filter { appliedQuery.isBlank() || it.name.contains(appliedQuery, ignoreCase = true) }
+                    .map { CatalogSeries(catalog, it) }
+                    .toList()
+            }
+        }
+    }
+    LaunchedEffect(appliedQuery, selectedCategory) {
+        if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
     LibraryCatalogScaffold(
         title = strings.navSeries,
@@ -1735,12 +1866,18 @@ private fun XtreamSeriesScreen(
         onQueryChanged = { query = it },
         searchPlaceholder = strings.searchSeries,
         categories = categories,
+        showCategorySourceNames = showSourceNames,
         selectedCategory = selectedCategory,
         onSelectCategory = { selectedCategory = it },
         emptyMessage = strings.noSeriesAvailable,
-        itemCount = series.size
+        itemCount = series.size,
+        gridState = gridState
     ) {
-        gridItems(series, key = { "${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+        gridItems(
+            series,
+            key = { "${it.catalog.sourceId}:${it.series.id}" },
+            contentType = { "series_poster" }
+        ) { entry ->
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
@@ -1759,6 +1896,8 @@ private fun XtreamSeriesScreen(
                 client = remember(entry.catalog.sourceId, source) {
                     XtreamClient(context.applicationContext, entry.catalog.sourceId, source)
                 },
+                isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
+                onToggleFollow = { onToggleFollow(entry.catalog.sourceId, entry.series) },
                 onDismiss = { selected = null },
                 onPlay = { episode, url -> onPlay(episode.title, url) }
             )
@@ -1772,17 +1911,24 @@ private fun LibraryCatalogScaffold(
     query: String,
     onQueryChanged: (String) -> Unit,
     searchPlaceholder: String = LocalAppStrings.current.searchChannels,
-    categories: List<XtreamCategory> = emptyList(),
-    selectedCategory: String? = null,
-    onSelectCategory: (String?) -> Unit = {},
+    categories: List<CatalogCategory> = emptyList(),
+    showCategorySourceNames: Boolean = false,
+    selectedCategory: CatalogCategory? = null,
+    onSelectCategory: (CatalogCategory?) -> Unit = {},
     emptyMessage: String,
     itemCount: Int,
+    gridState: LazyGridState,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
     val strings = LocalAppStrings.current
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text(
+                title,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(Modifier.width(10.dp))
             Text(itemCount.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
@@ -1808,11 +1954,16 @@ private fun LibraryCatalogScaffold(
                         label = { Text(strings.allCategories) }
                     )
                 }
-                items(categories, key = { it.id }) { category ->
+                items(categories, key = { "${it.sourceId}:${it.category.id}" }) { category ->
                     FilterChip(
-                        selected = selectedCategory == category.id,
-                        onClick = { onSelectCategory(if (selectedCategory == category.id) null else category.id) },
-                        label = { Text(category.name) }
+                        selected = selectedCategory == category,
+                        onClick = { onSelectCategory(if (selectedCategory == category) null else category) },
+                        label = {
+                            Text(
+                                if (showCategorySourceNames) "${category.sourceName} · ${category.category.name}"
+                                else category.category.name
+                            )
+                        }
                     )
                 }
             }
@@ -1825,6 +1976,7 @@ private fun LibraryCatalogScaffold(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(150.dp),
+                state = gridState,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize(),
@@ -1841,6 +1993,19 @@ private fun VodPosterCard(
     subtitle: String,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val posterRequest = remember(posterUrl) {
+        posterUrl?.takeIf(String::isNotBlank)?.let { url ->
+            ImageRequest.Builder(context)
+                .data(url)
+                // Cards are 150dp wide. This is sharp enough for tablet grids without
+                // decoding provider artwork at its often multi-megapixel source size.
+                .size(360, 540)
+                .precision(Precision.INEXACT)
+                .allowHardware(true)
+                .build()
+        }
+    }
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -1852,9 +2017,9 @@ private fun VodPosterCard(
                 Modifier.fillMaxWidth().aspectRatio(2f / 3f).background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                if (!posterUrl.isNullOrBlank()) {
+                if (posterRequest != null) {
                     AsyncImage(
-                        model = posterUrl,
+                        model = posterRequest,
                         contentDescription = title,
                         contentScale = ContentScale.Crop,
                         filterQuality = FilterQuality.Low,
@@ -1875,10 +2040,160 @@ private fun VodPosterCard(
     }
 }
 
+internal fun formatVodMetadata(year: String?, rating: String?): String {
+    val formattedRating = rating
+        ?.trim()
+        ?.substringBefore('/')
+        ?.replace(',', '.')
+        ?.toDoubleOrNull()
+        ?.takeIf { it.isFinite() }
+        ?.let { value -> "★ ${String.format(Locale.ROOT, "%.1f", value)}/10" }
+    return listOfNotNull(year?.trim()?.takeIf(String::isNotEmpty), formattedRating).joinToString("  ")
+}
+
+@Composable
+private fun MovieDetailsDialog(
+    movie: XtreamMovie,
+    sourceName: String?,
+    isWatchlisted: Boolean,
+    onDismiss: () -> Unit,
+    onToggleWatchlist: () -> Unit,
+    onWatch: () -> Unit
+) {
+    val context = LocalContext.current
+    val strings = LocalAppStrings.current
+    val posterRequest = remember(movie.posterUrl) {
+        movie.posterUrl?.takeIf(String::isNotBlank)?.let { url ->
+            ImageRequest.Builder(context)
+                .data(url)
+                .size(600, 900)
+                .precision(Precision.INEXACT)
+                .allowHardware(true)
+                .build()
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+            shadowElevation = 12.dp,
+            modifier = Modifier.fillMaxWidth(0.84f).fillMaxHeight(0.82f)
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxSize().padding(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxHeight().aspectRatio(2f / 3f)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (posterRequest != null) {
+                                AsyncImage(
+                                    model = posterRequest,
+                                    contentDescription = movie.name,
+                                    contentScale = ContentScale.Crop,
+                                    filterQuality = FilterQuality.Low,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(64.dp)
+                                )
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                movie.name,
+                                fontSize = 30.sp,
+                                lineHeight = 36.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val metadata = formatVodMetadata(movie.year, movie.rating)
+                            if (metadata.isNotBlank()) {
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    metadata,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            sourceName?.let {
+                                Spacer(Modifier.height(6.dp))
+                                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            }
+                            if (!movie.plot.isNullOrBlank()) {
+                                Spacer(Modifier.height(22.dp))
+                                Text(
+                                    movie.plot,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 16.sp,
+                                    lineHeight = 24.sp
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(24.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onToggleWatchlist,
+                                modifier = Modifier.weight(1f).height(54.dp)
+                            ) {
+                                Icon(
+                                    if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                    contentDescription = null
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Button(
+                                onClick = onWatch,
+                                modifier = Modifier.weight(1f).height(54.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(strings.watchNow, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+                FilledIconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(14.dp)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = strings.close)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SeriesEpisodesDialog(
     series: XtreamSeries,
     client: XtreamClient,
+    isFollowed: Boolean,
+    onToggleFollow: () -> Unit,
     onDismiss: () -> Unit,
     onPlay: (XtreamEpisode, String) -> Unit
 ) {
@@ -1933,6 +2248,15 @@ private fun SeriesEpisodesDialog(
                             Spacer(Modifier.height(4.dp))
                             Text(series.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
+                    }
+                    OutlinedButton(onClick = onToggleFollow) {
+                        Icon(
+                            if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isFollowed) strings.unfollowSeries else strings.followSeries)
                     }
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = strings.close) }
                 }
@@ -2071,16 +2395,57 @@ private fun LibraryPlaceholder(title: String, message: String) {
     }
 }
 
+private enum class FavoriteSection { CHANNELS, MOVIES, SERIES }
+
 @Composable
-private fun FavoriteChannelsScreen(
+private fun FavoriteLibraryScreen(
     channels: List<PlaylistChannel>,
+    catalogs: List<XtreamCatalog>,
+    profiles: List<PlaylistProfile>,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int,
     favoriteChannelIds: Set<String>,
+    movieWatchlistIds: Set<String>,
+    followedSeriesIds: Set<String>,
+    hideAdultContent: Boolean,
     onToggleFavorite: (PlaylistChannel) -> Unit,
+    onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
+    onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
+    onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
+    onPlayEpisode: (String, String) -> Unit,
     onWatch: (PlaylistChannel) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    var section by remember {
+        mutableStateOf(
+            when {
+                channels.isNotEmpty() -> FavoriteSection.CHANNELS
+                movieWatchlistIds.isNotEmpty() -> FavoriteSection.MOVIES
+                else -> FavoriteSection.SERIES
+            }
+        )
+    }
+    var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
+    var selectedSeries by remember { mutableStateOf<CatalogSeries?>(null) }
+    val movies = remember(catalogs, movieWatchlistIds, hideAdultContent) {
+        catalogs.flatMap { catalog ->
+            val categoryNames = catalog.movieCategories.associate { it.id to it.name }
+            catalog.movies.filter {
+                it.libraryId(catalog.sourceId) in movieWatchlistIds &&
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+            }.map { CatalogMovie(catalog, it) }
+        }
+    }
+    val series = remember(catalogs, followedSeriesIds, hideAdultContent) {
+        catalogs.flatMap { catalog ->
+            val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+            catalog.series.filter {
+                it.libraryId(catalog.sourceId) in followedSeriesIds &&
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+            }.map { CatalogSeries(catalog, it) }
+        }
+    }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(epgGuide) {
         while (true) {
@@ -2088,7 +2453,7 @@ private fun FavoriteChannelsScreen(
             delay(60_000)
         }
     }
-    if (channels.isEmpty()) {
+    if (channels.isEmpty() && movies.isEmpty() && series.isEmpty()) {
         Box(
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
             contentAlignment = Alignment.Center
@@ -2103,38 +2468,139 @@ private fun FavoriteChannelsScreen(
                     Spacer(Modifier.height(14.dp))
                     Text(strings.navFavorites, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text(strings.noFavoriteChannels, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                    Text(strings.noFavorites, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
                 }
             }
         }
     } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(strings.navFavorites, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(10.dp))
-                    Text("${channels.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
-                }
-                Spacer(Modifier.height(4.dp))
+                    Text("${channels.size + movies.size + series.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
             }
-            items(channels, key = { "favorite:${it.sourceId}:${it.sourceItemId}" }) { channel ->
-                GuideChannelRow(
-                    channel = channel,
-                    epgGuide = epgGuide,
-                    scheduleNow = scheduleNow,
-                    epgTimeShiftHours = epgTimeShiftHours,
-                    selected = false,
-                    isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
-                    onToggleFavorite = { onToggleFavorite(channel) },
-                    onClick = { onWatch(channel) }
-                )
+            Spacer(Modifier.height(12.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    FilterChip(
+                        selected = section == FavoriteSection.CHANNELS,
+                        onClick = { section = FavoriteSection.CHANNELS },
+                        label = { Text("${strings.favoriteChannels} (${channels.size})") }
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = section == FavoriteSection.MOVIES,
+                        onClick = { section = FavoriteSection.MOVIES },
+                        label = { Text("${strings.movieWatchlist} (${movies.size})") }
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = section == FavoriteSection.SERIES,
+                        onClick = { section = FavoriteSection.SERIES },
+                        label = { Text("${strings.followedSeries} (${series.size})") }
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            when (section) {
+                FavoriteSection.CHANNELS -> if (channels.isEmpty()) {
+                    FavoriteEmptyMessage(strings.noFavoriteChannels)
+                } else {
+                    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(channels, key = { "favorite:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                            GuideChannelRow(
+                                channel = channel,
+                                epgGuide = epgGuide,
+                                scheduleNow = scheduleNow,
+                                epgTimeShiftHours = epgTimeShiftHours,
+                                selected = false,
+                                isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
+                                onToggleFavorite = { onToggleFavorite(channel) },
+                                onClick = { onWatch(channel) }
+                            )
+                        }
+                    }
+                }
+                FavoriteSection.MOVIES -> if (movies.isEmpty()) {
+                    FavoriteEmptyMessage(strings.noWatchlistMovies)
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(150.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        gridItems(movies, key = { "watchlist:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+                            VodPosterCard(
+                                entry.movie.name,
+                                entry.movie.posterUrl,
+                                formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                onClick = { selectedMovie = entry }
+                            )
+                        }
+                    }
+                }
+                FavoriteSection.SERIES -> if (series.isEmpty()) {
+                    FavoriteEmptyMessage(strings.noFollowedSeries)
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(150.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        gridItems(series, key = { "followed:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                            VodPosterCard(
+                                entry.series.name,
+                                entry.series.coverUrl,
+                                formatVodMetadata(entry.series.year, entry.series.rating),
+                                onClick = { selectedSeries = entry }
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+
+    selectedMovie?.let { entry ->
+        MovieDetailsDialog(
+            movie = entry.movie,
+            sourceName = entry.catalog.sourceName.takeIf { catalogs.size > 1 },
+            isWatchlisted = entry.movie.libraryId(entry.catalog.sourceId) in movieWatchlistIds,
+            onDismiss = { selectedMovie = null },
+            onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
+            onWatch = {
+                selectedMovie = null
+                onPlayMovie(entry.catalog, entry.movie)
+            }
+        )
+    }
+    selectedSeries?.let { entry ->
+        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        if (source != null) {
+            SeriesEpisodesDialog(
+                series = entry.series,
+                client = remember(entry.catalog.sourceId, source) {
+                    XtreamClient(context.applicationContext, entry.catalog.sourceId, source)
+                },
+                isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
+                onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
+                onDismiss = { selectedSeries = null },
+                onPlay = { episode, url -> onPlayEpisode(episode.title, url) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun FavoriteEmptyMessage(message: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
     }
 }
 
@@ -2152,6 +2618,7 @@ private fun ChannelBrowser(
     autoPictureInPicture: Boolean,
     loading: Boolean,
     error: String?,
+    onRetryLoad: (() -> Unit)?,
     favoriteChannelIds: Set<String>,
     onToggleFavorite: (PlaylistChannel) -> Unit,
     requestedChannel: PlaylistChannel?,
@@ -2438,7 +2905,15 @@ private fun ChannelBrowser(
                         }
                     }
                 }
-                if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                if (error != null) {
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                    if (onRetryLoad != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Button(onClick = onRetryLoad, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+                            Text(strings.retry)
+                        }
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = { onOpenSettings(0) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
                     Text(strings.settings)
@@ -5494,4 +5969,6 @@ private fun UnmatchedEpgDialog(
 
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
 @Composable
-private fun WelcomePreview() = FortressTVTheme { WelcomeScreen(false, true, null, {}, {}) }
+private fun WelcomePreview() = FortressTVTheme {
+    WelcomeScreen(false, true, null, onRetry = null, onOpenFile = {}, onOpenUrl = {})
+}

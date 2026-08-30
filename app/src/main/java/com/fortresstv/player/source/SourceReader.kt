@@ -45,9 +45,11 @@ object SourceReader {
             is ContentSource.RemoteUrl -> {
                 val targetFile = cacheFile(context, type)
                 val tempFile = File(context.filesDir, "temp_$type.dat")
-                openUrl(source.value).use { input ->
-                    tempFile.outputStream().use { output ->
-                        input.copyTo(output)
+                retryTransientNetwork {
+                    openUrl(source.value).use { input ->
+                        tempFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
                     }
                 }
                 if (targetFile.exists()) targetFile.delete()
@@ -110,7 +112,7 @@ object SourceReader {
         val responseCode = connection.responseCode
         if (responseCode !in 200..299) {
             connection.disconnect()
-            error("Server returned HTTP $responseCode")
+            throw HttpStatusException(responseCode)
         }
         return BufferedInputStream(connection.inputStream)
     }
