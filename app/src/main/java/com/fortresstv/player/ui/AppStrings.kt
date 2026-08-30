@@ -70,6 +70,14 @@ interface Strings {
     val noEpisodesAvailable: String
     fun seasonLabel(season: Int): String
     fun episodeLabel(season: Int, episode: Int): String
+    val markWatched: String
+    val markUnwatched: String
+    val watched: String
+    val unwatched: String
+    fun playNextEpisode(season: Int, episode: Int): String
+    val allEpisodesWatched: String
+    val restartSeries: String
+    fun unwatchedEpisodesCount(count: Int): String
     fun searchInGroup(group: String): String
     val searchChannels: String
     val noChannelsMatch: String
@@ -274,6 +282,14 @@ object EnglishStrings : Strings {
     override val noEpisodesAvailable = "No episodes are available for this Series."
     override fun seasonLabel(season: Int) = "Season $season"
     override fun episodeLabel(season: Int, episode: Int) = "S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
+    override val markWatched = "Mark as watched"
+    override val markUnwatched = "Mark as unwatched"
+    override val watched = "Watched"
+    override val unwatched = "Unwatched"
+    override fun playNextEpisode(season: Int, episode: Int) = "Play Next (S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')})"
+    override val allEpisodesWatched = "All episodes watched"
+    override val restartSeries = "Restart Series"
+    override fun unwatchedEpisodesCount(count: Int) = "$count ${if (count == 1) "unwatched" else "unwatched"}"
     override fun searchInGroup(group: String) = "Search in $group"
     override val searchChannels = "Search channels"
     override val noChannelsMatch = "No channels match your search."
@@ -479,6 +495,14 @@ object PortugueseStrings : Strings {
     override val noEpisodesAvailable = "Não existem episódios disponíveis para esta Série."
     override fun seasonLabel(season: Int) = "Temporada $season"
     override fun episodeLabel(season: Int, episode: Int) = "T${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
+    override val markWatched = "Marcar como visto"
+    override val markUnwatched = "Marcar como não visto"
+    override val watched = "Visto"
+    override val unwatched = "Não visto"
+    override fun playNextEpisode(season: Int, episode: Int) = "Ver seguinte (T${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')})"
+    override val allEpisodesWatched = "Todos os episódios vistos"
+    override val restartSeries = "Recomeçar série"
+    override fun unwatchedEpisodesCount(count: Int) = if (count == 1) "1 por ver" else "$count por ver"
     override fun searchInGroup(group: String) = "Pesquisar em $group"
     override val searchChannels = "Pesquisar canais"
     override val noChannelsMatch = "Nenhum canal corresponde à sua pesquisa."

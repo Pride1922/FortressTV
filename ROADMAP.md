@@ -4,9 +4,9 @@
 
 - Phase 0: complete
 - Phase 1: complete — multiple enabled sources, independent caches, source roles/order, deterministic Live TV merging, source filters, and Uncategorized navigation
-- Phase 2: in progress — primary library navigation, persistent favorite channels, Movie Watchlist, and followed Series are complete; broader history and watch-state work remains
-- Phase 3: complete — encrypted Xtream sources, cached Movie catalogues, poster grids, search, and Movie playback
-- Phase 4: complete — Xtream Series catalogues and lazy episode loading/playback
+- Phase 2: complete — primary library navigation, persistent favorite channels, Movie Watchlist, followed Series, persistent watched/unwatched state, and VOD Continue Watching (resume position & auto-complete at 95%)
+- Phase 3: complete — encrypted Xtream sources, cached Movie catalogues, poster grids, search, Movie playback, and watched status
+- Phase 4: complete — Xtream Series catalogues, lazy episode loading/playback, followed series, watched episodes, and Next Unwatched Episode detection
 - Phase 5: in progress — Adult (XXX) content filtering, EPG smart normalized auto-matching (fuzzy fallback for channels missing tvg-id), unmatched channels exporter, source credential/role editor with password visibility toggles
 
 ## Product direction
@@ -160,20 +160,24 @@ Implemented VOD catalogue safeguards:
 - Add Follow Series, watched/unwatched episodes, resume progress, Continue Watching, and next-episode navigation.
 - Avoid automatically downloading every episode record for every Series.
 
-### Phase 5 — Library refinement
+### Phase 5 — Library refinement & Advanced Features
 
-- Hidden items and categories
-- Adult content (XXX) filtering across all content types
+Completed in Phase 5:
+- Adult content (XXX) filtering across Live TV, Movies, Series, and EPG
 - EPG smart normalized auto-matching (`EpgMatcher`) and export of unmatched channels
-- Category reorder/rename where safe
-- Manual EPG assignment
-- Audio and subtitle track selection
+- Persistent watched/unwatched items and Next Unwatched Episode detection
 - Unified Favorites sections for channels, Movie Watchlist, and followed Series
-- Playback retry and network recovery
-- Backup and restore with explicit treatment of credentials
-- D-pad and Android TV navigation
-- Sanitized playback diagnostics
-- Advanced per-source headers, Referer, User-Agent, and timeout options
+
+Prioritized Next:
+1. Recently Watched and live-channel watch counts
+2. Hidden channels, movies, series, and categories
+3. Manual EPG channel assignment
+4. Backup and restore for settings, favorites, watchlists, and viewing progress
+5. D-pad and Android TV navigation
+6. Advanced per-source headers, Referer, User-Agent, and timeout options
+7. Category reorder/rename where safe
+8. Audio and subtitle track selection
+9. Sanitized playback diagnostics
 
 ## Deferred features
 

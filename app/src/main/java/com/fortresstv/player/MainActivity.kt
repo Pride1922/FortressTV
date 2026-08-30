@@ -85,7 +85,10 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.foundation.shape.CircleShape
 import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.update.UpdateManager
 import com.fortresstv.player.update.AppUpdateInfo
@@ -327,6 +330,7 @@ private fun FortressTVApp() {
     var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
     var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
     var followedSeriesIds by remember { mutableStateOf(userLibrary.followedSeriesIds()) }
+    var watchedItemIds by remember { mutableStateOf(userLibrary.watchedItemIds()) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
     var epgSource by remember { mutableStateOf<ContentSource?>(null) }
@@ -1017,6 +1021,7 @@ private fun FortressTVApp() {
                 favoriteChannelIds = favoriteChannelIds,
                 movieWatchlistIds = movieWatchlistIds,
                 followedSeriesIds = followedSeriesIds,
+                watchedItemIds = watchedItemIds,
                 xtreamCatalogs = xtreamCatalogs.values.toList(),
                 xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
                 onToggleFavorite = { channel ->
@@ -1027,9 +1032,22 @@ private fun FortressTVApp() {
                     val isWatchlisted = movie.libraryId(sourceId) in movieWatchlistIds
                     movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, !isWatchlisted)
                 },
+                onToggleMovieWatched = { sourceId, movie ->
+                    val key = movie.libraryId(sourceId)
+                    val willBeWatched = key !in watchedItemIds
+                    watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                },
                 onToggleSeriesFollow = { sourceId, series ->
                     val isFollowed = series.libraryId(sourceId) in followedSeriesIds
                     followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, !isFollowed)
+                },
+                onToggleEpisodeWatched = { sourceId, episode ->
+                    val key = episode.libraryId(sourceId)
+                    val willBeWatched = key !in watchedItemIds
+                    watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                },
+                onMarkItemWatched = { key, watched ->
+                    watchedItemIds = userLibrary.setItemWatched(key, watched)
                 },
                 onOpenSettings = { tab ->
                     settingsInitialTab = tab
@@ -1579,11 +1597,15 @@ private fun FortressLibrary(
     favoriteChannelIds: Set<String>,
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
+    watchedItemIds: Set<String>,
     xtreamCatalogs: List<XtreamCatalog>,
     xtreamProfiles: List<PlaylistProfile>,
     onToggleFavorite: (PlaylistChannel) -> Unit,
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
+    onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
+    onMarkItemWatched: (String, Boolean) -> Unit,
     onRetryLoad: (() -> Unit)?,
     onOpenSettings: (Int) -> Unit
 ) {
@@ -1661,6 +1683,8 @@ private fun FortressLibrary(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.MOVIE },
+                    progressEntries = progressEntries,
+                    watchedItemIds = watchedItemIds,
                     onContinueWatching = { entry ->
                         vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
                     },
@@ -1669,6 +1693,12 @@ private fun FortressLibrary(
                     gridState = movieGridState,
                     movieWatchlistIds = movieWatchlistIds,
                     onToggleWatchlist = onToggleMovieWatchlist,
+                    onToggleMovieWatched = { sourceId, movie ->
+                        val key = movie.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        if (willBeWatched) progressEntries = progressStore.remove(key)
+                        onToggleMovieWatched(sourceId, movie)
+                    },
                     onPlay = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
@@ -1691,12 +1721,20 @@ private fun FortressLibrary(
                     hideAdultContent = hideAdultContent,
                     gridState = seriesGridState,
                     followedSeriesIds = followedSeriesIds,
+                    watchedItemIds = watchedItemIds,
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.EPISODE },
+                    progressEntries = progressEntries,
                     onContinueWatching = { entry ->
                         vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
                     },
                     onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
                     onToggleFollow = onToggleSeriesFollow,
+                    onToggleEpisodeWatched = { sourceId, ep ->
+                        val key = ep.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        if (willBeWatched) progressEntries = progressStore.remove(key)
+                        onToggleEpisodeWatched(sourceId, ep)
+                    },
                     onPlay = { catalog, series, episode, url ->
                         vodPlayback = VodPlaybackRequest(
                             key = "episode:${catalog.sourceId}:${episode.id}",
@@ -1722,10 +1760,24 @@ private fun FortressLibrary(
                     favoriteChannelIds = favoriteChannelIds,
                     movieWatchlistIds = movieWatchlistIds,
                     followedSeriesIds = followedSeriesIds,
+                    watchedItemIds = watchedItemIds,
+                    progressEntries = progressEntries,
                     hideAdultContent = hideAdultContent,
                     onToggleFavorite = onToggleFavorite,
                     onToggleMovieWatchlist = onToggleMovieWatchlist,
+                    onToggleMovieWatched = { sourceId, movie ->
+                        val key = movie.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        if (willBeWatched) progressEntries = progressStore.remove(key)
+                        onToggleMovieWatched(sourceId, movie)
+                    },
                     onToggleSeriesFollow = onToggleSeriesFollow,
+                    onToggleEpisodeWatched = { sourceId, ep ->
+                        val key = ep.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        if (willBeWatched) progressEntries = progressStore.remove(key)
+                        onToggleEpisodeWatched(sourceId, ep)
+                    },
                     onPlayMovie = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
@@ -1763,6 +1815,10 @@ private fun FortressLibrary(
                 } else null,
                 onPlayNext = { next -> vodPlayback = next },
                 onSaveProgress = { positionMs, durationMs ->
+                    val isCompleted = durationMs > 0 && positionMs >= durationMs * 0.95
+                    if (isCompleted) {
+                        onMarkItemWatched(request.key, true)
+                    }
                     progressEntries = progressStore.save(
                         VodProgressEntry(
                             key = request.key, kind = request.kind, sourceId = request.sourceId,
@@ -1999,12 +2055,15 @@ private fun XtreamMoviesScreen(
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
     continueWatching: List<VodProgressEntry>,
+    progressEntries: List<VodProgressEntry>,
+    watchedItemIds: Set<String>,
     onContinueWatching: (VodProgressEntry) -> Unit,
     onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     hideAdultContent: Boolean = false,
     gridState: LazyGridState,
     movieWatchlistIds: Set<String>,
     onToggleWatchlist: (String, XtreamMovie) -> Unit,
+    onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onPlay: (XtreamCatalog, XtreamMovie) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -2066,10 +2125,13 @@ private fun XtreamMoviesScreen(
             key = { "${it.catalog.sourceId}:${it.movie.id}" },
             contentType = { "movie_poster" }
         ) { entry ->
+            val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                isWatched = libraryId in watchedItemIds,
+                progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
                 onClick = { selectedMovie = entry }
             )
         }
@@ -2081,13 +2143,16 @@ private fun XtreamMoviesScreen(
                 XtreamClient(context.applicationContext, entry.catalog.sourceId, it)
             }
         }
+        val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
         MovieDetailsDialog(
             movie = entry.movie,
             client = client,
             sourceName = entry.catalog.sourceName.takeIf { showSourceNames },
-            isWatchlisted = entry.movie.libraryId(entry.catalog.sourceId) in movieWatchlistIds,
+            isWatchlisted = libraryId in movieWatchlistIds,
+            isWatched = libraryId in watchedItemIds,
             onDismiss = { selectedMovie = null },
             onToggleWatchlist = { onToggleWatchlist(entry.catalog.sourceId, entry.movie) },
+            onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
             onWatch = {
                 selectedMovie = null
                 onPlay(entry.catalog, entry.movie)
@@ -2103,10 +2168,13 @@ private fun XtreamSeriesScreen(
     hideAdultContent: Boolean = false,
     gridState: LazyGridState,
     followedSeriesIds: Set<String>,
+    watchedItemIds: Set<String>,
     continueWatching: List<VodProgressEntry>,
+    progressEntries: List<VodProgressEntry>,
     onContinueWatching: (VodProgressEntry) -> Unit,
     onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     onToggleFollow: (String, XtreamSeries) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
     onPlay: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -2183,11 +2251,15 @@ private fun XtreamSeriesScreen(
         if (source != null) {
             SeriesEpisodesDialog(
                 series = entry.series,
+                sourceId = entry.catalog.sourceId,
                 client = remember(entry.catalog.sourceId, source) {
                     XtreamClient(context.applicationContext, entry.catalog.sourceId, source)
                 },
                 isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
+                watchedItemIds = watchedItemIds,
+                progressEntries = progressEntries,
                 onToggleFollow = { onToggleFollow(entry.catalog.sourceId, entry.series) },
+                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
                 onDismiss = { selected = null },
                 onPlay = { episode, url -> onPlay(entry.catalog, entry.series, episode, url) }
             )
@@ -2283,15 +2355,18 @@ private fun VodPosterCard(
     title: String,
     posterUrl: String?,
     subtitle: String,
+    isWatched: Boolean = false,
+    progressFraction: Float? = null,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
     val posterRequest = remember(posterUrl) {
         posterUrl?.takeIf(String::isNotBlank)?.let { url ->
             ImageRequest.Builder(context)
-                .data(url)
                 // Cards are 150dp wide. This is sharp enough for tablet grids without
                 // decoding provider artwork at its often multi-megapixel source size.
+                .data(url)
                 .size(360, 540)
                 .precision(Precision.INEXACT)
                 .allowHardware(true)
@@ -2319,6 +2394,28 @@ private fun VodPosterCard(
                     )
                 } else {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
+                }
+                if (isWatched) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(8.dp).align(Alignment.TopEnd)
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = strings.watched,
+                            modifier = Modifier.padding(4.dp).size(18.dp)
+                        )
+                    }
+                }
+                if (progressFraction != null && progressFraction > 0f && !isWatched) {
+                    LinearProgressIndicator(
+                        progress = { progressFraction },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomCenter),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    )
                 }
             }
             Column(Modifier.padding(11.dp)) {
@@ -2349,8 +2446,10 @@ private fun MovieDetailsDialog(
     client: XtreamClient?,
     sourceName: String?,
     isWatchlisted: Boolean,
+    isWatched: Boolean,
     onDismiss: () -> Unit,
     onToggleWatchlist: () -> Unit,
+    onToggleWatched: () -> Unit,
     onWatch: () -> Unit
 ) {
     val context = LocalContext.current
@@ -2500,6 +2599,22 @@ private fun MovieDetailsDialog(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            OutlinedButton(
+                                onClick = onToggleWatched,
+                                modifier = Modifier.weight(1f).height(54.dp)
+                            ) {
+                                Icon(
+                                    if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = if (isWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (isWatched) strings.markUnwatched else strings.markWatched,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Button(
                                 onClick = onWatch,
                                 modifier = Modifier.weight(1f).height(54.dp)
@@ -2540,9 +2655,13 @@ private fun MovieMetadataLine(label: String, value: String?) {
 @Composable
 private fun SeriesEpisodesDialog(
     series: XtreamSeries,
+    sourceId: String,
     client: XtreamClient,
     isFollowed: Boolean,
+    watchedItemIds: Set<String>,
+    progressEntries: List<VodProgressEntry>,
     onToggleFollow: () -> Unit,
+    onToggleEpisodeWatched: (XtreamEpisode) -> Unit,
     onDismiss: () -> Unit,
     onPlay: (XtreamEpisode, String) -> Unit
 ) {
@@ -2557,6 +2676,14 @@ private fun SeriesEpisodesDialog(
             .onFailure { loadError = true }
     }
     val episodes = details?.episodes
+    val sortedEpisodes = remember(episodes) {
+        episodes?.sortedWith(compareBy({ it.season }, { it.episodeNumber })) ?: emptyList()
+    }
+    val nextUnwatchedEpisode = remember(sortedEpisodes, watchedItemIds, sourceId) {
+        sortedEpisodes.firstOrNull { ep ->
+            ep.libraryId(sourceId) !in watchedItemIds
+        }
+    }
     val seasons = remember(episodes) {
         episodes?.map { it.season }?.distinct()?.sorted() ?: emptyList()
     }
@@ -2640,6 +2767,62 @@ private fun SeriesEpisodesDialog(
                     }
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = strings.close) }
                 }
+                if (sortedEpisodes.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (nextUnwatchedEpisode != null) {
+                            Button(
+                                onClick = { onPlay(nextUnwatchedEpisode, client.episodeStreamUrl(nextUnwatchedEpisode)) },
+                                modifier = Modifier.height(40.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    strings.playNextEpisode(nextUnwatchedEpisode.season, nextUnwatchedEpisode.episodeNumber),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(strings.allEpisodesWatched, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                TextButton(onClick = {
+                                    val first = sortedEpisodes.firstOrNull()
+                                    if (first != null) onPlay(first, client.episodeStreamUrl(first))
+                                }) {
+                                    Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.restartSeries, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                        val unwatchedCount = sortedEpisodes.count { it.libraryId(sourceId) !in watchedItemIds }
+                        if (unwatchedCount > 0) {
+                            Text(
+                                strings.unwatchedEpisodesCount(unwatchedCount),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
                 if (seasons.size > 1) {
                     Spacer(Modifier.height(12.dp))
                     LazyRow(
@@ -2673,29 +2856,54 @@ private fun SeriesEpisodesDialog(
                     }
                     else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(filteredEpisodes, key = { "${it.season}:${it.id}" }) { episode ->
+                            val epLibraryId = episode.libraryId(sourceId)
+                            val isEpisodeWatched = epLibraryId in watchedItemIds
+                            val epProgress = progressEntries.firstOrNull { it.key == epLibraryId }?.progressFraction
                             Surface(
                                 onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
                                 shape = RoundedCornerShape(12.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        strings.episodeLabel(episode.season, episode.episodeNumber),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(Modifier.width(14.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(episode.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        if (!episode.plot.isNullOrBlank()) {
-                                            Spacer(Modifier.height(2.dp))
-                                            Text(episode.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Column {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            strings.episodeLabel(episode.season, episode.episodeNumber),
+                                            color = if (isEpisodeWatched) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(Modifier.width(14.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(episode.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            if (!episode.plot.isNullOrBlank()) {
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(episode.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
                                         }
+                                        IconButton(
+                                            onClick = { onToggleEpisodeWatched(episode) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isEpisodeWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                                                contentDescription = if (isEpisodeWatched) strings.markUnwatched else strings.markWatched,
+                                                tint = if (isEpisodeWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(4.dp))
+                                        Icon(Icons.Default.PlayArrow, contentDescription = strings.watchNow)
                                     }
-                                    Icon(Icons.Default.PlayArrow, contentDescription = strings.watchNow)
+                                    if (epProgress != null && epProgress > 0f && !isEpisodeWatched) {
+                                        LinearProgressIndicator(
+                                            progress = { epProgress },
+                                            modifier = Modifier.fillMaxWidth().height(3.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2872,10 +3080,14 @@ private fun FavoriteLibraryScreen(
     favoriteChannelIds: Set<String>,
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
+    watchedItemIds: Set<String>,
+    progressEntries: List<VodProgressEntry>,
     hideAdultContent: Boolean,
     onToggleFavorite: (PlaylistChannel) -> Unit,
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
+    onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
     onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
     onPlayEpisode: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
     onWatch: (PlaylistChannel) -> Unit
@@ -3000,10 +3212,13 @@ private fun FavoriteLibraryScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         gridItems(movies, key = { "watchlist:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+                            val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
                             VodPosterCard(
-                                entry.movie.name,
-                                entry.movie.posterUrl,
-                                formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                title = entry.movie.name,
+                                posterUrl = entry.movie.posterUrl,
+                                subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                isWatched = libraryId in watchedItemIds,
+                                progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
                                 onClick = { selectedMovie = entry }
                             )
                         }
@@ -3020,9 +3235,9 @@ private fun FavoriteLibraryScreen(
                     ) {
                         gridItems(series, key = { "followed:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
                             VodPosterCard(
-                                entry.series.name,
-                                entry.series.coverUrl,
-                                formatVodMetadata(entry.series.year, entry.series.rating),
+                                title = entry.series.name,
+                                posterUrl = entry.series.coverUrl,
+                                subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
                                 onClick = { selectedSeries = entry }
                             )
                         }
@@ -3039,13 +3254,16 @@ private fun FavoriteLibraryScreen(
                 XtreamClient(context.applicationContext, entry.catalog.sourceId, it)
             }
         }
+        val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
         MovieDetailsDialog(
             movie = entry.movie,
             client = client,
             sourceName = entry.catalog.sourceName.takeIf { catalogs.size > 1 },
-            isWatchlisted = entry.movie.libraryId(entry.catalog.sourceId) in movieWatchlistIds,
+            isWatchlisted = libraryId in movieWatchlistIds,
+            isWatched = libraryId in watchedItemIds,
             onDismiss = { selectedMovie = null },
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
+            onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
             onWatch = {
                 selectedMovie = null
                 onPlayMovie(entry.catalog, entry.movie)
@@ -3057,11 +3275,15 @@ private fun FavoriteLibraryScreen(
         if (source != null) {
             SeriesEpisodesDialog(
                 series = entry.series,
+                sourceId = entry.catalog.sourceId,
                 client = remember(entry.catalog.sourceId, source) {
                     XtreamClient(context.applicationContext, entry.catalog.sourceId, source)
                 },
                 isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
+                watchedItemIds = watchedItemIds,
+                progressEntries = progressEntries,
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
+                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
                 onDismiss = { selectedSeries = null },
                 onPlay = { episode, url -> onPlayEpisode(entry.catalog, entry.series, episode, url) }
             )
