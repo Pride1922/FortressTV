@@ -9,6 +9,8 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -152,6 +154,17 @@ class MainActivity : ComponentActivity() {
 
     private var pictureInPictureEnabled = true
     private var fullscreenVideoPlaying = false
+    private val pictureInPictureHandler = Handler(Looper.getMainLooper())
+    private var onPictureInPictureDismissed: (() -> Unit)? = null
+    private val confirmPictureInPictureDismissed = Runnable {
+        if (!isInPictureInPictureMode && !hasWindowFocus()) {
+            onPictureInPictureDismissed?.invoke()
+        }
+    }
+
+    fun setOnPictureInPictureDismissedListener(listener: (() -> Unit)?) {
+        onPictureInPictureDismissed = listener
+    }
 
     fun updatePictureInPictureState(enabled: Boolean, fullscreenPlaying: Boolean) {
         pictureInPictureEnabled = enabled
@@ -191,6 +204,26 @@ class MainActivity : ComponentActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pictureInPictureMode = isInPictureInPictureMode
+        pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
+        if (!isInPictureInPictureMode) {
+            // Android can delay onStop for several seconds after the PiP close button
+            // is pressed. Give an expanded PiP a moment to regain window focus; if it
+            // does not, stop playback without waiting for that delayed lifecycle event.
+            pictureInPictureHandler.postDelayed(confirmPictureInPictureDismissed, 350L)
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
+        }
+    }
+
+    override fun onDestroy() {
+        pictureInPictureHandler.removeCallbacksAndMessages(null)
+        onPictureInPictureDismissed = null
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -1918,6 +1951,10 @@ private fun PlayerPanel(
 
     DisposableEffect(player) {
         var resumePlaybackOnStart = false
+        val pictureInPictureDismissedListener = {
+            resumePlaybackOnStart = false
+            player.pause()
+        }
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
@@ -1942,6 +1979,9 @@ private fun PlayerPanel(
             }
         }
         player.addListener(listener)
+        (activity as? MainActivity)?.setOnPictureInPictureDismissedListener(
+            pictureInPictureDismissedListener
+        )
         lifecycleOwner?.lifecycle?.addObserver(lifecycleObserver)
         onDispose {
             (activity as? MainActivity)?.updatePictureInPictureState(
@@ -1949,6 +1989,7 @@ private fun PlayerPanel(
                 fullscreenPlaying = false
             )
             lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+            (activity as? MainActivity)?.setOnPictureInPictureDismissedListener(null)
             player.removeListener(listener)
             player.release()
         }
