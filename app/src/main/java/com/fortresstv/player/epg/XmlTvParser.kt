@@ -3,9 +3,13 @@ package com.fortresstv.player.epg
 import org.xml.sax.Attributes
 import org.xml.sax.helpers.DefaultHandler
 import java.io.InputStream
+import java.time.Instant
+import java.time.ZoneId
 import javax.xml.parsers.SAXParserFactory
 
 object XmlTvParser {
+    private const val RETAINED_CALENDAR_DAYS = 3
+
     fun parse(input: InputStream, referenceTimeMillis: Long = System.currentTimeMillis()): EpgGuide {
         val handler = XmlTvHandler(referenceTimeMillis)
         SAXParserFactory.newInstance().apply {
@@ -16,7 +20,18 @@ object XmlTvParser {
 
     private class XmlTvHandler(private val referenceTime: Long) : DefaultHandler() {
         private val pastCutoff = if (referenceTime > 0L) referenceTime - (6 * 3600_000L) else Long.MIN_VALUE
-        private val futureCutoff = if (referenceTime > 0L) referenceTime + (96 * 3600_000L) else Long.MAX_VALUE
+        private val futureCutoff = if (referenceTime > 0L) {
+            val zone = ZoneId.systemDefault()
+            Instant.ofEpochMilli(referenceTime)
+                .atZone(zone)
+                .toLocalDate()
+                .plusDays(RETAINED_CALENDAR_DAYS.toLong())
+                .atStartOfDay(zone)
+                .toInstant()
+                .toEpochMilli()
+        } else {
+            Long.MAX_VALUE
+        }
 
         private val channels = linkedMapOf<String, EpgChannel>()
         private val programmes = linkedMapOf<String, MutableList<EpgProgramme>>()
@@ -65,8 +80,6 @@ object XmlTvParser {
                     if (!isObsolete && !isTooFarFuture) {
                         programmes.getOrPut(it.channelId) { mutableListOf() } += EpgProgramme(
                             channelId = it.channelId,
-                            start = it.start,
-                            stop = it.stop,
                             title = it.title.orEmpty(),
                             description = it.description,
                             category = it.category,

@@ -2,6 +2,7 @@ package com.fortresstv.player.source
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -58,6 +59,30 @@ object SourceReader {
 
     fun deleteCache(context: Context, type: String) {
         cacheFile(context, type).delete()
+    }
+
+    /** A cheap identity for cache invalidation; null means the provider cannot be trusted. */
+    fun fingerprint(context: Context, source: ContentSource, type: String): String? = when (source) {
+        is ContentSource.RemoteUrl -> cacheFile(context, type).takeIf { it.exists() && it.length() > 0L }?.let {
+            "remote:${source.value}:${it.length()}:${it.lastModified()}"
+        }
+        is ContentSource.LocalFile -> runCatching {
+            val uri = Uri.parse(source.value)
+            context.contentResolver.query(
+                uri,
+                arrayOf(DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else null
+                val modified = if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex)) cursor.getLong(modifiedIndex) else null
+                if (size == null || modified == null || modified <= 0L) null else "local:${source.value}:$size:$modified"
+            }
+        }.getOrNull()
     }
 
     suspend fun open(context: Context, source: ContentSource): InputStream = withContext(Dispatchers.IO) {

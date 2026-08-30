@@ -8,13 +8,11 @@ data class EpgChannel(
 
 data class EpgProgramme(
     val channelId: String,
-    val start: String,
-    val stop: String?,
     val title: String,
     val description: String?,
     val category: String?,
-    val startEpochMilli: Long = XmlTvTime.parseToEpoch(start) ?: 0L,
-    val stopEpochMilli: Long? = stop?.let { XmlTvTime.parseToEpoch(it) }
+    val startEpochMilli: Long,
+    val stopEpochMilli: Long?
 )
 
 data class EpgGuide(

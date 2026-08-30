@@ -10,8 +10,8 @@ class EpgScheduleTest {
         val guide = EpgGuide(
             channels = emptyMap(),
             programmes = mapOf("RTP1.pt" to listOf(
-                EpgProgramme("RTP1.pt", "20260829120000 +0000", "20260829130000 +0000", "News", null, null),
-                EpgProgramme("RTP1.pt", "20260829130000 +0000", "20260829140000 +0000", "Talk show", null, null)
+                programme("20260829120000 +0000", "20260829130000 +0000", "News"),
+                programme("20260829130000 +0000", "20260829140000 +0000", "Talk show")
             ))
         )
 
@@ -39,8 +39,8 @@ class EpgScheduleTest {
         val guide = EpgGuide(
             channels = emptyMap(),
             programmes = mapOf("RTP1.pt" to listOf(
-                EpgProgramme("RTP1.pt", "20260829120000 +0000", "20260829130000 +0000", "News", null, null),
-                EpgProgramme("RTP1.pt", "20260829130000 +0000", "20260829140000 +0000", "Talk show", null, null)
+                programme("20260829120000 +0000", "20260829130000 +0000", "News"),
+                programme("20260829130000 +0000", "20260829140000 +0000", "Talk show")
             ))
         )
 
@@ -50,4 +50,13 @@ class EpgScheduleTest {
         assertEquals("News", snapshot.current?.title)
         assertEquals("Talk show", snapshot.next?.title)
     }
+
+    private fun programme(start: String, stop: String, title: String) = EpgProgramme(
+        channelId = "RTP1.pt",
+        title = title,
+        description = null,
+        category = null,
+        startEpochMilli = XmlTvTime.parseToEpoch(start)!!,
+        stopEpochMilli = XmlTvTime.parseToEpoch(stop)
+    )
 }

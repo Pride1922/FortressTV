@@ -77,6 +77,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -113,6 +114,7 @@ import com.fortresstv.player.player.GestureLevel
 import com.fortresstv.player.player.GesturePlayerView
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.EpgProgramme
+import com.fortresstv.player.epg.EpgDiskCache
 import com.fortresstv.player.epg.XmlTvParser
 import com.fortresstv.player.epg.snapshot
 import com.fortresstv.player.epg.XmlTvTime
@@ -160,7 +162,9 @@ class MainActivity : ComponentActivity() {
                     .maxSizePercent(0.05)
                     .build()
             }
-            .crossfade(true)
+            // Channel logos are shown in fast-scrolling lazy lists. Crossfading every
+            // newly visible logo adds animation and drawing work to the scroll frame.
+            .crossfade(false)
             .build()
         Coil.setImageLoader(imageLoader)
 
@@ -237,6 +241,23 @@ private fun FortressTVApp() {
         }
     }
 
+    suspend fun parseEpgWithCache(
+        source: ContentSource,
+        stream: java.io.InputStream,
+        allowCachedResult: Boolean
+    ): EpgGuide = withContext(Dispatchers.IO) {
+        val fingerprint = SourceReader.fingerprint(context, source, "epg")
+        if (allowCachedResult) {
+            EpgDiskCache.load(context, fingerprint)?.let { cached ->
+                stream.close()
+                return@withContext cached
+            }
+        }
+        val parsed = parseEpg(stream)
+        EpgDiskCache.save(context, fingerprint, parsed)
+        parsed
+    }
+
     fun loadPlaylistProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
         loading = true
         error = null
@@ -288,7 +309,7 @@ private fun FortressTVApp() {
                 } else {
                     SourceReader.openCached(context, "epg")
                 }
-                parseEpg(stream)
+                parseEpgWithCache(source, stream, allowCachedResult = !forceRefresh)
             }.onSuccess { guide ->
                 withContext(Dispatchers.Main) {
                     epgGuide = guide
@@ -366,13 +387,21 @@ private fun FortressTVApp() {
                 }
                 if (savedEpgSource is ContentSource.LocalFile) {
                     runCatching {
-                        parseEpg(SourceReader.open(context, savedEpgSource))
+                        parseEpgWithCache(
+                            savedEpgSource,
+                            SourceReader.open(context, savedEpgSource),
+                            allowCachedResult = true
+                        )
                     }.onSuccess { parsedGuide ->
                         withContext(Dispatchers.Main) { epgGuide = parsedGuide }
                     }
                 } else if (SourceReader.hasCache(context, "epg")) {
                     runCatching {
-                        parseEpg(SourceReader.openCached(context, "epg"))
+                        parseEpgWithCache(
+                            savedEpgSource,
+                            SourceReader.openCached(context, "epg"),
+                            allowCachedResult = true
+                        )
                     }.onSuccess { parsedGuide ->
                         withContext(Dispatchers.Main) { epgGuide = parsedGuide }
                     }
@@ -426,7 +455,7 @@ private fun FortressTVApp() {
                         val now = System.currentTimeMillis()
                         settings.setLastEpgUpdate(now)
                         withContext(Dispatchers.Main) { epgLastUpdate = now }
-                        parseEpg(stream)
+                        parseEpgWithCache(savedEpg, stream, allowCachedResult = false)
                     }.onSuccess { guide ->
                         withContext(Dispatchers.Main) { epgGuide = guide }
                     }
@@ -548,6 +577,7 @@ private fun FortressTVApp() {
                         showRemoveEpgConfirm = false
                         settings.clearEpg()
                         SourceReader.deleteCache(context, "epg")
+                        EpgDiskCache.clear(context)
                         epgGuide = null
                         epgSource = null
                         epgSourceName = null
@@ -678,6 +708,8 @@ private data class GuideProgrammeBlock(
     val timeLabel: String
 )
 
+private typealias GuideDayIndex = Map<LocalDate, Map<PlaylistChannel, List<GuideProgrammeBlock>>>
+
 @Composable
 private fun WelcomeScreen(
     loading: Boolean,
@@ -775,7 +807,7 @@ private fun ProgrammeGuideScreen(
     val density = LocalDensity.current
     val zone = remember { ZoneId.systemDefault() }
     val today = remember { LocalDate.now(zone) }
-    val dates = remember(today) { List(5) { today.plusDays(it.toLong()) } }
+    val dates = remember(today) { List(3) { today.plusDays(it.toLong()) } }
     var selectedDate by remember { mutableStateOf(today) }
     var selectedProgramme by remember { mutableStateOf<Pair<PlaylistChannel, EpgProgramme>?>(null) }
     var now by remember { mutableStateOf(Instant.now()) }
@@ -791,8 +823,6 @@ private fun ProgrammeGuideScreen(
     val rowHeight = 72.dp
     val channelWidth = 220.dp
     val shiftMillis = epgTimeShiftHours * 3_600_000L
-    val dayStart = remember(selectedDate, zone) { selectedDate.atStartOfDay(zone).toInstant().toEpochMilli() }
-    val dayEnd = dayStart + 24L * 3_600_000L
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -831,28 +861,57 @@ private fun ProgrammeGuideScreen(
         val stop = (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis
         adjustedNow in start until stop
     } == true
-    val guideBlocksByChannel = remember(epgGuide, playlist, dayStart, dayEnd, shiftMillis) {
-        playlist.channels.associateWith { channel ->
-            epgGuide?.programmes?.get(channel.tvgId).orEmpty().mapNotNull { programme ->
-                val adjustedStart = programme.startEpochMilli + shiftMillis
-                val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
-                val adjustedStop = rawStop + shiftMillis
-                if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
-                    null
-                } else {
-                    val clippedStart = maxOf(adjustedStart, dayStart)
-                    val clippedStop = minOf(adjustedStop, dayEnd)
-                    val durationMinutes = ((clippedStop - clippedStart) / 60_000f).coerceIn(5f, 24f * 60f)
-                    GuideProgrammeBlock(
-                        programme = programme,
-                        startMinutes = (clippedStart - dayStart) / 60_000f,
-                        durationMinutes = durationMinutes,
-                        adjustedStartMillis = adjustedStart,
-                        adjustedStopMillis = adjustedStop,
-                        timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
-                    )
-                }
+    val guideDayIndex by produceState<GuideDayIndex>(
+        initialValue = emptyMap(),
+        epgGuide,
+        playlist,
+        dates,
+        zone,
+        shiftMillis
+    ) {
+        // Publish today first, then prepare the next two days. This keeps opening the
+        // guide responsive while preserving instant cached lookups after preparation.
+        dates.forEach { date ->
+            val dayIndex = withContext(Dispatchers.Default) {
+                val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
+                val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                playlist.channels.mapNotNull { channel ->
+                    val blocks = epgGuide?.programmes?.get(channel.tvgId).orEmpty().mapNotNull { programme ->
+                        val adjustedStart = programme.startEpochMilli + shiftMillis
+                        val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
+                        val adjustedStop = rawStop + shiftMillis
+                        if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
+                            null
+                        } else {
+                            val clippedStart = maxOf(adjustedStart, dayStart)
+                            val clippedStop = minOf(adjustedStop, dayEnd)
+                            GuideProgrammeBlock(
+                                programme = programme,
+                                startMinutes = (clippedStart - dayStart) / 60_000f,
+                                durationMinutes = ((clippedStop - clippedStart) / 60_000f)
+                                    .coerceIn(5f, 24f * 60f),
+                                adjustedStartMillis = adjustedStart,
+                                adjustedStopMillis = adjustedStop,
+                                timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                            )
+                        }
+                    }
+                    if (blocks.isEmpty()) null else channel to blocks
+                }.toMap()
             }
+            value = value + (date to dayIndex)
+        }
+    }
+    val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
+    val visibleTimelineMinutes by remember(horizontalState, timelineViewportPx, hourWidth, density) {
+        derivedStateOf {
+            val hourWidthPx = with(density) { hourWidth.toPx() }.coerceAtLeast(1f)
+            val firstMinute = horizontalState.value / hourWidthPx * 60f
+            val bucketedFirstMinute = (firstMinute / 15f).toInt() * 15f
+            val visibleMinutes = timelineViewportPx / hourWidthPx * 60f
+            // Keep half an hour ready on either side so blocks do not pop in at the edge.
+            (bucketedFirstMinute - 30f).coerceAtLeast(0f) to
+                (bucketedFirstMinute + visibleMinutes + 45f).coerceAtMost(24f * 60f)
         }
     }
 
@@ -980,9 +1039,16 @@ private fun ProgrammeGuideScreen(
                             modifier = Modifier.width(timelineWidth).weight(1f)
                         ) {
                             items(playlist.channels, key = { "epg-row-${it.position}:${it.streamUrl}" }) { channel ->
-                                val programmeBlocks = guideBlocksByChannel[channel].orEmpty()
+                                val allProgrammeBlocks = guideBlocksByChannel[channel].orEmpty()
+                                val programmeBlocks = remember(allProgrammeBlocks, visibleTimelineMinutes) {
+                                    val (visibleStart, visibleEnd) = visibleTimelineMinutes
+                                    allProgrammeBlocks.filter { block ->
+                                        block.startMinutes + block.durationMinutes >= visibleStart &&
+                                            block.startMinutes <= visibleEnd
+                                    }
+                                }
                                 Box(Modifier.fillMaxWidth().height(rowHeight).background(MaterialTheme.colorScheme.background)) {
-                                    if (programmeBlocks.isEmpty()) {
+                                    if (allProgrammeBlocks.isEmpty()) {
                                         Text(
                                             strings.noEpgData,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1077,6 +1143,7 @@ private fun ProgrammeGuideScreen(
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun ChannelBrowser(
     playlist: Playlist,
@@ -1402,25 +1469,16 @@ private fun ChannelBrowser(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
-                                val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
-                                val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
-                                    val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                    val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                    if (adjustedStop > adjustedStart) {
-                                        ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
-                                    } else null
-                                } else null
-                                val endTime = if (currentProg?.stopEpochMilli != null) {
-                                    val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                    strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
-                                } else null
-                                ChannelRow(
+                            items(
+                                items = visibleChannels,
+                                key = { "${it.position}:${it.streamUrl}" },
+                                contentType = { "channel" }
+                            ) { channel ->
+                                GuideChannelRow(
                                     channel = channel,
-                                    epgChannel = epgGuide?.channels?.get(channel.tvgId),
-                                    nowPlaying = currentProg?.title,
-                                    endTime = endTime,
-                                    progress = progress,
+                                    epgGuide = epgGuide,
+                                    scheduleNow = scheduleNow,
+                                    epgTimeShiftHours = epgTimeShiftHours,
                                     selected = selectedChannel == channel,
                                     onClick = { selectChannel(channel) }
                                 )
@@ -1440,25 +1498,16 @@ private fun ChannelBrowser(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
-                            val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
-                            val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
-                                val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                if (adjustedStop > adjustedStart) {
-                                    ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
-                                } else null
-                            } else null
-                            val endTime = if (currentProg?.stopEpochMilli != null) {
-                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
-                            } else null
-                            ChannelRow(
+                        items(
+                            items = visibleChannels,
+                            key = { "${it.position}:${it.streamUrl}" },
+                            contentType = { "channel" }
+                        ) { channel ->
+                            GuideChannelRow(
                                 channel = channel,
-                                epgChannel = epgGuide?.channels?.get(channel.tvgId),
-                                nowPlaying = currentProg?.title,
-                                endTime = endTime,
-                                progress = progress,
+                                epgGuide = epgGuide,
+                                scheduleNow = scheduleNow,
+                                epgTimeShiftHours = epgTimeShiftHours,
                                 selected = selectedChannel == channel,
                                 onClick = { selectChannel(channel) }
                             )
@@ -1479,25 +1528,16 @@ private fun ChannelBrowser(
                         modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(channelPaneWidth).fillMaxHeight(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(visibleChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
-                            val currentProg = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
-                            val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
-                                val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                if (adjustedStop > adjustedStart) {
-                                    ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
-                                } else null
-                            } else null
-                            val endTime = if (currentProg?.stopEpochMilli != null) {
-                                val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
-                            } else null
-                            ChannelRow(
+                        items(
+                            items = visibleChannels,
+                            key = { "${it.position}:${it.streamUrl}" },
+                            contentType = { "channel" }
+                        ) { channel ->
+                            GuideChannelRow(
                                 channel = channel,
-                                epgChannel = epgGuide?.channels?.get(channel.tvgId),
-                                nowPlaying = currentProg?.title,
-                                endTime = endTime,
-                                progress = progress,
+                                epgGuide = epgGuide,
+                                scheduleNow = scheduleNow,
+                                epgTimeShiftHours = epgTimeShiftHours,
                                 selected = selectedChannel == channel,
                                 onClick = { selectChannel(channel) }
                             )
@@ -1575,6 +1615,50 @@ private fun GroupItem(name: String, count: Int, selected: Boolean, onClick: () -
 }
 
 @Composable
+private fun GuideChannelRow(
+    channel: PlaylistChannel,
+    epgGuide: EpgGuide?,
+    scheduleNow: Instant,
+    epgTimeShiftHours: Int,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val presentation = remember(channel.tvgId, epgGuide, scheduleNow, epgTimeShiftHours, strings) {
+        val current = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
+        val shiftMillis = epgTimeShiftHours * 3_600_000L
+        val adjustedStart = current?.startEpochMilli?.plus(shiftMillis)
+        val adjustedStop = current?.stopEpochMilli?.plus(shiftMillis)
+        val progress = if (adjustedStart != null && adjustedStop != null && adjustedStop > adjustedStart) {
+            ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() /
+                (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+        } else {
+            null
+        }
+        ChannelEpgPresentation(
+            title = current?.title,
+            endTime = adjustedStop?.let { strings.until(formatProgrammeTime(Instant.ofEpochMilli(it))) },
+            progress = progress
+        )
+    }
+    ChannelRow(
+        channel = channel,
+        epgChannel = epgGuide?.channels?.get(channel.tvgId),
+        nowPlaying = presentation.title,
+        endTime = presentation.endTime,
+        progress = presentation.progress,
+        selected = selected,
+        onClick = onClick
+    )
+}
+
+private data class ChannelEpgPresentation(
+    val title: String?,
+    val endTime: String?,
+    val progress: Float?
+)
+
+@Composable
 private fun ChannelRow(
     channel: PlaylistChannel,
     epgChannel: com.fortresstv.player.epg.EpgChannel?,
@@ -1649,6 +1733,7 @@ private fun ChannelLogo(
                 model = logoUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
+                filterQuality = FilterQuality.Low,
                 onError = { failed = true },
                 modifier = Modifier.fillMaxSize().padding(4.dp)
             )
@@ -2267,8 +2352,9 @@ private fun FullscreenGuideDrawer(
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
     val now = Instant.now()
+    val shiftMillis = epgTimeShiftHours * 3_600_000L
     val programmes = epgGuide?.programmes?.get(channel.tvgId).orEmpty()
-        .filter { programme -> XmlTvTime.parse(programme.stop ?: programme.start, epgTimeShiftHours)?.let { it > now } == true }
+        .filter { programme -> (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis > now.toEpochMilli() }
         .sortedBy { it.startEpochMilli }
     Surface(
         modifier = modifier.fillMaxHeight().widthIn(max = 560.dp).fillMaxWidth(if (isCompact) 0.88f else 0.5f),
@@ -2290,11 +2376,11 @@ private fun FullscreenGuideDrawer(
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(programmes, key = { "${it.channelId}:${it.start}:${it.title}" }) { programme ->
+                    items(programmes, key = { "${it.channelId}:${it.startEpochMilli}:${it.title}" }) { programme ->
                         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                                 Text(
-                                    formatProgrammeRange(programme.start, programme.stop, epgTimeShiftHours),
+                                    formatProgrammeRange(programme.startEpochMilli, programme.stopEpochMilli, epgTimeShiftHours),
                                     color = MaterialTheme.colorScheme.primary,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
@@ -2317,10 +2403,13 @@ private fun FullscreenGuideDrawer(
     }
 }
 
-private fun formatProgrammeRange(start: String, stop: String?, timeShiftHours: Int = 0): String {
+private fun formatProgrammeRange(startEpochMilli: Long, stopEpochMilli: Long?, timeShiftHours: Int = 0): String {
     val formatter = DateTimeFormatter.ofPattern("EEE d MMM · HH:mm")
-    val startText = XmlTvTime.parse(start, timeShiftHours)?.atZone(ZoneId.systemDefault())?.format(formatter) ?: start
-    val stopText = stop?.let { XmlTvTime.parse(it, timeShiftHours) }?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("HH:mm"))
+    val shiftMillis = timeShiftHours * 3_600_000L
+    val startText = Instant.ofEpochMilli(startEpochMilli + shiftMillis).atZone(ZoneId.systemDefault()).format(formatter)
+    val stopText = stopEpochMilli?.let {
+        Instant.ofEpochMilli(it + shiftMillis).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("HH:mm"))
+    }
     return if (stopText == null) startText else "$startText – $stopText"
 }
 
@@ -2402,25 +2491,16 @@ private fun FullscreenChannelDrawer(
             }
             Spacer(Modifier.height(10.dp))
             LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(visibleChannels, key = { "fullscreen:${it.position}:${it.streamUrl}" }) { item ->
-                    val currentProg = epgGuide?.snapshot(item.tvgId, scheduleNow, epgTimeShiftHours)?.current
-                    val progress = if (currentProg != null && currentProg.stopEpochMilli != null) {
-                        val adjustedStart = currentProg.startEpochMilli + (epgTimeShiftHours * 3600_000L)
-                        val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                        if (adjustedStop > adjustedStart) {
-                            ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
-                        } else null
-                    } else null
-                    val endTime = if (currentProg?.stopEpochMilli != null) {
-                        val adjustedStop = currentProg.stopEpochMilli + (epgTimeShiftHours * 3600_000L)
-                        strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
-                    } else null
-                    ChannelRow(
+                items(
+                    items = visibleChannels,
+                    key = { "fullscreen:${it.position}:${it.streamUrl}" },
+                    contentType = { "channel" }
+                ) { item ->
+                    GuideChannelRow(
                         channel = item,
-                        epgChannel = epgGuide?.channels?.get(item.tvgId),
-                        nowPlaying = currentProg?.title,
-                        endTime = endTime,
-                        progress = progress,
+                        epgGuide = epgGuide,
+                        scheduleNow = scheduleNow,
+                        epgTimeShiftHours = epgTimeShiftHours,
                         selected = item == selectedChannel,
                         onClick = { onChannelSelected(item) }
                     )
