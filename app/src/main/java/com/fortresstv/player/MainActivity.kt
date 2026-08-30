@@ -72,6 +72,10 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -97,6 +101,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -1565,17 +1570,20 @@ private fun FortressLibrary(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val libraryConfiguration = LocalConfiguration.current
+    val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
     var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var vodPlayback by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var globalSidebarExpanded by remember { mutableStateOf(false) }
     // Keep catalogue positions alive while the user moves between primary destinations.
     val movieGridState = rememberLazyGridState()
     val seriesGridState = rememberLazyGridState()
     val destinations = listOf(
-        LibraryDestination.LIVE_TV to strings.navLiveTv,
-        LibraryDestination.MOVIES to strings.navMovies,
-        LibraryDestination.SERIES to strings.navSeries,
-        LibraryDestination.FAVORITES to strings.navFavorites
+        Triple(LibraryDestination.LIVE_TV, strings.navLiveTv, Icons.Default.LiveTv),
+        Triple(LibraryDestination.MOVIES, strings.navMovies, Icons.Default.Movie),
+        Triple(LibraryDestination.SERIES, strings.navSeries, Icons.Default.VideoLibrary),
+        Triple(LibraryDestination.FAVORITES, strings.navFavorites, Icons.Default.Star)
     )
 
     val effectivePlaylist = remember(playlist, hideAdultContent) {
@@ -1585,35 +1593,29 @@ private fun FortressLibrary(
             Playlist(filtered)
         }
     }
+    BackHandler(globalSidebarExpanded) { globalSidebarExpanded = false }
 
-    Column(
+    Row(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding()
     ) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
-            shadowElevation = 4.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                destinations.forEach { (item, label) ->
-                    LibraryNavigationItem(
-                        label = label,
-                        selected = destination == item,
-                        onClick = { destination = item },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+        GlobalLibrarySidebar(
+            expanded = globalSidebarExpanded,
+            destinations = destinations,
+            selectedDestination = destination,
+            onDestinationSelected = {
+                destination = it
+                if (compactLibraryNavigation) globalSidebarExpanded = false
+            },
+            onToggleExpanded = { globalSidebarExpanded = !globalSidebarExpanded },
+            onOpenSettings = {
+                if (compactLibraryNavigation) globalSidebarExpanded = false
+                onOpenSettings(0)
             }
-        }
-        Box(Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+        )
+        Box(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.background)) {
             when (destination) {
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
                     playlist = effectivePlaylist,
@@ -1690,11 +1692,77 @@ private fun FortressLibrary(
 }
 
 @Composable
+private fun GlobalLibrarySidebar(
+    expanded: Boolean,
+    destinations: List<Triple<LibraryDestination, String, ImageVector>>,
+    selectedDestination: LibraryDestination,
+    onDestinationSelected: (LibraryDestination) -> Unit,
+    onToggleExpanded: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+        shadowElevation = 4.dp,
+        modifier = Modifier.width(if (expanded) 220.dp else 76.dp).fillMaxHeight()
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (expanded) {
+                Row(
+                    Modifier.fillMaxWidth().height(52.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ShieldMark(Modifier.size(40.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(strings.appName, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onToggleExpanded) {
+                        Icon(Icons.Default.MenuOpen, contentDescription = strings.collapseSidebar)
+                    }
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    ShieldMark(Modifier.size(38.dp))
+                    IconButton(onClick = onToggleExpanded, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Menu, contentDescription = strings.expandSidebar, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            destinations.forEach { (item, label, icon) ->
+                LibraryNavigationItem(
+                    label = label,
+                    icon = icon,
+                    expanded = expanded,
+                    selected = selectedDestination == item,
+                    onClick = { onDestinationSelected(item) }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Spacer(Modifier.weight(1f))
+            HorizontalDivider(Modifier.padding(horizontal = 4.dp))
+            Spacer(Modifier.height(10.dp))
+            LibraryNavigationItem(
+                label = strings.settings,
+                icon = Icons.Default.Settings,
+                expanded = expanded,
+                selected = false,
+                onClick = onOpenSettings
+            )
+        }
+    }
+}
+
+@Composable
 private fun LibraryNavigationItem(
     label: String,
+    icon: ImageVector,
+    expanded: Boolean,
     selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
@@ -1703,16 +1771,24 @@ private fun LibraryNavigationItem(
         else Color.Transparent,
         border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
         contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.fillMaxHeight()
+        modifier = Modifier.fillMaxWidth().height(52.dp)
     ) {
-        Box(Modifier.fillMaxSize().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-            Text(
-                label,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-                fontSize = 14.sp
-            )
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = if (expanded) 12.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
+            if (expanded) {
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+            }
         }
     }
 }
@@ -2755,13 +2831,13 @@ private fun ChannelBrowser(
                 ) {
                     Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = { isSidebarExpanded = false }) {
-                        Icon(Icons.Default.MenuOpen, contentDescription = strings.collapseSidebar)
+                        Icon(Icons.Default.MenuOpen, contentDescription = strings.hideChannelFilters)
                     }
                 }
                 Spacer(Modifier.height(14.dp))
 
                 Surface(
-                    onClick = { onOpenSettings(0) },
+                    onClick = { onOpenSettings(1) },
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
@@ -2915,9 +2991,6 @@ private fun ChannelBrowser(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { onOpenSettings(0) }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
-                    Text(strings.settings)
-                }
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 16.dp)) {
@@ -2937,7 +3010,7 @@ private fun ChannelBrowser(
                 ) {
                     if (!isSidebarExpanded) {
                         FilledTonalIconButton(onClick = { isSidebarExpanded = true }) {
-                            Icon(Icons.Default.Menu, contentDescription = strings.expandSidebar)
+                            Icon(Icons.Default.FilterList, contentDescription = strings.showChannelFilters)
                         }
                     }
                     FilledTonalIconButton(
@@ -4201,7 +4274,7 @@ private fun SettingsDialog(
     val isCompact = configuration.screenWidthDp < 600
 
     var selectedTab by remember { mutableIntStateOf(initialTab) }
-    val tabTitles = listOf(strings.tabPlaylists, strings.tabEpg, strings.tabGeneral)
+    val tabTitles = listOf(strings.tabGeneral, strings.tabPlaylists, strings.tabEpg, strings.tabAbout)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -4249,7 +4322,17 @@ private fun SettingsDialog(
 
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (selectedTab) {
-                        0 -> PlaylistsTab(
+                        0 -> GeneralTab(
+                            appLanguage = appLanguage,
+                            onLanguageChanged = onLanguageChanged,
+                            playChannelsFullscreen = playChannelsFullscreen,
+                            onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
+                            autoPictureInPicture = autoPictureInPicture,
+                            onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                            hideAdultContent = hideAdultContent,
+                            onHideAdultContentChanged = onHideAdultContentChanged
+                        )
+                        1 -> PlaylistsTab(
                             playlists = playlists,
                             activeProfile = activeProfile,
                             loading = loading,
@@ -4261,7 +4344,7 @@ private fun SettingsDialog(
                             onEditPlaylist = onEditPlaylist,
                             onDeletePlaylist = onDeletePlaylist
                         )
-                        1 -> EpgTab(
+                        2 -> EpgTab(
                             epgSource = epgSource,
                             epgSourceName = epgSourceName,
                             epgLastUpdate = epgLastUpdate,
@@ -4276,16 +4359,7 @@ private fun SettingsDialog(
                             onRemoveEpg = onRemoveEpg,
                             onEpgTimeShiftChanged = onEpgTimeShiftChanged
                         )
-                        2 -> AboutTab(
-                            appLanguage = appLanguage,
-                            onLanguageChanged = onLanguageChanged,
-                            playChannelsFullscreen = playChannelsFullscreen,
-                            onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
-                            autoPictureInPicture = autoPictureInPicture,
-                            onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
-                            hideAdultContent = hideAdultContent,
-                            onHideAdultContentChanged = onHideAdultContentChanged
-                        )
+                        3 -> AboutTab()
                     }
                 }
             }
@@ -4884,7 +4958,7 @@ private fun EpgTab(
 }
 
 @Composable
-private fun AboutTab(
+private fun GeneralTab(
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
     playChannelsFullscreen: Boolean,
@@ -4894,6 +4968,96 @@ private fun AboutTab(
     hideAdultContent: Boolean,
     onHideAdultContentChanged: (Boolean) -> Unit
 ) {
+    val strings = LocalAppStrings.current
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Text(strings.language, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            AppLanguage.entries.forEach { lang ->
+                val isSelected = lang == appLanguage
+                Surface(
+                    onClick = { onLanguageChanged(lang) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(
+                        if (isSelected) 1.5.dp else 1.dp,
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(lang.flag, fontSize = 22.sp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            lang.displayName,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (isSelected) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Text(strings.playback, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(10.dp))
+        SettingsToggleCard(
+            title = strings.playChannelsFullscreen,
+            description = strings.playChannelsFullscreenDesc,
+            checked = playChannelsFullscreen,
+            onCheckedChange = onPlayChannelsFullscreenChanged
+        )
+        Spacer(Modifier.height(12.dp))
+        SettingsToggleCard(
+            title = strings.autoPictureInPicture,
+            description = strings.autoPictureInPictureDesc,
+            checked = autoPictureInPicture,
+            onCheckedChange = onAutoPictureInPictureChanged
+        )
+
+        Spacer(Modifier.height(24.dp))
+        SettingsToggleCard(
+            title = strings.hideAdultContent,
+            description = strings.hideAdultContentSubtitle,
+            checked = hideAdultContent,
+            onCheckedChange = onHideAdultContentChanged
+        )
+    }
+}
+
+@Composable
+private fun SettingsToggleCard(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(16.dp))
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    }
+}
+
+@Composable
+private fun AboutTab() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val strings = LocalAppStrings.current
@@ -4955,94 +5119,28 @@ private fun AboutTab(
 
         Surface(
             shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onPlayChannelsFullscreenChanged(!playChannelsFullscreen) }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.playback, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(strings.contentDisclaimerTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Spacer(Modifier.height(6.dp))
-                    Text(strings.playChannelsFullscreen, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                     Text(
-                        strings.playChannelsFullscreenDesc,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
+                        strings.contentDisclaimer,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp
                     )
                 }
-                Spacer(Modifier.width(16.dp))
-                Switch(
-                    checked = playChannelsFullscreen,
-                    onCheckedChange = onPlayChannelsFullscreenChanged
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onAutoPictureInPictureChanged(!autoPictureInPicture) }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.autoPictureInPicture, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    Text(
-                        strings.autoPictureInPictureDesc,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                }
-                Spacer(Modifier.width(16.dp))
-                Switch(
-                    checked = autoPictureInPicture,
-                    onCheckedChange = onAutoPictureInPictureChanged
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onHideAdultContentChanged(!hideAdultContent) }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.hideAdultContent, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    Text(
-                        strings.hideAdultContentSubtitle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                }
-                Spacer(Modifier.width(16.dp))
-                Switch(
-                    checked = hideAdultContent,
-                    onCheckedChange = onHideAdultContentChanged
-                )
             }
         }
 
@@ -5196,60 +5294,6 @@ private fun AboutTab(
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Text(strings.language, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    AppLanguage.entries.forEach { lang ->
-                        val isSelected = lang == appLanguage
-                        Surface(
-                            onClick = { onLanguageChanged(lang) },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
-                            else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(lang.flag, fontSize = 22.sp)
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        lang.displayName,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 14.sp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(Modifier.padding(16.dp)) {
@@ -5285,7 +5329,7 @@ private fun AboutTab(
                         context.startActivity(
                             Intent(
                                 Intent.ACTION_VIEW,
-                                Uri.parse("https://github.com/Pride1922/FortressTV/tree/main/third_party/ffmpeg")
+                                Uri.parse("https://cloud.ameyerocha.com/s/WLECDww4XQMHzdB")
                             )
                         )
                     }

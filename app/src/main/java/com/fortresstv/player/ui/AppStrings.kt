@@ -84,6 +84,8 @@ interface Strings {
 
     val collapseSidebar: String
     val expandSidebar: String
+    val showChannelFilters: String
+    val hideChannelFilters: String
     val switchPlaylist: String
     val epgNotConfigured: String
     fun epgMatched(matched: Int, total: Int): String
@@ -142,6 +144,7 @@ interface Strings {
     val tabPlaylists: String
     val tabEpg: String
     val tabGeneral: String
+    val tabAbout: String
     val language: String
     val playback: String
     val playChannelsFullscreen: String
@@ -182,6 +185,8 @@ interface Strings {
     val timeShiftDesc: String
     val securityTitle: String
     val securityDesc: String
+    val contentDisclaimerTitle: String
+    val contentDisclaimer: String
     val openSourceSoftware: String
     val ffmpegAttribution: String
     val viewSourceCode: String
@@ -264,6 +269,8 @@ object EnglishStrings : Strings {
 
     override val collapseSidebar = "Collapse sidebar"
     override val expandSidebar = "Expand sidebar"
+    override val showChannelFilters = "Show channel filters"
+    override val hideChannelFilters = "Hide channel filters"
     override val switchPlaylist = "Switch playlist"
     override val epgNotConfigured = "EPG not configured"
     override fun epgMatched(matched: Int, total: Int) = "EPG: $matched/$total matched"
@@ -321,7 +328,8 @@ object EnglishStrings : Strings {
     override val settingsTitle = "Settings"
     override val tabPlaylists = "Playlists"
     override val tabEpg = "Programme Guide (EPG)"
-    override val tabGeneral = "General & About"
+    override val tabGeneral = "General"
+    override val tabAbout = "About"
     override val language = "Language"
     override val playback = "Playback"
     override val playChannelsFullscreen = "Open channels in fullscreen"
@@ -362,8 +370,10 @@ object EnglishStrings : Strings {
     override val timeShiftDesc = "Adjust this if programme times are offset from your local timezone."
     override val securityTitle = "FortressTV Security & Privacy"
     override val securityDesc = "Hardware-backed AES-256 encryption via Android KeyStore. All sources and cached stream tokens remain private on this device."
+    override val contentDisclaimerTitle = "Content notice"
+    override val contentDisclaimer = "FortressTV is a media player. It does not provide, host, sell or distribute playlists, channels, films, series, EPG data or other streaming content. You are responsible for adding only sources you are authorized to access and for complying with applicable laws and provider terms."
     override val openSourceSoftware = "Open-source software"
-    override val ffmpegAttribution = "FortressTV uses FFmpeg 6.0 under the LGPL v2.1 or later to decode otherwise unsupported MPEG audio. The corresponding source and build instructions are available in the FortressTV repository."
+    override val ffmpegAttribution = "FortressTV uses FFmpeg 6.0 under the LGPL v2.1 or later to decode otherwise unsupported MPEG audio. The corresponding source, licence, and build instructions are available from the public download link below."
     override val viewSourceCode = "View source and licences"
     override val appVersion = "Version 1.0.0"
 
@@ -445,6 +455,8 @@ object PortugueseStrings : Strings {
 
     override val collapseSidebar = "Ocultar barra lateral"
     override val expandSidebar = "Expandir barra lateral"
+    override val showChannelFilters = "Mostrar filtros de canais"
+    override val hideChannelFilters = "Ocultar filtros de canais"
     override val switchPlaylist = "Mudar de lista"
     override val epgNotConfigured = "EPG não configurado"
     override fun epgMatched(matched: Int, total: Int) = "EPG: $matched/$total correspondidos"
@@ -502,7 +514,8 @@ object PortugueseStrings : Strings {
     override val settingsTitle = "Definições"
     override val tabPlaylists = "Listas de Canais"
     override val tabEpg = "Guia de Programação (EPG)"
-    override val tabGeneral = "Geral e Sobre"
+    override val tabGeneral = "Geral"
+    override val tabAbout = "Sobre"
     override val language = "Idioma"
     override val playback = "Reprodução"
     override val playChannelsFullscreen = "Abrir canais em ecrã inteiro"
@@ -543,8 +556,10 @@ object PortugueseStrings : Strings {
     override val timeShiftDesc = "Ajuste este valor se os horários dos programas não coincidirem com o seu fuso horário local."
     override val securityTitle = "Segurança e Privacidade FortressTV"
     override val securityDesc = "Encriptação AES-256 por hardware via Android KeyStore. Todas as origens e tokens de stream permanecem estritamente privados neste dispositivo."
+    override val contentDisclaimerTitle = "Aviso sobre conteúdos"
+    override val contentDisclaimer = "A FortressTV é um reprodutor multimédia. Não fornece, aloja, vende nem distribui listas, canais, filmes, séries, dados EPG ou qualquer outro conteúdo de streaming. Cada utilizador é responsável por adicionar apenas fontes às quais tenha acesso autorizado e por cumprir a legislação aplicável e os termos dos fornecedores."
     override val openSourceSoftware = "Software de código aberto"
-    override val ffmpegAttribution = "O FortressTV utiliza o FFmpeg 6.0 sob a licença LGPL v2.1 ou posterior para descodificar áudio MPEG não suportado pelo dispositivo. O código-fonte correspondente e as instruções de compilação estão disponíveis no repositório do FortressTV."
+    override val ffmpegAttribution = "O FortressTV utiliza o FFmpeg 6.0 sob a licença LGPL v2.1 ou posterior para descodificar áudio MPEG não suportado pelo dispositivo. O código-fonte correspondente, a licença e as instruções de compilação estão disponíveis através da ligação pública abaixo."
     override val viewSourceCode = "Ver código-fonte e licenças"
     override val appVersion = "Versão 1.0.0"
 

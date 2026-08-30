@@ -120,6 +120,9 @@ Implemented VOD catalogue safeguards:
 - Movie and Series scroll positions survive switching between primary library destinations.
 - Provider category identity includes the source ID so category-number collisions cannot merge unrelated providers.
 - Remote M3U, XMLTV, and Xtream requests retry transient failures up to three attempts with backoff, then expose a manual Retry action.
+- A shared collapsible library sidebar provides Live TV, Movies, Series, Favorites, and Settings navigation; Live TV retains a separate contextual filter panel.
+- Settings are organized as General, Playlists, EPG, and About; user preferences are kept separate from version, updates, security, and legal information.
+- About includes a prominent bilingual notice that FortressTV supplies no playlists or streaming content and is intended for authorized sources.
 
 ## Delivery phases
 
