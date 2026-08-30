@@ -30,6 +30,16 @@ interface Strings {
     val sources: String
     val categories: String
     val uncategorized: String
+    val navLiveTv: String
+    val navMovies: String
+    val navSeries: String
+    val navFavorites: String
+    val comingSoon: String
+    val moviesComingSoon: String
+    val seriesComingSoon: String
+    val noFavoriteChannels: String
+    val addFavorite: String
+    val removeFavorite: String
     fun searchInGroup(group: String): String
     val searchChannels: String
     val noChannelsMatch: String
@@ -169,6 +179,16 @@ object EnglishStrings : Strings {
     override val sources = "Sources"
     override val categories = "Categories"
     override val uncategorized = "Uncategorized"
+    override val navLiveTv = "Live TV"
+    override val navMovies = "Movies"
+    override val navSeries = "Series"
+    override val navFavorites = "Favorites"
+    override val comingSoon = "Coming next"
+    override val moviesComingSoon = "Your movie library will appear here when a VOD source is configured."
+    override val seriesComingSoon = "Your series, seasons and episodes will appear here when a VOD source is configured."
+    override val noFavoriteChannels = "Favorite channels will appear here."
+    override val addFavorite = "Add to Favorites"
+    override val removeFavorite = "Remove from Favorites"
     override fun searchInGroup(group: String) = "Search in $group"
     override val searchChannels = "Search channels"
     override val noChannelsMatch = "No channels match your search."
@@ -309,6 +329,16 @@ object PortugueseStrings : Strings {
     override val sources = "Fontes"
     override val categories = "Categorias"
     override val uncategorized = "Sem categoria"
+    override val navLiveTv = "TV em direto"
+    override val navMovies = "Filmes"
+    override val navSeries = "Séries"
+    override val navFavorites = "Favoritos"
+    override val comingSoon = "Brevemente"
+    override val moviesComingSoon = "A sua biblioteca de filmes aparecerá aqui quando configurar uma fonte VOD."
+    override val seriesComingSoon = "As suas séries, temporadas e episódios aparecerão aqui quando configurar uma fonte VOD."
+    override val noFavoriteChannels = "Os canais favoritos aparecerão aqui."
+    override val addFavorite = "Adicionar aos Favoritos"
+    override val removeFavorite = "Remover dos Favoritos"
     override fun searchInGroup(group: String) = "Pesquisar em $group"
     override val searchChannels = "Pesquisar canais"
     override val noChannelsMatch = "Nenhum canal corresponde à sua pesquisa."

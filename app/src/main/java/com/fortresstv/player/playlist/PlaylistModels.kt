@@ -1,6 +1,7 @@
 package com.fortresstv.player.playlist
 
 import com.fortresstv.player.source.ContentSource
+import java.security.MessageDigest
 
 data class PlaylistChannel(
     val position: Int,
@@ -11,7 +12,8 @@ data class PlaylistChannel(
     val logoUrl: String? = null,
     val group: String? = null,
     val sourceId: String = "",
-    val sourcePosition: Int = position
+    val sourcePosition: Int = position,
+    val sourceItemId: String = ""
 )
 
 data class Playlist(
@@ -57,7 +59,8 @@ fun mergeLivePlaylists(
             channel.copy(
                 position = position,
                 sourceId = sourceId,
-                sourcePosition = channel.sourcePosition.takeIf { channel.sourceId.isNotEmpty() } ?: channel.position
+                sourcePosition = channel.sourcePosition.takeIf { channel.sourceId.isNotEmpty() } ?: channel.position,
+                sourceItemId = channel.sourceItemId.ifBlank { channel.stableSourceItemId() }
             )
         }
         .toList()
@@ -65,3 +68,10 @@ fun mergeLivePlaylists(
 }
 
 private fun Playlist?.orEmpty(): List<PlaylistChannel> = this?.channels.orEmpty()
+
+private fun PlaylistChannel.stableSourceItemId(): String {
+    tvgId?.trim()?.takeIf { it.isNotEmpty() }?.let { return "tvg:$it" }
+    val identity = listOf(tvgName.orEmpty(), name, streamUrl).joinToString("\u0000")
+    val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+    return "m3u:" + digest.joinToString("") { "%02x".format(it) }
+}

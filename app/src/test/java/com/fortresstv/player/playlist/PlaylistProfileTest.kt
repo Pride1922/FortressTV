@@ -1,6 +1,7 @@
 package com.fortresstv.player.playlist
 
 import com.fortresstv.player.source.ContentSource
+import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,6 +56,7 @@ class PlaylistProfileTest {
         assertEquals(listOf("One A", "Two A"), merged.channels.map { it.name })
         assertEquals(listOf("one", "two"), merged.channels.map { it.sourceId })
         assertEquals(listOf(0, 1), merged.channels.map { it.position })
+        assertTrue(merged.channels.all { it.sourceItemId.startsWith("m3u:") })
     }
 
     @Test
@@ -69,5 +71,18 @@ class PlaylistProfileTest {
         val merged = mergeLivePlaylists(listOf(live, movies), loaded)
 
         assertEquals(listOf("Live channel"), merged.channels.map { it.name })
+    }
+
+    @Test
+    fun prefersTvgIdForStableSourceIdentity() {
+        val profile = PlaylistProfile("live", "Live", ContentSource.RemoteUrl("https://example.com/live.m3u", "Live"))
+        val loaded = mapOf(
+            "live" to Playlist(listOf(PlaylistChannel(0, "RTP 1", "https://stream/rtp1", tvgId = "RTP1.pt")))
+        )
+
+        val merged = mergeLivePlaylists(listOf(profile), loaded)
+
+        assertEquals("tvg:RTP1.pt", merged.channels.single().sourceItemId)
+        assertEquals("channel:live:tvg:RTP1.pt", merged.channels.single().libraryId())
     }
 }

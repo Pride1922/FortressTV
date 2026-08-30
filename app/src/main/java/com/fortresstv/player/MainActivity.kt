@@ -70,6 +70,8 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.update.UpdateManager
 import com.fortresstv.player.update.AppUpdateInfo
@@ -133,6 +135,8 @@ import com.fortresstv.player.epg.XmlTvTime
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceReader
 import com.fortresstv.player.source.SourceSettingsStore
+import com.fortresstv.player.library.UserLibraryStore
+import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -276,6 +280,7 @@ private fun FortressTVApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { SourceSettingsStore(context.applicationContext) }
+    val userLibrary = remember { UserLibraryStore(context.applicationContext) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -286,6 +291,7 @@ private fun FortressTVApp() {
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var playlist by remember { mutableStateOf<Playlist?>(null) }
     val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
+    var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
     var epgSource by remember { mutableStateOf<ContentSource?>(null) }
@@ -860,7 +866,7 @@ private fun FortressTVApp() {
                 onOpenUrl = { showAddPlaylistDialog = true }
             )
         } else {
-            ChannelBrowser(
+            FortressLibrary(
                 playlist = playlist!!,
                 activeProfile = activeProfile!!,
                 enabledSourceCount = playlists.count { it.enabled && it.role.contributesLiveTv() },
@@ -874,6 +880,11 @@ private fun FortressTVApp() {
                 autoPictureInPicture = autoPictureInPicture,
                 loading = loading,
                 error = error,
+                favoriteChannelIds = favoriteChannelIds,
+                onToggleFavorite = { channel ->
+                    val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true
+                    favoriteChannelIds = userLibrary.setChannelFavorite(channel, !isFavorite)
+                },
                 onOpenSettings = { tab ->
                     settingsInitialTab = tab
                     showSettings = true
@@ -1369,6 +1380,231 @@ private fun ProgrammeGuideScreen(
     }
 }
 
+private enum class LibraryDestination { LIVE_TV, MOVIES, SERIES, FAVORITES }
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun FortressLibrary(
+    playlist: Playlist,
+    activeProfile: PlaylistProfile,
+    enabledSourceCount: Int,
+    enabledSources: List<PlaylistProfile>,
+    epgGuide: EpgGuide?,
+    epgSourceName: String?,
+    epgTimeShiftHours: Int,
+    playChannelsFullscreen: Boolean,
+    autoPictureInPicture: Boolean,
+    loading: Boolean,
+    error: String?,
+    favoriteChannelIds: Set<String>,
+    onToggleFavorite: (PlaylistChannel) -> Unit,
+    onOpenSettings: (Int) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
+    var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
+    val destinations = listOf(
+        LibraryDestination.LIVE_TV to strings.navLiveTv,
+        LibraryDestination.MOVIES to strings.navMovies,
+        LibraryDestination.SERIES to strings.navSeries,
+        LibraryDestination.FAVORITES to strings.navFavorites
+    )
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .systemBarsPadding()
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+            shadowElevation = 4.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ShieldMark(Modifier.size(38.dp))
+                Spacer(Modifier.width(4.dp))
+                destinations.forEach { (item, label) ->
+                    LibraryNavigationItem(
+                        label = label,
+                        selected = destination == item,
+                        onClick = { destination = item },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+            when (destination) {
+                LibraryDestination.LIVE_TV -> ChannelBrowser(
+                    playlist = playlist,
+                    activeProfile = activeProfile,
+                    enabledSourceCount = enabledSourceCount,
+                    enabledSources = enabledSources,
+                    epgGuide = epgGuide,
+                    epgSourceName = epgSourceName,
+                    epgTimeShiftHours = epgTimeShiftHours,
+                    playChannelsFullscreen = playChannelsFullscreen,
+                    autoPictureInPicture = autoPictureInPicture,
+                    loading = loading,
+                    error = error,
+                    favoriteChannelIds = favoriteChannelIds,
+                    onToggleFavorite = onToggleFavorite,
+                    requestedChannel = requestedChannel,
+                    onRequestedChannelHandled = { requestedChannel = null },
+                    onOpenSettings = onOpenSettings
+                )
+                LibraryDestination.MOVIES -> LibraryPlaceholder(
+                    title = strings.navMovies,
+                    message = strings.moviesComingSoon
+                )
+                LibraryDestination.SERIES -> LibraryPlaceholder(
+                    title = strings.navSeries,
+                    message = strings.seriesComingSoon
+                )
+                LibraryDestination.FAVORITES -> FavoriteChannelsScreen(
+                    channels = playlist.channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true },
+                    epgGuide = epgGuide,
+                    epgTimeShiftHours = epgTimeShiftHours,
+                    favoriteChannelIds = favoriteChannelIds,
+                    onToggleFavorite = onToggleFavorite,
+                    onWatch = { channel ->
+                        requestedChannel = channel
+                        destination = LibraryDestination.LIVE_TV
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryNavigationItem(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        else Color.Transparent,
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
+        contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.fillMaxHeight()
+    ) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                fontSize = 14.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryPlaceholder(title: String, message: String) {
+    val strings = LocalAppStrings.current
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+            tonalElevation = 4.dp,
+            modifier = Modifier.widthIn(max = 560.dp)
+        ) {
+            Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                ShieldMark(Modifier.size(72.dp))
+                Spacer(Modifier.height(18.dp))
+                Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(strings.comingSoon, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FavoriteChannelsScreen(
+    channels: List<PlaylistChannel>,
+    epgGuide: EpgGuide?,
+    epgTimeShiftHours: Int,
+    favoriteChannelIds: Set<String>,
+    onToggleFavorite: (PlaylistChannel) -> Unit,
+    onWatch: (PlaylistChannel) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var scheduleNow by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(epgGuide) {
+        while (true) {
+            scheduleNow = Instant.now()
+            delay(60_000)
+        }
+    }
+    if (channels.isEmpty()) {
+        Box(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f))
+            ) {
+                Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.StarOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Text(strings.navFavorites, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(strings.noFavoriteChannels, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                }
+            }
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(strings.navFavorites, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(10.dp))
+                    Text("${channels.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+            items(channels, key = { "favorite:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                GuideChannelRow(
+                    channel = channel,
+                    epgGuide = epgGuide,
+                    scheduleNow = scheduleNow,
+                    epgTimeShiftHours = epgTimeShiftHours,
+                    selected = false,
+                    isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
+                    onToggleFavorite = { onToggleFavorite(channel) },
+                    onClick = { onWatch(channel) }
+                )
+            }
+        }
+    }
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun ChannelBrowser(
@@ -1383,6 +1619,10 @@ private fun ChannelBrowser(
     autoPictureInPicture: Boolean,
     loading: Boolean,
     error: String?,
+    favoriteChannelIds: Set<String>,
+    onToggleFavorite: (PlaylistChannel) -> Unit,
+    requestedChannel: PlaylistChannel?,
+    onRequestedChannelHandled: () -> Unit,
     onOpenSettings: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -1410,6 +1650,12 @@ private fun ChannelBrowser(
     fun selectChannel(channel: PlaylistChannel) {
         selectedChannel = channel
         isSidebarExpanded = false
+    }
+    LaunchedEffect(requestedChannel) {
+        requestedChannel?.let {
+            selectChannel(it)
+            onRequestedChannelHandled()
+        }
     }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(epgGuide) {
@@ -1481,7 +1727,7 @@ private fun ChannelBrowser(
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-    Row(Modifier.fillMaxSize().systemBarsPadding()) {
+    Row(Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible = isSidebarExpanded,
             enter = expandHorizontally() + fadeIn(),
@@ -1758,6 +2004,8 @@ private fun ChannelBrowser(
                                     scheduleNow = scheduleNow,
                                     epgTimeShiftHours = epgTimeShiftHours,
                                     selected = selectedChannel == channel,
+                                    isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
+                                    onToggleFavorite = { onToggleFavorite(channel) },
                                     onClick = { selectChannel(channel) }
                                 )
                             }
@@ -1787,6 +2035,8 @@ private fun ChannelBrowser(
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
                                 selected = selectedChannel == channel,
+                                isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
+                                onToggleFavorite = { onToggleFavorite(channel) },
                                 onClick = { selectChannel(channel) }
                             )
                         }
@@ -1818,6 +2068,8 @@ private fun ChannelBrowser(
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
                                 selected = selectedChannel == channel,
+                                isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
+                                onToggleFavorite = { onToggleFavorite(channel) },
                                 onClick = { selectChannel(channel) }
                             )
                         }
@@ -1912,6 +2164,8 @@ private fun GuideChannelRow(
     scheduleNow: Instant,
     epgTimeShiftHours: Int,
     selected: Boolean,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -1939,6 +2193,8 @@ private fun GuideChannelRow(
         endTime = presentation.endTime,
         progress = presentation.progress,
         selected = selected,
+        isFavorite = isFavorite,
+        onToggleFavorite = onToggleFavorite,
         onClick = onClick
     )
 }
@@ -1957,6 +2213,8 @@ private fun ChannelRow(
     endTime: String? = null,
     progress: Float? = null,
     selected: Boolean,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -2002,6 +2260,16 @@ private fun ChannelRow(
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
                 )
+            }
+            onToggleFavorite?.let { toggle ->
+                Spacer(Modifier.width(6.dp))
+                IconButton(onClick = toggle) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Default.Star else Icons.Outlined.StarOutline,
+                        contentDescription = if (isFavorite) strings.removeFavorite else strings.addFavorite,
+                        tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

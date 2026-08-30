@@ -1,5 +1,12 @@
 # FortressTV Roadmap
 
+## Current status
+
+- Phase 0: complete
+- Phase 1: complete — multiple enabled sources, independent caches, source roles/order, deterministic Live TV merging, source filters, and Uncategorized navigation
+- Phase 2: in progress — primary library navigation and persistent favorite channels are implemented locally; broader history and watch-state work remains
+- Phases 3–5: pending
+
 ## Product direction
 
 FortressTV will evolve from a strong Live TV player into a unified, private media library that can use multiple authorized sources at the same time.
@@ -174,4 +181,3 @@ Before implementing the VOD parser, identify the VOD source format without expos
 - Another documented, authorized API
 
 The format determines whether FortressTV receives proper Movie/Series metadata or must rely on configurable M3U classification rules.
-
