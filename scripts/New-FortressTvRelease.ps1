@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+Add-Type -AssemblyName System.Net.Http
 
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $releaseRoot = [System.IO.Path]::GetFullPath($ReleaseDirectory)
