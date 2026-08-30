@@ -29,9 +29,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
@@ -1178,6 +1180,10 @@ private fun ProgrammeGuideScreen(
     playlist: Playlist,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int,
+    favoriteChannelIds: Set<String> = emptySet(),
+    onToggleFavorite: (PlaylistChannel) -> Unit = {},
+    categoryOrder: List<String> = emptyList(),
+    hiddenCategories: Set<String> = emptySet(),
     onBack: () -> Unit,
     onWatchChannel: (PlaylistChannel) -> Unit
 ) {
@@ -1185,6 +1191,7 @@ private fun ProgrammeGuideScreen(
     val strings = LocalAppStrings.current
     val guideLocale = remember(strings.languageTag) { Locale.forLanguageTag(strings.languageTag) }
     val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
     val zone = remember { ZoneId.systemDefault() }
     val today = remember { LocalDate.now(zone) }
     val dates = remember(today) { List(3) { today.plusDays(it.toLong()) } }
@@ -1203,8 +1210,24 @@ private fun ProgrammeGuideScreen(
     val halfHourWidth = hourWidth / 2
     val timelineWidth = hourWidth * 24
     val rowHeight = 72.dp
-    val channelWidth = 220.dp
+    val channelWidth = 240.dp
     val shiftMillis = epgTimeShiftHours * 3_600_000L
+
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchExpanded by remember { mutableStateOf(false) }
+
+    val allGroup = strings.allChannels
+    val favoritesGroup = "⭐ ${strings.navFavorites}"
+    val favoriteChannels = remember(playlist.channels, favoriteChannelIds) {
+        val channelMap = playlist.channels.associateBy { it.libraryId() }
+        favoriteChannelIds.mapNotNull { channelMap[it] }
+    }
+    val categories = remember(playlist.channels, categoryOrder, hiddenCategories) {
+        val raw = playlist.channels.mapNotNull { it.group?.takeIf(String::isNotBlank) }.distinct().filter { it !in hiddenCategories }
+        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
+        raw.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
+    }
+    var selectedGroup by remember { mutableStateOf(allGroup) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1249,6 +1272,7 @@ private fun ProgrammeGuideScreen(
         val stop = (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis
         adjustedNow in start until stop
     } == true
+
     val todayGuideBlocks = remember(epgGuide, playlist, dates, zone, shiftMillis) {
         mutableStateMapOf<PlaylistChannel, List<GuideProgrammeBlock>>()
     }
@@ -1261,8 +1285,6 @@ private fun ProgrammeGuideScreen(
         )
     }
     LaunchedEffect(epgGuide, playlist, dates, zone, shiftMillis) {
-        // Prepare today first. Publish its initially visible channels in small batches
-        // so opening the guide does not compose every programme row in one long frame.
         dates.forEachIndexed { dayOffset, date ->
             val dayIndex = withContext(Dispatchers.Default) {
                 val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
@@ -1298,29 +1320,60 @@ private fun ProgrammeGuideScreen(
                 }
                 todayGuideReady = true
             } else {
-                // Future days are not visible yet, so publishing their immutable index
-                // is an O(1) state change and does not invalidate today's programme rows.
                 guideDayIndex[date] = dayIndex
             }
         }
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
+
+    val channelsInGroup = remember(playlist.channels, selectedGroup, allGroup, favoritesGroup, favoriteChannels) {
+        when (selectedGroup) {
+            allGroup -> playlist.channels
+            favoritesGroup -> favoriteChannels
+            else -> playlist.channels.filter { it.group == selectedGroup }
+        }
+    }
+
+    val visibleChannels = remember(channelsInGroup, searchQuery, guideBlocksByChannel) {
+        if (searchQuery.isBlank()) {
+            channelsInGroup
+        } else {
+            val q = searchQuery.trim().lowercase()
+            channelsInGroup.filter { channel ->
+                channel.name.lowercase().contains(q) ||
+                    guideBlocksByChannel[channel]?.any { block ->
+                        block.programme.title.lowercase().contains(q) ||
+                            block.programme.description?.lowercase()?.contains(q) == true
+                    } == true
+            }
+        }
+    }
+
     val visibleTimelineMinutes by remember(horizontalState, timelineViewportPx, hourWidth, density, useWideTimelineWindow) {
         derivedStateOf {
             val hourWidthPx = with(density) { hourWidth.toPx() }.coerceAtLeast(1f)
             val firstMinute = horizontalState.value / hourWidthPx * 60f
             val visibleMinutes = timelineViewportPx / hourWidthPx * 60f
             if (useWideTimelineWindow) {
-                // Once horizontal navigation begins, rebuild at most every two hours.
                 val bucketedFirstMinute = (firstMinute / 120f).toInt() * 120f
                 (bucketedFirstMinute - 120f).coerceAtLeast(0f) to
                     (bucketedFirstMinute + visibleMinutes + 180f).coerceAtMost(24f * 60f)
             } else {
-                // Opening and vertical-only navigation retain the smaller render set.
                 val bucketedFirstMinute = (firstMinute / 15f).toInt() * 15f
                 (bucketedFirstMinute - 30f).coerceAtLeast(0f) to
                     (bucketedFirstMinute + visibleMinutes + 45f).coerceAtMost(24f * 60f)
             }
+        }
+    }
+
+    val scrollToNow: () -> Unit = {
+        val localNow = now.atZone(zone)
+        val targetMinutes = if (selectedDate == today) {
+            localNow.hour * 60 + localNow.minute
+        } else 8 * 60
+        val targetPx = with(density) { (hourWidth * (targetMinutes / 60f)).roundToPx() }
+        coroutineScope.launch {
+            horizontalState.animateScrollTo((targetPx - timelineViewportPx / 2).coerceIn(0, horizontalState.maxValue))
         }
     }
 
@@ -1333,15 +1386,29 @@ private fun ProgrammeGuideScreen(
                 Box(Modifier.size(1.dp).testTag("epg_ready"))
             }
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
                 }
                 Spacer(Modifier.width(8.dp))
-                Text(strings.programmeGuide, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Column {
+                    Text(strings.programmeGuide, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${visibleChannels.size} ${strings.channelList.lowercase()}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
                 Spacer(Modifier.weight(1f))
+                IconButton(onClick = { isSearchExpanded = !isSearchExpanded }) {
+                    Icon(
+                        if (isSearchExpanded) Icons.Default.Close else Icons.Default.Search,
+                        contentDescription = strings.search,
+                        tint = if (isSearchExpanded || searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
                 IconButton(
                     onClick = { timelineZoomIndex = (timelineZoomIndex - 1).coerceAtLeast(0) },
                     enabled = timelineZoomIndex > 0
@@ -1357,15 +1424,41 @@ private fun ProgrammeGuideScreen(
                 FilledTonalButton(onClick = {
                     selectedDate = today
                     selectedProgramme = null
+                    scrollToNow()
                 }) {
                     Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(7.dp))
                     Text(strings.now)
                 }
             }
+
+            AnimatedVisibility(
+                visible = isSearchExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(strings.searchEpg) },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = null)
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+            }
+
             LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 items(dates, key = { it.toString() }) { date ->
                     FilterChip(
@@ -1382,39 +1475,104 @@ private fun ProgrammeGuideScreen(
                         }
                     )
                 }
+
+                item {
+                    VerticalDivider(modifier = Modifier.height(24.dp).padding(horizontal = 4.dp))
+                }
+
+                item {
+                    FilterChip(
+                        selected = selectedGroup == allGroup,
+                        onClick = { selectedGroup = allGroup },
+                        label = { Text("${strings.allChannels} (${playlist.channels.size})") }
+                    )
+                }
+
+                if (favoriteChannels.isNotEmpty()) {
+                    item {
+                        FilterChip(
+                            selected = selectedGroup == favoritesGroup,
+                            onClick = { selectedGroup = favoritesGroup },
+                            label = { Text("$favoritesGroup (${favoriteChannels.size})") }
+                        )
+                    }
+                }
+
+                items(categories, key = { "guide-cat-$it" }) { category ->
+                    FilterChip(
+                        selected = selectedGroup == category,
+                        onClick = { selectedGroup = category },
+                        label = { Text(category) }
+                    )
+                }
             }
-            Spacer(Modifier.height(8.dp))
+
+            Spacer(Modifier.height(4.dp))
             HorizontalDivider()
+
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.width(channelWidth).fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
                     Box(
                         Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 14.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        Text(strings.channelList, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${strings.channelList} (${visibleChannels.size})",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
                     }
                     HorizontalDivider()
                     LazyColumn(
                         state = channelState,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(playlist.channels, key = { "epg-channel-${it.position}:${it.streamUrl}" }) { channel ->
+                        items(visibleChannels, key = { "epg-channel-${it.position}:${it.streamUrl}" }) { channel ->
+                            val isFav = channel.libraryId()?.let(favoriteChannelIds::contains) == true
                             Surface(
                                 onClick = { onWatchChannel(channel) },
                                 color = MaterialTheme.colorScheme.surface,
                                 modifier = Modifier.fillMaxWidth().height(rowHeight)
                             ) {
                                 Row(
-                                    Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+                                    Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     ChannelLogo(
                                         channel = channel,
                                         epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
-                                        modifier = Modifier.size(42.dp)
+                                        modifier = Modifier.size(38.dp)
                                     )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        if (channel.position > 0) {
+                                            Text(
+                                                "${channel.position}.",
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                        Text(
+                                            channel.name,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { onToggleFavorite(channel) },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
                                 }
                             }
                             HorizontalDivider()
@@ -1454,7 +1612,7 @@ private fun ProgrammeGuideScreen(
                             state = programmeState,
                             modifier = Modifier.width(timelineWidth).weight(1f).testTag("epg_grid")
                         ) {
-                            items(playlist.channels, key = { "epg-row-${it.position}:${it.streamUrl}" }) { channel ->
+                            items(visibleChannels, key = { "epg-row-${it.position}:${it.streamUrl}" }) { channel ->
                                 val allProgrammeBlocks = guideBlocksByChannel[channel].orEmpty()
                                 val programmeBlocks = remember(allProgrammeBlocks, visibleTimelineMinutes) {
                                     val (visibleStart, visibleEnd) = visibleTimelineMinutes
@@ -1476,25 +1634,47 @@ private fun ProgrammeGuideScreen(
                                         val blockWidth = hourWidth * (block.durationMinutes / 60f) - 2.dp
                                         val isCurrent = now.toEpochMilli() in block.adjustedStartMillis until block.adjustedStopMillis
                                         val isSelected = selectedProgramme?.first == channel && selectedProgramme?.second == block.programme
+                                        val isQueryMatch = searchQuery.isNotBlank() && (
+                                            block.programme.title.contains(searchQuery.trim(), ignoreCase = true) ||
+                                            block.programme.description?.contains(searchQuery.trim(), ignoreCase = true) == true
+                                        )
                                         key(block.adjustedStartMillis, block.adjustedStopMillis, block.programme.title) {
                                             Surface(
-                                            onClick = {
-                                                selectedProgramme = channel to block.programme
-                                            },
-                                            shape = RoundedCornerShape(5.dp),
-                                            color = when {
-                                                isSelected -> MaterialTheme.colorScheme.primaryContainer
-                                                isCurrent -> MaterialTheme.colorScheme.primary.copy(alpha = .22f)
-                                                else -> MaterialTheme.colorScheme.surfaceVariant
-                                            },
-                                            modifier = Modifier
-                                                .offset(x = hourWidth * (block.startMinutes / 60f), y = 5.dp)
-                                                .width(blockWidth)
-                                                .height(rowHeight - 10.dp)
+                                                onClick = {
+                                                    selectedProgramme = channel to block.programme
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = when {
+                                                    isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                                    isQueryMatch -> MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                                                    isCurrent -> MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                                },
+                                                border = if (isSelected || isQueryMatch) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                                modifier = Modifier
+                                                    .offset(x = hourWidth * (block.startMinutes / 60f), y = 5.dp)
+                                                    .width(blockWidth)
+                                                    .height(rowHeight - 10.dp)
                                             ) {
                                                 if (blockWidth >= 42.dp) {
-                                                    Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-                                                        Text(block.programme.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            if (isCurrent) {
+                                                                Box(
+                                                                    Modifier
+                                                                        .size(6.dp)
+                                                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                                                )
+                                                                Spacer(Modifier.width(4.dp))
+                                                            }
+                                                            Text(
+                                                                block.programme.title,
+                                                                fontWeight = if (isSelected || isCurrent || isQueryMatch) FontWeight.Bold else FontWeight.SemiBold,
+                                                                fontSize = 13.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
                                                         if (blockWidth >= 72.dp) {
                                                             Text(
                                                                 block.timeLabel,
@@ -1532,27 +1712,99 @@ private fun ProgrammeGuideScreen(
                 }
             }
             selectedProgramme?.let { (channel, programme) ->
+                val adjustedStart = programme.startEpochMilli + shiftMillis
+                val adjustedStop = (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis
+                val isLiveNow = now.toEpochMilli() in adjustedStart until adjustedStop
+                val programmeProgress = if (isLiveNow && adjustedStop > adjustedStart) {
+                    ((now.toEpochMilli() - adjustedStart).toFloat() / (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                } else null
+
                 HorizontalDivider()
-                Surface(color = MaterialTheme.colorScheme.surface) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 12.dp)
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(programme.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                "${channel.name} · ${formatProgrammeTime(Instant.ofEpochMilli(programme.startEpochMilli + shiftMillis))}–${formatProgrammeTime(Instant.ofEpochMilli((programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis))}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ChannelLogo(
+                                channel = channel,
+                                epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
+                                modifier = Modifier.size(44.dp)
                             )
-                            programme.description?.let {
-                                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (isLiveNow) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        ) {
+                                            Text(
+                                                strings.liveBadge,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        programme.title,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "${channel.name} · ${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Button(
+                                onClick = { onWatchChannel(channel) }
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isLiveNow) strings.watchNow else strings.watchLiveChannel)
                             }
                         }
-                        Spacer(Modifier.width(16.dp))
-                        Button(onClick = { onWatchChannel(channel) }) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Text(if (selectedCurrent) strings.watchNow else strings.watchLiveChannel)
+
+                        if (programmeProgress != null) {
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { programmeProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        }
+
+                        programme.description?.let { desc ->
+                            if (desc.isNotBlank()) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    desc,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -3618,6 +3870,10 @@ private fun ChannelBrowser(
             playlist = playlist,
             epgGuide = epgGuide,
             epgTimeShiftHours = epgTimeShiftHours,
+            favoriteChannelIds = favoriteChannelIds,
+            onToggleFavorite = onToggleFavorite,
+            categoryOrder = categoryOrder,
+            hiddenCategories = hiddenCategories,
             onBack = { showProgrammeGuide = false },
             onWatchChannel = { channel ->
                 selectChannel(channel)

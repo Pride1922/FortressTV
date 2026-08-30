@@ -111,6 +111,8 @@ interface Strings {
     val manageCategories: String
     val changeCategory: String
     val selectCategory: String
+    val searchEpg: String
+    val liveBadge: String
     val hideCategory: String
     val showCategory: String
     val showAllCategories: String
@@ -340,6 +342,8 @@ object EnglishStrings : Strings {
     override val manageCategories = "Manage categories"
     override val changeCategory = "Change Category"
     override val selectCategory = "Select Category"
+    override val searchEpg = "Search channel or programme"
+    override val liveBadge = "LIVE"
     override val hideCategory = "Hide category"
     override val showCategory = "Show category"
     override val showAllCategories = "Show all"
@@ -570,6 +574,8 @@ object PortugueseStrings : Strings {
     override val manageCategories = "Gerir categorias"
     override val changeCategory = "Mudar categoria"
     override val selectCategory = "Selecionar categoria"
+    override val searchEpg = "Pesquisar canal ou programa"
+    override val liveBadge = "DIRETO"
     override val hideCategory = "Ocultar categoria"
     override val showCategory = "Mostrar categoria"
     override val showAllCategories = "Mostrar todas"
