@@ -33,6 +33,11 @@ a real multi-day EPG before release.
 - Add a Macrobenchmark/profileable build and record frame timing for the channel list,
   fullscreen drawer, programme guide, and guide day changes.
 
+## Measurement
+
+The `macrobenchmark` module measures cold/warm startup and frame timing for channel and EPG
+scrolling on the physical tablet. See `macrobenchmark/README.md` for prerequisites and commands.
+
 ## Release check
 
 Before publishing, test fast vertical flings with EPG and logos loaded, open and scroll the

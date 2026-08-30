@@ -83,6 +83,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -915,7 +918,10 @@ private fun ProgrammeGuideScreen(
         }
     }
 
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Surface(
+        Modifier.fillMaxSize().semantics { testTagsAsResourceId = true },
+        color = MaterialTheme.colorScheme.background
+    ) {
         Column(Modifier.fillMaxSize().systemBarsPadding()) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -1036,7 +1042,7 @@ private fun ProgrammeGuideScreen(
                         HorizontalDivider()
                         LazyColumn(
                             state = programmeState,
-                            modifier = Modifier.width(timelineWidth).weight(1f)
+                            modifier = Modifier.width(timelineWidth).weight(1f).testTag("epg_grid")
                         ) {
                             items(playlist.channels, key = { "epg-row-${it.position}:${it.streamUrl}" }) { channel ->
                                 val allProgrammeBlocks = guideBlocksByChannel[channel].orEmpty()
@@ -1406,7 +1412,8 @@ private fun ChannelBrowser(
                     }
                     FilledTonalIconButton(
                         onClick = { showProgrammeGuide = true },
-                        enabled = epgGuide != null
+                        enabled = epgGuide != null,
+                        modifier = Modifier.testTag("programme_guide_button")
                     ) {
                         Icon(Icons.Default.DateRange, contentDescription = strings.programmeGuide)
                     }
@@ -1466,7 +1473,7 @@ private fun ChannelBrowser(
                         Spacer(Modifier.height(4.dp))
                         LazyColumn(
                             state = channelListState,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("channel_list"),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             items(
@@ -1495,7 +1502,7 @@ private fun ChannelBrowser(
                 } else {
                     LazyColumn(
                         state = channelListState,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        modifier = Modifier.weight(1f).fillMaxWidth().testTag("channel_list"),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         items(
@@ -1525,7 +1532,8 @@ private fun ChannelBrowser(
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = channelListState,
-                        modifier = if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(channelPaneWidth).fillMaxHeight(),
+                        modifier = (if (selectedChannel == null) Modifier.fillMaxSize() else Modifier.width(channelPaneWidth).fillMaxHeight())
+                            .testTag("channel_list"),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(
