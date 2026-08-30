@@ -16,13 +16,15 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import javax.net.ssl.SSLException
 
 class XtreamClient(
     private val context: Context? = null,
     private val sourceId: String,
     private val source: ContentSource.Xtream
 ) {
-    private val baseUrl = normalizeServerUrl(source.value)
+    @Volatile
+    private var baseUrl = normalizeServerUrl(source.value)
 
     suspend fun authenticate() {
         val root = JSONObject(request(null))
@@ -103,26 +105,41 @@ class XtreamClient(
             if (action != null) parameters["action"] = action
             parameters.putAll(extra)
             val query = parameters.entries.joinToString("&") { "${query(it.key)}=${query(it.value)}" }
-            val connection = URI("$baseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 45_000
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "FortressTV")
-            try {
-                val code = connection.responseCode
-                if (code !in 200..299) throw HttpStatusException(code)
-                connection.inputStream.bufferedReader().use { it.readText() }.also { response ->
-                    if (cacheFile != null) {
-                        val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
-                        val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
-                        temp.writeText(sanitizedResponse)
-                        if (cacheFile.exists()) cacheFile.delete()
-                        temp.renameTo(cacheFile)
+
+            fun executeConnection(targetBaseUrl: String): String {
+                val connection = URI("$targetBaseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 45_000
+                connection.instanceFollowRedirects = true
+                connection.setRequestProperty("Accept", "application/json")
+                connection.setRequestProperty("User-Agent", "FortressTV")
+                return try {
+                    val code = connection.responseCode
+                    if (code !in 200..299) throw HttpStatusException(code)
+                    connection.inputStream.bufferedReader().use { it.readText() }.also { response ->
+                        if (cacheFile != null) {
+                            val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
+                            val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
+                            temp.writeText(sanitizedResponse)
+                            if (cacheFile.exists()) cacheFile.delete()
+                            temp.renameTo(cacheFile)
+                        }
                     }
+                } finally {
+                    connection.disconnect()
                 }
-            } finally {
-                connection.disconnect()
+            }
+
+            try {
+                executeConnection(baseUrl)
+            } catch (e: SSLException) {
+                if (baseUrl.startsWith("https://", ignoreCase = true)) {
+                    val httpUrl = baseUrl.replaceFirst("https://", "http://", ignoreCase = true)
+                    baseUrl = httpUrl
+                    executeConnection(httpUrl)
+                } else {
+                    throw e
+                }
             }
         }
     }
@@ -304,12 +321,15 @@ class XtreamClient(
     companion object {
         fun normalizeServerUrl(value: String): String {
             val trimmed = value.trim().substringBefore('?').removeSuffix("/player_api.php").trimEnd('/')
-            val uri = URI(trimmed)
+            val withScheme = if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {
+                "http://$trimmed"
+            } else trimmed
+            val uri = URI(withScheme)
             require(uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
                 "Xtream server must use HTTP or HTTPS"
             }
             require(!uri.host.isNullOrBlank()) { "Enter a valid Xtream server URL" }
-            return trimmed
+            return withScheme
         }
     }
 }

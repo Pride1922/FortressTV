@@ -40,4 +40,27 @@ class UserLibraryIdentityTest {
         val noneLeft = sorted.firstOrNull { it.libraryId("source-1") !in allWatched }
         assertEquals(null, noneLeft)
     }
+
+    @Test
+    fun channelLibraryIdFormat() {
+        val channel = com.fortresstv.player.playlist.PlaylistChannel(
+            position = 0,
+            name = "Test HD",
+            streamUrl = "http://example.com/stream.m3u8",
+            tvgId = "test.hd",
+            sourceId = "src-1",
+            sourcePosition = 0,
+            sourceItemId = "123"
+        )
+        assertEquals("channel:src-1:123", channel.libraryId())
+    }
+
+    @Test
+    fun xtreamUrlNormalizationPrependsHttp() {
+        val normalized = com.fortresstv.player.xtream.XtreamClient.normalizeServerUrl("myiptv.domain.com:8080")
+        assertEquals("http://myiptv.domain.com:8080", normalized)
+
+        val alreadyHttps = com.fortresstv.player.xtream.XtreamClient.normalizeServerUrl("https://myiptv.domain.com:8080/player_api.php")
+        assertEquals("https://myiptv.domain.com:8080", alreadyHttps)
+    }
 }

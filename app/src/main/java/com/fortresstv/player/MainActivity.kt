@@ -19,6 +19,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.draw.scale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,6 +50,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.AspectRatio
@@ -57,7 +59,6 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MenuOpen
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Add
@@ -328,6 +329,7 @@ private fun FortressTVApp() {
     val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
     val xtreamCatalogs = remember { mutableStateMapOf<String, XtreamCatalog>() }
     var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
+    var recentChannelIds by remember { mutableStateOf(userLibrary.recentChannelIds()) }
     var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
     var followedSeriesIds by remember { mutableStateOf(userLibrary.followedSeriesIds()) }
     var watchedItemIds by remember { mutableStateOf(userLibrary.watchedItemIds()) }
@@ -1019,6 +1021,10 @@ private fun FortressTVApp() {
                 error = error,
                 onRetryLoad = retryLoad,
                 favoriteChannelIds = favoriteChannelIds,
+                recentChannelIds = recentChannelIds,
+                onRecordChannelWatched = { channel ->
+                    recentChannelIds = userLibrary.recordChannelWatched(channel)
+                },
                 movieWatchlistIds = movieWatchlistIds,
                 followedSeriesIds = followedSeriesIds,
                 watchedItemIds = watchedItemIds,
@@ -1327,9 +1333,7 @@ private fun ProgrammeGuideScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
                 }
                 Spacer(Modifier.width(8.dp))
-                ShieldMark(Modifier.size(38.dp))
-                Spacer(Modifier.width(10.dp))
-                Text(strings.programmeGuide, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text(strings.programmeGuide, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = { timelineZoomIndex = (timelineZoomIndex - 1).coerceAtLeast(0) },
@@ -1595,6 +1599,8 @@ private fun FortressLibrary(
     loading: Boolean,
     error: String?,
     favoriteChannelIds: Set<String>,
+    recentChannelIds: List<String>,
+    onRecordChannelWatched: (PlaylistChannel) -> Unit,
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
@@ -1674,6 +1680,8 @@ private fun FortressLibrary(
                     error = error,
                     onRetryLoad = onRetryLoad,
                     favoriteChannelIds = favoriteChannelIds,
+                    recentChannelIds = recentChannelIds,
+                    onRecordChannelWatched = onRecordChannelWatched,
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,
                     onRequestedChannelHandled = { requestedChannel = null },
@@ -1857,22 +1865,17 @@ private fun GlobalLibrarySidebar(
         ) {
             if (expanded) {
                 Row(
-                    Modifier.fillMaxWidth().height(52.dp),
+                    Modifier.fillMaxWidth().height(48.dp).padding(start = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ShieldMark(Modifier.size(40.dp))
-                    Spacer(Modifier.width(10.dp))
                     Text(strings.appName, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onToggleExpanded) {
-                        Icon(Icons.Default.MenuOpen, contentDescription = strings.collapseSidebar)
+                        Icon(Icons.AutoMirrored.Filled.MenuOpen, contentDescription = strings.collapseSidebar)
                     }
                 }
             } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    ShieldMark(Modifier.size(38.dp))
-                    IconButton(onClick = onToggleExpanded, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.Menu, contentDescription = strings.expandSidebar, modifier = Modifier.size(20.dp))
-                    }
+                IconButton(onClick = onToggleExpanded, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Menu, contentDescription = strings.expandSidebar)
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -3314,6 +3317,8 @@ private fun ChannelBrowser(
     error: String?,
     onRetryLoad: (() -> Unit)?,
     favoriteChannelIds: Set<String>,
+    recentChannelIds: List<String> = emptyList(),
+    onRecordChannelWatched: (PlaylistChannel) -> Unit = {},
     onToggleFavorite: (PlaylistChannel) -> Unit,
     requestedChannel: PlaylistChannel?,
     onRequestedChannelHandled: () -> Unit,
@@ -3326,6 +3331,7 @@ private fun ChannelBrowser(
     val channelPaneWidth = if (isCompact) 280.dp else 430.dp
 
     val allFilter = "all"
+    val recentFilter = "recent"
     val uncategorizedFilter = "group:"
     var isSidebarExpanded by remember { mutableStateOf(false) }
     var sidebarInteractionCount by remember { mutableLongStateOf(0L) }
@@ -3344,6 +3350,7 @@ private fun ChannelBrowser(
     fun selectChannel(channel: PlaylistChannel) {
         selectedChannel = channel
         isSidebarExpanded = false
+        onRecordChannelWatched(channel)
     }
     LaunchedEffect(requestedChannel) {
         requestedChannel?.let {
@@ -3364,8 +3371,13 @@ private fun ChannelBrowser(
     val sourceCounts = remember(playlist) {
         playlist.channels.groupingBy { it.sourceId }.eachCount()
     }
+    val recentChannels = remember(playlist, recentChannelIds) {
+        val channelMap = playlist.channels.associateBy { it.libraryId() }
+        recentChannelIds.mapNotNull { channelMap[it] }
+    }
     val selectedFilterLabel = when {
         selectedFilter == allFilter -> strings.allChannels
+        selectedFilter == recentFilter -> strings.recentlyWatched
         selectedFilter.startsWith("source:") -> enabledSources
             .firstOrNull { it.id == selectedFilter.removePrefix("source:") }
             ?.name ?: strings.sources
@@ -3373,9 +3385,10 @@ private fun ChannelBrowser(
         selectedFilter.startsWith("group:") -> selectedFilter.removePrefix("group:")
         else -> strings.allChannels
     }
-    val channelsInGroup = remember(playlist, selectedFilter) {
+    val channelsInGroup = remember(playlist, selectedFilter, recentChannels) {
         when {
             selectedFilter == allFilter -> playlist.channels
+            selectedFilter == recentFilter -> recentChannels
             selectedFilter.startsWith("source:") -> {
                 val sourceId = selectedFilter.removePrefix("source:")
                 playlist.channels.filter { it.sourceId == sourceId }
@@ -3449,7 +3462,7 @@ private fun ChannelBrowser(
                 ) {
                     Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = { isSidebarExpanded = false }) {
-                        Icon(Icons.Default.MenuOpen, contentDescription = strings.hideChannelFilters)
+                        Icon(Icons.AutoMirrored.Filled.MenuOpen, contentDescription = strings.hideChannelFilters)
                     }
                 }
                 Spacer(Modifier.height(14.dp))
@@ -3508,6 +3521,16 @@ private fun ChannelBrowser(
                             selected = selectedFilter == allFilter,
                             onClick = { selectedFilter = allFilter }
                         )
+                    }
+                    if (recentChannels.isNotEmpty()) {
+                        item {
+                            GroupItem(
+                                name = strings.recentlyWatched,
+                                count = recentChannels.size,
+                                selected = selectedFilter == recentFilter,
+                                onClick = { selectedFilter = recentFilter }
+                            )
+                        }
                     }
                     if (enabledSourceCount > 1) {
                         item {
@@ -4889,98 +4912,349 @@ private fun SettingsDialog(
 ) {
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
-    val isCompact = configuration.screenWidthDp < 600
+    val isTwoPane = configuration.screenWidthDp >= 640
 
     var selectedTab by remember { mutableIntStateOf(initialTab) }
-    val tabTitles = listOf(strings.tabGeneral, strings.tabPlaylists, strings.tabEpg, strings.tabAbout)
+    val tabItems = listOf(
+        Pair(strings.tabGeneral, Icons.Default.Settings),
+        Pair(strings.tabPlaylists, Icons.Default.FolderOpen),
+        Pair(strings.tabEpg, Icons.Default.DateRange),
+        Pair(strings.tabAbout, Icons.Default.Info)
+    )
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            shape = RoundedCornerShape(if (isCompact) 18.dp else 24.dp),
+            shape = RoundedCornerShape(if (isTwoPane) 20.dp else 16.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
-            modifier = Modifier
-                .widthIn(max = 780.dp)
-                .fillMaxWidth(if (isCompact) 0.95f else 0.82f)
-                .fillMaxHeight(if (isCompact) 0.92f else 0.88f)
-                .padding(if (isCompact) 8.dp else 16.dp)
+            modifier = if (isTwoPane) {
+                Modifier
+                    .fillMaxWidth(0.88f)
+                    .widthIn(max = 940.dp)
+                    .fillMaxHeight(0.85f)
+                    .heightIn(max = 640.dp)
+                    .padding(16.dp)
+            } else {
+                Modifier
+                    .fillMaxWidth(0.96f)
+                    .fillMaxHeight(0.94f)
+                    .padding(6.dp)
+            }
         ) {
-            Column(Modifier.fillMaxSize().padding(if (isCompact) 14.dp else 24.dp)) {
+            Column(Modifier.fillMaxSize().padding(if (isTwoPane) 18.dp else 12.dp)) {
+                // Header
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(strings.settingsTitle, fontSize = if (isCompact) 20.sp else 24.sp, fontWeight = FontWeight.Bold)
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = strings.close)
+                    Text(strings.settingsTitle, fontSize = if (isTwoPane) 20.sp else 18.sp, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = strings.close, modifier = Modifier.size(20.dp))
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                if (isTwoPane) {
+                    Row(Modifier.fillMaxSize()) {
+                        // Left Navigation Rail
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            modifier = Modifier.width(180.dp).fillMaxHeight()
+                        ) {
+                            Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                tabItems.forEachIndexed { index, (title, icon) ->
+                                    val isSelected = selectedTab == index
+                                    Surface(
+                                        onClick = { selectedTab = index },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+                                        contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                icon,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(title, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
-                TabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.clip(RoundedCornerShape(12.dp))
-                ) {
-                    tabTitles.forEachIndexed { index, title ->
-                        Tab(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            text = { Text(title, fontSize = if (isCompact) 12.sp else 14.sp, fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal) }
-                        )
+                        // Right Content Pane
+                        Box(Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp)) {
+                            when (selectedTab) {
+                                0 -> GeneralTab(
+                                    appLanguage = appLanguage,
+                                    onLanguageChanged = onLanguageChanged,
+                                    playChannelsFullscreen = playChannelsFullscreen,
+                                    onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
+                                    autoPictureInPicture = autoPictureInPicture,
+                                    onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    hideAdultContent = hideAdultContent,
+                                    onHideAdultContentChanged = onHideAdultContentChanged
+                                )
+                                1 -> PlaylistsTab(
+                                    playlists = playlists,
+                                    activeProfile = activeProfile,
+                                    loading = loading,
+                                    onPlaylistEnabledChanged = onPlaylistEnabledChanged,
+                                    onSourceRoleChanged = onSourceRoleChanged,
+                                    onMoveSource = onMoveSource,
+                                    onRefreshPlaylist = onRefreshPlaylist,
+                                    onAddPlaylist = onAddPlaylist,
+                                    onEditPlaylist = onEditPlaylist,
+                                    onDeletePlaylist = onDeletePlaylist
+                                )
+                                2 -> EpgTab(
+                                    epgSource = epgSource,
+                                    epgSourceName = epgSourceName,
+                                    epgLastUpdate = epgLastUpdate,
+                                    epgTimeShiftHours = epgTimeShiftHours,
+                                    playlist = playlist,
+                                    epgGuide = epgGuide,
+                                    hideAdultContent = hideAdultContent,
+                                    loading = loading,
+                                    onEpgUrl = onEpgUrl,
+                                    onEpgFile = onEpgFile,
+                                    onRefreshEpg = onRefreshEpg,
+                                    onRemoveEpg = onRemoveEpg,
+                                    onEpgTimeShiftChanged = onEpgTimeShiftChanged
+                                )
+                                3 -> AboutTab()
+                            }
+                        }
                     }
-                }
+                } else {
+                    // Single pane compact top tabs
+                    PrimaryTabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                    ) {
+                        tabItems.forEachIndexed { index, (title, _) ->
+                            Tab(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                text = { Text(title, fontSize = 12.sp, fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal) }
+                            )
+                        }
+                    }
 
-                Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(10.dp))
 
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    when (selectedTab) {
-                        0 -> GeneralTab(
-                            appLanguage = appLanguage,
-                            onLanguageChanged = onLanguageChanged,
-                            playChannelsFullscreen = playChannelsFullscreen,
-                            onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
-                            autoPictureInPicture = autoPictureInPicture,
-                            onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
-                            hideAdultContent = hideAdultContent,
-                            onHideAdultContentChanged = onHideAdultContentChanged
-                        )
-                        1 -> PlaylistsTab(
-                            playlists = playlists,
-                            activeProfile = activeProfile,
-                            loading = loading,
-                            onPlaylistEnabledChanged = onPlaylistEnabledChanged,
-                            onSourceRoleChanged = onSourceRoleChanged,
-                            onMoveSource = onMoveSource,
-                            onRefreshPlaylist = onRefreshPlaylist,
-                            onAddPlaylist = onAddPlaylist,
-                            onEditPlaylist = onEditPlaylist,
-                            onDeletePlaylist = onDeletePlaylist
-                        )
-                        2 -> EpgTab(
-                            epgSource = epgSource,
-                            epgSourceName = epgSourceName,
-                            epgLastUpdate = epgLastUpdate,
-                            epgTimeShiftHours = epgTimeShiftHours,
-                            playlist = playlist,
-                            epgGuide = epgGuide,
-                            hideAdultContent = hideAdultContent,
-                            loading = loading,
-                            onEpgUrl = onEpgUrl,
-                            onEpgFile = onEpgFile,
-                            onRefreshEpg = onRefreshEpg,
-                            onRemoveEpg = onRemoveEpg,
-                            onEpgTimeShiftChanged = onEpgTimeShiftChanged
-                        )
-                        3 -> AboutTab()
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        when (selectedTab) {
+                            0 -> GeneralTab(
+                                appLanguage = appLanguage,
+                                onLanguageChanged = onLanguageChanged,
+                                playChannelsFullscreen = playChannelsFullscreen,
+                                onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
+                                autoPictureInPicture = autoPictureInPicture,
+                                onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                hideAdultContent = hideAdultContent,
+                                onHideAdultContentChanged = onHideAdultContentChanged
+                            )
+                            1 -> PlaylistsTab(
+                                playlists = playlists,
+                                activeProfile = activeProfile,
+                                loading = loading,
+                                onPlaylistEnabledChanged = onPlaylistEnabledChanged,
+                                onSourceRoleChanged = onSourceRoleChanged,
+                                onMoveSource = onMoveSource,
+                                onRefreshPlaylist = onRefreshPlaylist,
+                                onAddPlaylist = onAddPlaylist,
+                                onEditPlaylist = onEditPlaylist,
+                                onDeletePlaylist = onDeletePlaylist
+                            )
+                            2 -> EpgTab(
+                                epgSource = epgSource,
+                                epgSourceName = epgSourceName,
+                                epgLastUpdate = epgLastUpdate,
+                                epgTimeShiftHours = epgTimeShiftHours,
+                                playlist = playlist,
+                                epgGuide = epgGuide,
+                                hideAdultContent = hideAdultContent,
+                                loading = loading,
+                                onEpgUrl = onEpgUrl,
+                                onEpgFile = onEpgFile,
+                                onRefreshEpg = onRefreshEpg,
+                                onRemoveEpg = onRemoveEpg,
+                                onEpgTimeShiftChanged = onEpgTimeShiftChanged
+                            )
+                            3 -> AboutTab()
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SettingsGroup(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            title,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier.padding(start = 2.dp)
+        )
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    subtitle: String,
+    icon: ImageVector? = null,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.scale(0.8f)
+        )
+    }
+}
+
+@Composable
+private fun GeneralTab(
+    appLanguage: AppLanguage,
+    onLanguageChanged: (AppLanguage) -> Unit,
+    playChannelsFullscreen: Boolean,
+    onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
+    autoPictureInPicture: Boolean,
+    onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    hideAdultContent: Boolean,
+    onHideAdultContentChanged: (Boolean) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Language Group
+        SettingsGroup(title = strings.language) {
+            Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppLanguage.entries.forEach { lang ->
+                    val isSelected = lang == appLanguage
+                    Surface(
+                        onClick = { onLanguageChanged(lang) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.weight(1f).height(40.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(lang.flag, fontSize = 16.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                lang.displayName,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 12.sp,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (isSelected) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Playback Group
+        SettingsGroup(title = strings.playback) {
+            SettingsToggleRow(
+                title = strings.playChannelsFullscreen,
+                subtitle = strings.playChannelsFullscreenDesc,
+                icon = Icons.Default.Fullscreen,
+                checked = playChannelsFullscreen,
+                onCheckedChange = onPlayChannelsFullscreenChanged
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            SettingsToggleRow(
+                title = strings.autoPictureInPicture,
+                subtitle = strings.autoPictureInPictureDesc,
+                icon = Icons.Default.AspectRatio,
+                checked = autoPictureInPicture,
+                onCheckedChange = onAutoPictureInPictureChanged
+            )
+        }
+
+        // Content Filter Group
+        SettingsGroup(title = strings.categories) {
+            SettingsToggleRow(
+                title = strings.hideAdultContent,
+                subtitle = strings.hideAdultContentSubtitle,
+                icon = Icons.Default.VisibilityOff,
+                checked = hideAdultContent,
+                onCheckedChange = onHideAdultContentChanged
+            )
         }
     }
 }
@@ -5001,216 +5275,161 @@ private fun PlaylistsTab(
     val strings = LocalAppStrings.current
     Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "${playlists.size} ${if (playlists.size == 1) "Playlist" else "Playlists"}",
+                "${playlists.size} ${if (playlists.size == 1) strings.sources else strings.sources}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp
             )
-            Button(onClick = onAddPlaylist, enabled = !loading) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(strings.addPlaylist)
+            Button(
+                onClick = onAddPlaylist,
+                enabled = !loading,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.height(34.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(strings.addPlaylist, fontSize = 12.sp)
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-
         if (playlists.isEmpty()) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
                         Icons.Default.FolderOpen,
                         contentDescription = null,
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(36.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Text("No playlists configured", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("No sources configured", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("Add your M3U / M3U8 URL or local file to get started.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    Text("Add your M3U / M3U8 URL or Xtream Codes server to get started.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
             }
         } else {
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(playlists.sortedBy { it.order }, key = { it.id }) { item ->
+                val orderedSources = playlists.sortedBy { it.order }
+                items(orderedSources, key = { it.id }) { item ->
                     val isActive = item.enabled
-                    val orderedSources = playlists.sortedBy { it.order }
                     val sourceIndex = orderedSources.indexOfFirst { it.id == item.id }
-                    val configuration = LocalConfiguration.current
-                    val isCompact = configuration.screenWidthDp < 600
 
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = if (isActive) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
-                        else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        border = if (isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (isCompact) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        if (item.source is ContentSource.LocalFile) Icons.Default.FolderOpen else Icons.Default.Link,
-                                        contentDescription = null,
-                                        tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(item.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            if (isActive) {
-                                                Spacer(Modifier.width(6.dp))
-                                                Surface(
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                                ) {
-                                                    Text(
-                                                        strings.enabledSource.uppercase(),
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Text(
-                                            "${if (item.channelCount > 0) "${strings.channelsCount(item.channelCount)} · " else ""}${formatLastUpdated(item.lastUpdated)}",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        SourceRoleSelector(
-                                            role = item.role,
-                                            enabled = !loading,
-                                            onRoleChanged = { onSourceRoleChanged(item, it) }
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                    verticalAlignment = Alignment.CenterVertically
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                                IconButton(
+                                    onClick = { onMoveSource(item, -1) },
+                                    enabled = !loading && sourceIndex > 0,
+                                    modifier = Modifier.size(22.dp)
                                 ) {
-                                    Switch(
-                                        checked = item.enabled,
-                                        onCheckedChange = { onPlaylistEnabledChanged(item, it) },
-                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    IconButton(
-                                        onClick = { onMoveSource(item, -1) },
-                                        enabled = !loading && sourceIndex > 0,
-                                        modifier = Modifier.size(34.dp)
-                                    ) { Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(18.dp)) }
-                                    IconButton(
-                                        onClick = { onMoveSource(item, 1) },
-                                        enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
-                                        modifier = Modifier.size(34.dp)
-                                    ) { Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(18.dp)) }
-                                    if (item.source !is ContentSource.LocalFile) {
-                                        IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
-                                            Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(18.dp))
-                                        }
-                                    }
-                                    IconButton(onClick = { onEditPlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
-                                        Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist, modifier = Modifier.size(18.dp))
-                                    }
-                                    IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
-                                        Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                                    }
+                                    Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(14.dp))
+                                }
+                                IconButton(
+                                    onClick = { onMoveSource(item, 1) },
+                                    enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(14.dp))
                                 }
                             }
-                        } else {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    if (item.source is ContentSource.LocalFile) Icons.Default.FolderOpen else Icons.Default.Link,
-                                    contentDescription = null,
-                                    tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(Modifier.width(14.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(item.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        if (isActive) {
-                                            Spacer(Modifier.width(8.dp))
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                contentColor = MaterialTheme.colorScheme.onPrimary
-                                            ) {
-                                                Text(
-                                                    strings.enabledSource.uppercase(),
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Spacer(Modifier.height(2.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                when (item.source) {
+                                    is ContentSource.LocalFile -> Icons.Default.FolderOpen
+                                    is ContentSource.RemoteUrl -> Icons.Default.Link
+                                    is ContentSource.Xtream -> Icons.Default.LiveTv
+                                },
+                                contentDescription = null,
+                                tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        "${if (item.channelCount > 0) "${strings.channelsCount(item.channelCount)} · " else ""}${formatLastUpdated(item.lastUpdated)}",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        item.source.value,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        item.name,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    Spacer(Modifier.width(6.dp))
                                     SourceRoleSelector(
                                         role = item.role,
                                         enabled = !loading,
                                         onRoleChanged = { onSourceRoleChanged(item, it) }
                                     )
                                 }
-                                Spacer(Modifier.width(10.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Switch(
-                                        checked = item.enabled,
-                                        onCheckedChange = { onPlaylistEnabledChanged(item, it) },
-                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (item.channelCount > 0) {
+                                        Text(
+                                            "${strings.channelsCount(item.channelCount)} · ",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(
+                                        formatLastUpdated(item.lastUpdated),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    IconButton(onClick = { onMoveSource(item, -1) }, enabled = !loading && sourceIndex > 0) {
-                                        Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp)
+                                }
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Switch(
+                                    checked = item.enabled,
+                                    onCheckedChange = { onPlaylistEnabledChanged(item, it) },
+                                    enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
+                                    modifier = Modifier.scale(0.75f)
+                                )
+                                if (item.source !is ContentSource.LocalFile) {
+                                    IconButton(
+                                        onClick = { onRefreshPlaylist(item) },
+                                        enabled = !loading,
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(15.dp))
                                     }
-                                    IconButton(onClick = { onMoveSource(item, 1) }, enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex) {
-                                        Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown)
-                                    }
-                                    if (item.source !is ContentSource.LocalFile) {
-                                        IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading) {
-                                            Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist)
-                                        }
-                                    }
-                                    IconButton(onClick = { onEditPlaylist(item) }, enabled = !loading) {
-                                        Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist)
-                                    }
-                                    IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading) {
-                                        Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error)
-                                    }
+                                }
+                                IconButton(
+                                    onClick = { onEditPlaylist(item) },
+                                    enabled = !loading,
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist, modifier = Modifier.size(15.dp))
+                                }
+                                IconButton(
+                                    onClick = { onDeletePlaylist(item) },
+                                    enabled = !loading,
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(15.dp))
                                 }
                             }
                         }
@@ -5233,40 +5452,39 @@ private fun SourceRoleSelector(
         Surface(
             onClick = { expanded = true },
             enabled = enabled,
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-            modifier = Modifier.padding(top = 4.dp)
+            shape = RoundedCornerShape(4.dp),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
         ) {
             Row(
-                Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "${strings.sourceRole}: ${sourceRoleLabel(role, strings)}",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    sourceRoleLabel(role, strings),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(1.dp))
                 Icon(
                     Icons.Default.ArrowDropDown,
                     contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    modifier = Modifier.size(13.dp),
+                    tint = MaterialTheme.colorScheme.primary
                 )
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SourceRole.entries.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(sourceRoleLabel(option, strings)) },
+                    text = { Text(sourceRoleLabel(option, strings), fontSize = 12.sp) },
                     onClick = {
                         expanded = false
                         onRoleChanged(option)
                     },
                     trailingIcon = if (option == role) {
-                        { Icon(Icons.Default.Check, contentDescription = null) }
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
                     } else null
                 )
             }
@@ -5302,8 +5520,6 @@ private fun EpgTab(
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val configuration = LocalConfiguration.current
-    val isCompact = configuration.screenWidthDp < 600
 
     val effectiveChannels = remember(playlist, hideAdultContent) {
         if (playlist == null) emptyList()
@@ -5337,161 +5553,132 @@ private fun EpgTab(
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(strings.xmltvSource, fontSize = if (isCompact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Schedule listings and channel programme timelines.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp
-        )
-        Spacer(Modifier.height(12.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(if (isCompact) 14.dp else 16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        if (epgSource is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.DateRange,
-                        contentDescription = null,
-                        tint = if (epgSource != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // EPG Source
+        SettingsGroup(title = strings.xmltvSource) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (epgSource is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.DateRange,
+                    contentDescription = null,
+                    tint = if (epgSource != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        epgSourceName ?: strings.noEpgConfiguredMsg,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
+                    if (epgSource != null) {
                         Text(
-                            epgSourceName ?: strings.noEpgConfiguredMsg,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
+                            formatLastUpdated(epgLastUpdate),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
                         )
-                        if (epgSource != null) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                formatLastUpdated(epgLastUpdate),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                    if (epgSource is ContentSource.RemoteUrl) {
-                        IconButton(onClick = onRefreshEpg, enabled = !loading) {
-                            Icon(Icons.Default.Refresh, contentDescription = strings.refresh, tint = MaterialTheme.colorScheme.primary)
-                        }
                     }
                 }
-
-                Spacer(Modifier.height(14.dp))
-
-                if (isCompact) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Spacer(Modifier.width(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (epgSource is ContentSource.RemoteUrl) {
+                        IconButton(onClick = onRefreshEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Default.Refresh, contentDescription = strings.refresh, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = onEpgUrl,
+                        enabled = !loading,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onEpgUrl,
-                            enabled = !loading,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl, maxLines = 1, fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = onEpgFile,
-                            enabled = !loading,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile, maxLines = 1, fontSize = 12.sp)
-                        }
+                        Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl, fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = onEpgFile,
+                        enabled = !loading,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile, fontSize = 11.sp)
                     }
                     if (epgSource != null) {
-                        Spacer(Modifier.height(6.dp))
-                        TextButton(
-                            onClick = onRemoveEpg,
-                            enabled = !loading,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.removeEpg, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
-                        }
-                    }
-                } else {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedButton(onClick = onEpgUrl, enabled = !loading) {
-                            Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl)
-                        }
-                        OutlinedButton(onClick = onEpgFile, enabled = !loading) {
-                            Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile)
-                        }
-                        if (epgSource != null) {
-                            TextButton(onClick = onRemoveEpg, enabled = !loading) {
-                                Text(strings.removeEpg, color = MaterialTheme.colorScheme.error)
-                            }
+                        IconButton(onClick = onRemoveEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Default.Delete, contentDescription = strings.removeEpg, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                         }
                     }
                 }
             }
         }
 
+        // Channel Matching Status
         if (effectiveChannels.isNotEmpty()) {
-            Spacer(Modifier.height(14.dp))
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
-                        else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
-                border = BorderStroke(1.dp, if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
+            SettingsGroup(title = "EPG Matching") {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 if (epgGuide != null) strings.epgMatched(matchedCount, effectiveChannels.size) else strings.unmatchedEpgChannels,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
+                                fontSize = 13.sp,
                                 color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                if (epgGuide != null && unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (epgGuide != null && effectiveChannels.isNotEmpty()) {
+                                Spacer(Modifier.width(6.dp))
+                                val pct = (matchedCount * 100) / effectiveChannels.size
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = if (pct == 100) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                                ) {
+                                    Text(
+                                        "$pct%",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (pct == 100) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
                         }
-                        if (unmatchedChannels.isNotEmpty()) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedButton(
-                                    onClick = { saveFileLauncher.launch("channels_without_epg.txt") }
-                                ) {
-                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(strings.saveChannelsList, fontSize = 12.sp)
-                                }
-                                Button(
-                                    onClick = { showUnmatchedInSettings = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(strings.viewUnmatchedChannels, fontSize = 12.sp)
-                                }
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            if (epgGuide != null && unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (unmatchedChannels.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(
+                                onClick = { saveFileLauncher.launch("channels_without_epg.txt") },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.saveChannelsList, fontSize = 11.sp)
+                            }
+                            Button(
+                                onClick = { showUnmatchedInSettings = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.viewUnmatchedChannels, fontSize = 11.sp)
                             }
                         }
                     }
@@ -5507,169 +5694,61 @@ private fun EpgTab(
             }
         }
 
-        Spacer(Modifier.height(20.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(16.dp))
-
-        Text(strings.timeShift, fontSize = if (isCompact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            strings.timeShiftDesc,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp
-        )
-        Spacer(Modifier.height(12.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+        // Time Shift
+        SettingsGroup(title = strings.timeShift) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.timeShift, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(strings.timeShiftDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilledTonalButton(
                         onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
-                        enabled = epgTimeShiftHours > -23 && !loading
+                        enabled = epgTimeShiftHours > -23 && !loading,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Text("-1 h", fontWeight = FontWeight.Bold)
+                        Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
-
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.widthIn(min = 90.dp)
+                        modifier = Modifier.widthIn(min = 60.dp).height(32.dp)
                     ) {
-                        Box(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+                        Box(contentAlignment = Alignment.Center) {
                             val shiftDisplay = when {
                                 epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
                                 epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
                                 else -> "0 h"
                             }
-                            Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
-
                     FilledTonalButton(
                         onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
-                        enabled = epgTimeShiftHours < 23 && !loading
+                        enabled = epgTimeShiftHours < 23 && !loading,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Text("+1 h", fontWeight = FontWeight.Bold)
+                        Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
-                }
-
-                if (epgTimeShiftHours != 0) {
-                    Spacer(Modifier.height(6.dp))
-                    TextButton(
-                        onClick = { onEpgTimeShiftChanged(0) },
-                        enabled = !loading
-                    ) {
-                        Text(strings.retry)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GeneralTab(
-    appLanguage: AppLanguage,
-    onLanguageChanged: (AppLanguage) -> Unit,
-    playChannelsFullscreen: Boolean,
-    onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
-    autoPictureInPicture: Boolean,
-    onAutoPictureInPictureChanged: (Boolean) -> Unit,
-    hideAdultContent: Boolean,
-    onHideAdultContentChanged: (Boolean) -> Unit
-) {
-    val strings = LocalAppStrings.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(strings.language, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            AppLanguage.entries.forEach { lang ->
-                val isSelected = lang == appLanguage
-                Surface(
-                    onClick = { onLanguageChanged(lang) },
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    border = BorderStroke(
-                        if (isSelected) 1.5.dp else 1.dp,
-                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    ),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(lang.flag, fontSize = 22.sp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            lang.displayName,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (isSelected) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    if (epgTimeShiftHours != 0) {
+                        TextButton(
+                            onClick = { onEpgTimeShiftChanged(0) },
+                            enabled = !loading,
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text(strings.retry, fontSize = 11.sp)
                         }
                     }
                 }
             }
-        }
-
-        Spacer(Modifier.height(24.dp))
-        Text(strings.playback, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Spacer(Modifier.height(10.dp))
-        SettingsToggleCard(
-            title = strings.playChannelsFullscreen,
-            description = strings.playChannelsFullscreenDesc,
-            checked = playChannelsFullscreen,
-            onCheckedChange = onPlayChannelsFullscreenChanged
-        )
-        Spacer(Modifier.height(12.dp))
-        SettingsToggleCard(
-            title = strings.autoPictureInPicture,
-            description = strings.autoPictureInPictureDesc,
-            checked = autoPictureInPicture,
-            onCheckedChange = onAutoPictureInPictureChanged
-        )
-
-        Spacer(Modifier.height(24.dp))
-        SettingsToggleCard(
-            title = strings.hideAdultContent,
-            description = strings.hideAdultContentSubtitle,
-            checked = hideAdultContent,
-            onCheckedChange = onHideAdultContentChanged
-        )
-    }
-}
-
-@Composable
-private fun SettingsToggleCard(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-            }
-            Spacer(Modifier.width(16.dp))
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }
@@ -5723,139 +5802,121 @@ private fun AboutTab() {
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ShieldMark(Modifier.size(64.dp))
-            Spacer(Modifier.width(16.dp))
+            ShieldMark(Modifier.size(38.dp))
+            Spacer(Modifier.width(10.dp))
             Column {
-                Text(strings.appName, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                Text("Version ${BuildConfig.VERSION_NAME} · Pride1922", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Text(strings.appName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · Pride1922", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
         }
 
-        Spacer(Modifier.height(20.dp))
-
+        // Disclaimer Alert
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
                 Icon(
                     Icons.Default.Info,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(16.dp)
                 )
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(8.dp))
                 Column {
-                    Text(strings.contentDisclaimerTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Spacer(Modifier.height(6.dp))
+                    Text(strings.contentDisclaimerTitle, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         strings.contentDisclaimer,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        // Updates Card
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(16.dp)) {
+        // Updates Group
+        SettingsGroup(title = strings.checkForUpdates) {
+            Column(Modifier.padding(10.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(strings.checkForUpdates, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "Installed: v${BuildConfig.VERSION_NAME}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp
-                        )
+                        Text(strings.checkForUpdates, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text("Installed: v${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     }
                     if (!checkingUpdate && downloadProgress < 0f && updateInfo == null) {
-                        FilledTonalButton(onClick = ::doCheckForUpdates) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.checkForUpdates)
+                        FilledTonalButton(
+                            onClick = ::doCheckForUpdates,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(strings.checkForUpdates, fontSize = 11.sp)
                         }
                     }
                 }
 
                 if (checkingUpdate) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(strings.checkingForUpdates, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.checkingForUpdates, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
                 if (upToDateNotice) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(strings.upToDate, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.upToDate, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
                     }
                 }
 
                 updateInfo?.let { info ->
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(8.dp))
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(Modifier.padding(14.dp)) {
+                        Column(Modifier.padding(8.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(Modifier.width(8.dp))
+                                Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
                                 Text(
                                     strings.updateAvailableDesc("v${info.versionName}"),
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
+                                    fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
                             if (info.releaseNotes.isNotBlank()) {
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(4.dp))
                                 Text(
                                     info.releaseNotes,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 4,
+                                    maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            Spacer(Modifier.height(12.dp))
-
+                            Spacer(Modifier.height(8.dp))
                             if (updateDownloaded) {
-                                Text(
-                                    strings.updateDownloaded,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.height(5.dp))
-                                Text(
-                                    strings.installUpdateHint,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.height(10.dp))
                                 Button(
                                     onClick = {
                                         val result = UpdateManager.retryPendingInstall(context)
@@ -5865,11 +5926,12 @@ private fun AboutTab() {
                                             updateError = result.exceptionOrNull()?.localizedMessage ?: "Installation failed"
                                         }
                                     },
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth().height(34.dp),
+                                    contentPadding = PaddingValues(vertical = 2.dp)
                                 ) {
-                                    Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(strings.installUpdate)
+                                    Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.installUpdate, fontSize = 11.sp)
                                 }
                             } else if (downloadProgress >= 0f) {
                                 Column {
@@ -5877,23 +5939,24 @@ private fun AboutTab() {
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text(strings.downloadingUpdate, fontSize = 12.sp)
-                                        Text("${(downloadProgress * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(strings.downloadingUpdate, fontSize = 11.sp)
+                                        Text("${(downloadProgress * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
-                                    Spacer(Modifier.height(6.dp))
+                                    Spacer(Modifier.height(3.dp))
                                     LinearProgressIndicator(
                                         progress = { downloadProgress },
-                                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
                                     )
                                 }
                             } else {
                                 Button(
                                     onClick = { startUpdate(info) },
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth().height(34.dp),
+                                    contentPadding = PaddingValues(vertical = 2.dp)
                                 ) {
-                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(strings.updateNow)
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.updateNow, fontSize = 11.sp)
                                 }
                             }
                         }
@@ -5901,58 +5964,44 @@ private fun AboutTab() {
                 }
 
                 if (updateError != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(strings.updateFailed(updateError.orEmpty()), color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(strings.updateFailed(updateError.orEmpty()), color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Text(strings.securityTitle, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Spacer(Modifier.height(6.dp))
+        // Security & Open Source Group
+        SettingsGroup(title = strings.securityTitle) {
+            Column(Modifier.padding(10.dp)) {
                 Text(
                     strings.securityDesc,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
                 )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Text(strings.openSourceSoftware, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    strings.ffmpegAttribution,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                TextButton(
-                    onClick = {
-                        context.startActivity(
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse("https://cloud.ameyerocha.com/s/WLECDww4XQMHzdB")
-                            )
-                        )
-                    }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(strings.viewSourceCode)
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.openSourceSoftware, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text(strings.ffmpegAttribution, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                    }
+                    TextButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://cloud.ameyerocha.com/s/WLECDww4XQMHzdB"))
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text(strings.viewSourceCode, fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -5979,7 +6028,7 @@ private fun AddPlaylistDialog(
         title = { Text(strings.addPlaylist) },
         text = {
             Column(Modifier.fillMaxWidth()) {
-                TabRow(
+                PrimaryTabRow(
                     selectedTabIndex = mode,
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
@@ -6018,7 +6067,7 @@ private fun AddPlaylistDialog(
                         value = url,
                         onValueChange = { url = it },
                         label = { Text(strings.xtreamServer) },
-                        placeholder = { Text("https://server.example:port") },
+                        placeholder = { Text("http://server.example:port") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )

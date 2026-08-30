@@ -60,8 +60,29 @@ class UserLibraryStore(context: Context) {
     fun isItemWatched(libraryId: String, watched: Set<String> = watchedItemIds()): Boolean =
         watched.contains(libraryId)
 
+    fun recentChannelIds(): List<String> {
+        val raw = preferences.getString(KEY_RECENT_CHANNELS, null) ?: return emptyList()
+        return raw.split("|").filter { it.isNotBlank() }
+    }
+
+    fun recordChannelWatched(channel: PlaylistChannel): List<String> {
+        val id = channel.libraryId() ?: return recentChannelIds()
+        val current = recentChannelIds().toMutableList()
+        current.remove(id)
+        current.add(0, id)
+        val trimmed = current.take(20)
+        preferences.edit().putString(KEY_RECENT_CHANNELS, trimmed.joinToString("|")).apply()
+        return trimmed
+    }
+
+    fun clearRecentChannels(): List<String> {
+        preferences.edit().remove(KEY_RECENT_CHANNELS).apply()
+        return emptyList()
+    }
+
     companion object {
         private const val KEY_FAVORITE_CHANNELS = "favorite_channel_ids"
+        private const val KEY_RECENT_CHANNELS = "recent_channel_ids"
         private const val KEY_MOVIE_WATCHLIST = "movie_watchlist_ids"
         private const val KEY_FOLLOWED_SERIES = "followed_series_ids"
         private const val KEY_WATCHED_ITEMS = "watched_item_ids"

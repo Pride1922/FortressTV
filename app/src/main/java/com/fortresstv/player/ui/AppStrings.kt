@@ -41,6 +41,8 @@ interface Strings {
     val addFavorite: String
     val removeFavorite: String
     val favoriteChannels: String
+    val recentlyWatched: String
+    val noRecentlyWatched: String
     val movieWatchlist: String
     val followedSeries: String
     val addToWatchlist: String
@@ -253,6 +255,8 @@ object EnglishStrings : Strings {
     override val addFavorite = "Add to Favorites"
     override val removeFavorite = "Remove from Favorites"
     override val favoriteChannels = "Channels"
+    override val recentlyWatched = "Recently Watched"
+    override val noRecentlyWatched = "Recently watched channels will appear here."
     override val movieWatchlist = "Movies to watch"
     override val followedSeries = "Followed series"
     override val addToWatchlist = "Add to Watchlist"
@@ -466,6 +470,8 @@ object PortugueseStrings : Strings {
     override val addFavorite = "Adicionar aos Favoritos"
     override val removeFavorite = "Remover dos Favoritos"
     override val favoriteChannels = "Canais"
+    override val recentlyWatched = "Vistos recentemente"
+    override val noRecentlyWatched = "Os canais vistos recentemente aparecerão aqui."
     override val movieWatchlist = "Filmes para ver"
     override val followedSeries = "Séries seguidas"
     override val addToWatchlist = "Adicionar à lista para ver"
