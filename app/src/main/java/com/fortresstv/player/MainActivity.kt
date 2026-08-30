@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import android.widget.Toast
 import android.os.Bundle
 import android.os.Build
 import android.os.Handler
@@ -35,6 +36,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +65,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
@@ -70,6 +75,9 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import com.fortresstv.player.playlist.PlaylistProfile
@@ -137,6 +145,12 @@ import com.fortresstv.player.source.SourceReader
 import com.fortresstv.player.source.SourceSettingsStore
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
+import com.fortresstv.player.xtream.XtreamCatalog
+import com.fortresstv.player.xtream.XtreamCategory
+import com.fortresstv.player.xtream.XtreamClient
+import com.fortresstv.player.xtream.XtreamMovie
+import com.fortresstv.player.xtream.XtreamSeries
+import com.fortresstv.player.xtream.XtreamEpisode
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -144,6 +158,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.util.zip.GZIPInputStream
+import java.time.LocalDateTime
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -291,6 +306,7 @@ private fun FortressTVApp() {
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var playlist by remember { mutableStateOf<Playlist?>(null) }
     val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
+    val xtreamCatalogs = remember { mutableStateMapOf<String, XtreamCatalog>() }
     var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
@@ -306,10 +322,11 @@ private fun FortressTVApp() {
     var showSettings by remember { mutableStateOf(false) }
     var settingsInitialTab by remember { mutableIntStateOf(0) }
     var showAddPlaylistDialog by remember { mutableStateOf(false) }
-    var renamingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
+    var editingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var deletingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var showEpgUrlDialog by remember { mutableStateOf(false) }
     var showRemoveEpgConfirm by remember { mutableStateOf(false) }
+    var hideAdultContent by remember { mutableStateOf(settings.hideAdultContent()) }
 
     var startupUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var startupUpdateProgress by remember { mutableFloatStateOf(-1f) }
@@ -400,6 +417,46 @@ private fun FortressTVApp() {
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
                     error = err.message ?: "Could not load playlist."
+                }
+            }
+            withContext(Dispatchers.Main) {
+                loading = false
+                restoring = false
+            }
+        }
+    }
+
+    fun loadXtreamProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
+        val source = profile.source as? ContentSource.Xtream ?: return
+        settings.savePlaylistProfile(profile)
+        playlists = settings.getPlaylists()
+        loading = true
+        error = null
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                XtreamClient(context.applicationContext, profile.id, source).loadCatalog(forceRefresh)
+            }.onSuccess { catalog ->
+                val totalCount = catalog.liveChannels.size + catalog.movies.size + catalog.series.size
+                val updated = profile.copy(
+                    lastUpdated = System.currentTimeMillis(),
+                    channelCount = if (catalog.liveChannels.isNotEmpty()) catalog.liveChannels.size else totalCount
+                )
+                settings.savePlaylistProfile(updated)
+                val all = settings.getPlaylists()
+                withContext(Dispatchers.Main) {
+                    xtreamCatalogs[profile.id] = catalog
+                    if (catalog.liveChannels.isNotEmpty()) {
+                        loadedPlaylists[profile.id] = Playlist(catalog.liveChannels)
+                    }
+                    playlists = all
+                    playlist = mergeLivePlaylists(all, loadedPlaylists)
+                    if (activeProfile == null) {
+                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                    }
+                }
+            }.onFailure { failure ->
+                withContext(Dispatchers.Main) {
+                    error = "${profile.name}: ${failure.message ?: "could not load Xtream catalogue"}"
                 }
             }
             withContext(Dispatchers.Main) {
@@ -582,6 +639,10 @@ private fun FortressTVApp() {
             }
         }
 
+        enabledPlaylists.filter { it.source is ContentSource.Xtream }.forEach { profile ->
+            loadXtreamProfile(profile)
+        }
+
         val savedEpg = settings.epgSource()
         if (savedEpg is ContentSource.RemoteUrl) {
             val isEpgFresh = SourceReader.isCacheFresh(context, "epg", settings.lastEpgUpdate())
@@ -648,6 +709,19 @@ private fun FortressTVApp() {
                     )
                     loadPlaylistProfile(profile, forceRefresh = true)
                 },
+                onAddXtream = { name, server, username, password ->
+                    showAddPlaylistDialog = false
+                    val displayName = name.ifBlank { "Xtream" }
+                    val profile = PlaylistProfile(
+                        id = UUID.randomUUID().toString(),
+                        name = displayName,
+                        source = ContentSource.Xtream(server.trim(), displayName, username, password),
+                        enabled = true,
+                        role = SourceRole.EVERYTHING,
+                        order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
+                    )
+                    loadXtreamProfile(profile, forceRefresh = true)
+                },
                 onPickFile = {
                     showAddPlaylistDialog = false
                     addPlaylistFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*"))
@@ -655,17 +729,32 @@ private fun FortressTVApp() {
             )
         }
 
-        renamingProfile?.let { profile ->
-            RenamePlaylistDialog(
-                initialName = profile.name,
-                onDismiss = { renamingProfile = null },
-                onConfirm = { newName ->
-                    renamingProfile = null
-                    val updated = profile.copy(name = newName)
+        editingProfile?.let { profile ->
+            EditPlaylistDialog(
+                profile = profile,
+                onDismiss = { editingProfile = null },
+                onConfirm = { newName, newSource, newRole ->
+                    editingProfile = null
+                    val sourceChanged = profile.source != newSource
+                    val updated = profile.copy(name = newName, source = newSource, role = newRole)
                     settings.savePlaylistProfile(updated)
-                    playlists = settings.getPlaylists()
+                    val all = settings.getPlaylists()
+                    playlists = all
                     if (activeProfile?.id == profile.id) {
                         activeProfile = updated
+                    }
+                    if (updated.source is ContentSource.Xtream) {
+                        if (sourceChanged || loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv()) {
+                            loadXtreamProfile(updated, forceRefresh = sourceChanged)
+                        } else {
+                            playlist = mergeLivePlaylists(all, loadedPlaylists)
+                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                        }
+                    } else if (updated.source is ContentSource.RemoteUrl && sourceChanged) {
+                        loadPlaylistProfile(updated, forceRefresh = true)
+                    } else {
+                        playlist = mergeLivePlaylists(all, loadedPlaylists)
+                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
                 }
             )
@@ -680,6 +769,7 @@ private fun FortressTVApp() {
                     settings.deletePlaylistProfile(profile.id)
                     SourceReader.deleteCache(context, "playlist_${profile.id}")
                     loadedPlaylists.remove(profile.id)
+                    xtreamCatalogs.remove(profile.id)
                     val remaining = settings.getPlaylists()
                     playlists = remaining
                     playlist = mergeLivePlaylists(remaining, loadedPlaylists)
@@ -739,6 +829,11 @@ private fun FortressTVApp() {
                     autoPictureInPicture = enabled
                     scope.launch(Dispatchers.IO) { settings.setAutoPictureInPicture(enabled) }
                 },
+                hideAdultContent = hideAdultContent,
+                onHideAdultContentChanged = { enabled ->
+                    hideAdultContent = enabled
+                    scope.launch(Dispatchers.IO) { settings.setHideAdultContent(enabled) }
+                },
                 epgSource = epgSource,
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
@@ -754,9 +849,11 @@ private fun FortressTVApp() {
                         val all = settings.getPlaylists()
                         playlists = all
                         if (enabled) {
-                            loadPlaylistProfile(updated)
+                            if (updated.source is ContentSource.Xtream) loadXtreamProfile(updated)
+                            else loadPlaylistProfile(updated)
                         } else {
                             loadedPlaylists.remove(updated.id)
+                            xtreamCatalogs.remove(updated.id)
                             playlist = mergeLivePlaylists(all, loadedPlaylists)
                             activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                         }
@@ -767,8 +864,12 @@ private fun FortressTVApp() {
                     settings.savePlaylistProfile(updated)
                     val all = settings.getPlaylists()
                     playlists = all
-                    playlist = mergeLivePlaylists(all, loadedPlaylists)
-                    activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                    if (updated.source is ContentSource.Xtream && (loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv())) {
+                        loadXtreamProfile(updated)
+                    } else {
+                        playlist = mergeLivePlaylists(all, loadedPlaylists)
+                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                    }
                 },
                 onMoveSource = { profile, direction ->
                     val ordered = playlists.sortedBy { it.order }.toMutableList()
@@ -786,13 +887,14 @@ private fun FortressTVApp() {
                     }
                 },
                 onRefreshPlaylist = { profile ->
-                    loadPlaylistProfile(profile, forceRefresh = true)
+                    if (profile.source is ContentSource.Xtream) loadXtreamProfile(profile, forceRefresh = true)
+                    else loadPlaylistProfile(profile, forceRefresh = true)
                 },
                 onAddPlaylist = {
                     showAddPlaylistDialog = true
                 },
-                onRenamePlaylist = { profile ->
-                    renamingProfile = profile
+                onEditPlaylist = { profile ->
+                    editingProfile = profile
                 },
                 onDeletePlaylist = { profile ->
                     deletingProfile = profile
@@ -878,9 +980,12 @@ private fun FortressTVApp() {
                 epgTimeShiftHours = epgTimeShiftHours,
                 playChannelsFullscreen = playChannelsFullscreen,
                 autoPictureInPicture = autoPictureInPicture,
+                hideAdultContent = hideAdultContent,
                 loading = loading,
                 error = error,
                 favoriteChannelIds = favoriteChannelIds,
+                xtreamCatalogs = xtreamCatalogs.values.toList(),
+                xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
                 onToggleFavorite = { channel ->
                     val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true
                     favoriteChannelIds = userLibrary.setChannelFavorite(channel, !isFavorite)
@@ -916,6 +1021,7 @@ private fun WelcomeScreen(
     onOpenUrl: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -1085,7 +1191,7 @@ private fun ProgrammeGuideScreen(
                 val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
                 val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
                 playlist.channels.mapNotNull { channel ->
-                    val blocks = epgGuide?.programmes?.get(channel.tvgId).orEmpty().mapNotNull { programme ->
+                    val blocks = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty().mapNotNull { programme ->
                         val adjustedStart = programme.startEpochMilli + shiftMillis
                         val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
                         val adjustedStop = rawStop + shiftMillis
@@ -1229,7 +1335,7 @@ private fun ProgrammeGuideScreen(
                                 ) {
                                     ChannelLogo(
                                         channel = channel,
-                                        epgChannel = epgGuide?.channels?.get(channel.tvgId),
+                                        epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
                                         modifier = Modifier.size(42.dp)
                                     )
                                     Spacer(Modifier.width(10.dp))
@@ -1380,6 +1486,18 @@ private fun ProgrammeGuideScreen(
     }
 }
 
+fun isAdultContent(name: String?, groupOrCategory: String?): Boolean {
+    val text = "${name.orEmpty()} ${groupOrCategory.orEmpty()}".lowercase()
+    if (text.isBlank()) return false
+    val patterns = listOf(
+        "xxx", "adult", "adulto", "adultos", "porn", "porno", "hardcore",
+        "erotic", "erotico", "erótica", "erotica", "erótico", "18+", "+18",
+        "brazzers", "playboy", "penthouse", "hustler", "dorcel", "redlight",
+        "venus", "sextreme", "vivid", "private tv", "fetish", "for adults", "para adultos"
+    )
+    return patterns.any { pattern -> text.contains(pattern) }
+}
+
 private enum class LibraryDestination { LIVE_TV, MOVIES, SERIES, FAVORITES }
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -1394,21 +1512,34 @@ private fun FortressLibrary(
     epgTimeShiftHours: Int,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
+    hideAdultContent: Boolean = false,
     loading: Boolean,
     error: String?,
     favoriteChannelIds: Set<String>,
+    xtreamCatalogs: List<XtreamCatalog>,
+    xtreamProfiles: List<PlaylistProfile>,
     onToggleFavorite: (PlaylistChannel) -> Unit,
     onOpenSettings: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
     var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
+    var vodPlayback by remember { mutableStateOf<Pair<String, String>?>(null) }
     val destinations = listOf(
         LibraryDestination.LIVE_TV to strings.navLiveTv,
         LibraryDestination.MOVIES to strings.navMovies,
         LibraryDestination.SERIES to strings.navSeries,
         LibraryDestination.FAVORITES to strings.navFavorites
     )
+
+    val effectivePlaylist = remember(playlist, hideAdultContent) {
+        if (!hideAdultContent) playlist
+        else {
+            val filtered = playlist.channels.filterNot { isAdultContent(it.name, it.group) }
+            Playlist(filtered)
+        }
+    }
 
     Column(
         Modifier
@@ -1427,8 +1558,6 @@ private fun FortressLibrary(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                ShieldMark(Modifier.size(38.dp))
-                Spacer(Modifier.width(4.dp))
                 destinations.forEach { (item, label) ->
                     LibraryNavigationItem(
                         label = label,
@@ -1442,7 +1571,7 @@ private fun FortressLibrary(
         Box(Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
             when (destination) {
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
-                    playlist = playlist,
+                    playlist = effectivePlaylist,
                     activeProfile = activeProfile,
                     enabledSourceCount = enabledSourceCount,
                     enabledSources = enabledSources,
@@ -1459,16 +1588,24 @@ private fun FortressLibrary(
                     onRequestedChannelHandled = { requestedChannel = null },
                     onOpenSettings = onOpenSettings
                 )
-                LibraryDestination.MOVIES -> LibraryPlaceholder(
-                    title = strings.navMovies,
-                    message = strings.moviesComingSoon
+                LibraryDestination.MOVIES -> XtreamMoviesScreen(
+                    catalogs = xtreamCatalogs,
+                    hideAdultContent = hideAdultContent,
+                    onPlay = { catalog, movie ->
+                        val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
+                        if (source != null) {
+                            vodPlayback = movie.name to XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                        }
+                    }
                 )
-                LibraryDestination.SERIES -> LibraryPlaceholder(
-                    title = strings.navSeries,
-                    message = strings.seriesComingSoon
+                LibraryDestination.SERIES -> XtreamSeriesScreen(
+                    catalogs = xtreamCatalogs,
+                    profiles = xtreamProfiles,
+                    hideAdultContent = hideAdultContent,
+                    onPlay = { title, url -> vodPlayback = title to url }
                 )
                 LibraryDestination.FAVORITES -> FavoriteChannelsScreen(
-                    channels = playlist.channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true },
+                    channels = effectivePlaylist.channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true },
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
                     favoriteChannelIds = favoriteChannelIds,
@@ -1479,6 +1616,9 @@ private fun FortressLibrary(
                     }
                 )
             }
+        }
+        vodPlayback?.let { (title, url) ->
+            VodPlayerDialog(title = title, streamUrl = url, onDismiss = { vodPlayback = null })
         }
     }
 }
@@ -1507,6 +1647,398 @@ private fun LibraryNavigationItem(
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                 fontSize = 14.sp
             )
+        }
+    }
+}
+
+private data class CatalogMovie(val catalog: XtreamCatalog, val movie: XtreamMovie)
+private data class CatalogSeries(val catalog: XtreamCatalog, val series: XtreamSeries)
+
+@Composable
+private fun XtreamMoviesScreen(
+    catalogs: List<XtreamCatalog>,
+    hideAdultContent: Boolean = false,
+    onPlay: (XtreamCatalog, XtreamMovie) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var query by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    val categoryMap = remember(catalogs) {
+        catalogs.flatMap { it.movieCategories }.associate { it.id to it.name }
+    }
+    val categories = remember(catalogs, hideAdultContent) {
+        catalogs.flatMap { it.movieCategories }
+            .distinctBy { it.id }
+            .filter { !hideAdultContent || !isAdultContent(it.name, null) }
+    }
+    val movies = remember(catalogs, query, selectedCategory, hideAdultContent) {
+        catalogs.flatMap { catalog ->
+            catalog.movies
+                .filter { selectedCategory == null || it.categoryId == selectedCategory }
+                .filter { !hideAdultContent || !isAdultContent(it.name, categoryMap[it.categoryId]) }
+                .map { CatalogMovie(catalog, it) }
+        }.filter { query.isBlank() || it.movie.name.contains(query, ignoreCase = true) }
+    }
+    LibraryCatalogScaffold(
+        title = strings.navMovies,
+        query = query,
+        onQueryChanged = { query = it },
+        searchPlaceholder = strings.searchMovies,
+        categories = categories,
+        selectedCategory = selectedCategory,
+        onSelectCategory = { selectedCategory = it },
+        emptyMessage = strings.noMoviesAvailable,
+        itemCount = movies.size
+    ) {
+        gridItems(movies, key = { "${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+            VodPosterCard(
+                title = entry.movie.name,
+                posterUrl = entry.movie.posterUrl,
+                subtitle = listOfNotNull(entry.movie.year, entry.movie.rating).joinToString(" · "),
+                onClick = { onPlay(entry.catalog, entry.movie) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun XtreamSeriesScreen(
+    catalogs: List<XtreamCatalog>,
+    profiles: List<PlaylistProfile>,
+    hideAdultContent: Boolean = false,
+    onPlay: (String, String) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf<CatalogSeries?>(null) }
+    val categoryMap = remember(catalogs) {
+        catalogs.flatMap { it.seriesCategories }.associate { it.id to it.name }
+    }
+    val categories = remember(catalogs, hideAdultContent) {
+        catalogs.flatMap { it.seriesCategories }
+            .distinctBy { it.id }
+            .filter { !hideAdultContent || !isAdultContent(it.name, null) }
+    }
+    val series = remember(catalogs, query, selectedCategory, hideAdultContent) {
+        catalogs.flatMap { catalog ->
+            catalog.series
+                .filter { selectedCategory == null || it.categoryId == selectedCategory }
+                .filter { !hideAdultContent || !isAdultContent(it.name, categoryMap[it.categoryId]) }
+                .map { CatalogSeries(catalog, it) }
+        }.filter { query.isBlank() || it.series.name.contains(query, ignoreCase = true) }
+    }
+    LibraryCatalogScaffold(
+        title = strings.navSeries,
+        query = query,
+        onQueryChanged = { query = it },
+        searchPlaceholder = strings.searchSeries,
+        categories = categories,
+        selectedCategory = selectedCategory,
+        onSelectCategory = { selectedCategory = it },
+        emptyMessage = strings.noSeriesAvailable,
+        itemCount = series.size
+    ) {
+        gridItems(series, key = { "${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+            VodPosterCard(
+                title = entry.series.name,
+                posterUrl = entry.series.coverUrl,
+                subtitle = listOfNotNull(entry.series.year, entry.series.rating).joinToString(" · "),
+                onClick = { selected = entry }
+            )
+        }
+    }
+
+    selected?.let { entry ->
+        val profile = profiles.firstOrNull { it.id == entry.catalog.sourceId }
+        val source = profile?.source as? ContentSource.Xtream
+        if (source != null) {
+            SeriesEpisodesDialog(
+                series = entry.series,
+                client = remember(entry.catalog.sourceId, source) {
+                    XtreamClient(context.applicationContext, entry.catalog.sourceId, source)
+                },
+                onDismiss = { selected = null },
+                onPlay = { episode, url -> onPlay(episode.title, url) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryCatalogScaffold(
+    title: String,
+    query: String,
+    onQueryChanged: (String) -> Unit,
+    searchPlaceholder: String = LocalAppStrings.current.searchChannels,
+    categories: List<XtreamCategory> = emptyList(),
+    selectedCategory: String? = null,
+    onSelectCategory: (String?) -> Unit = {},
+    emptyMessage: String,
+    itemCount: Int,
+    content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
+) {
+    val strings = LocalAppStrings.current
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(18.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(10.dp))
+            Text(itemCount.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChanged,
+                placeholder = { Text(searchPlaceholder) },
+                singleLine = true,
+                trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { onQueryChanged("") }) { Text("×", fontSize = 24.sp) } }) else null,
+                modifier = Modifier.widthIn(max = 360.dp)
+            )
+        }
+        if (categories.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                item(key = "all_categories") {
+                    FilterChip(
+                        selected = selectedCategory == null,
+                        onClick = { onSelectCategory(null) },
+                        label = { Text(strings.allCategories) }
+                    )
+                }
+                items(categories, key = { it.id }) { category ->
+                    FilterChip(
+                        selected = selectedCategory == category.id,
+                        onClick = { onSelectCategory(if (selectedCategory == category.id) null else category.id) },
+                        label = { Text(category.name) }
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        if (itemCount == 0) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp)
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxSize(),
+                content = content
+            )
+        }
+    }
+}
+
+@Composable
+private fun VodPosterCard(
+    title: String,
+    posterUrl: String?,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+    ) {
+        Column {
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(2f / 3f).background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!posterUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = posterUrl,
+                        contentDescription = title,
+                        contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
+                }
+            }
+            Column(Modifier.padding(11.dp)) {
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeriesEpisodesDialog(
+    series: XtreamSeries,
+    client: XtreamClient,
+    onDismiss: () -> Unit,
+    onPlay: (XtreamEpisode, String) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var episodes by remember(series.id) { mutableStateOf<List<XtreamEpisode>?>(null) }
+    var loadError by remember(series.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(series.id) {
+        runCatching { client.loadEpisodes(series.id) }
+            .onSuccess { episodes = it }
+            .onFailure { loadError = it.message }
+    }
+    val seasons = remember(episodes) {
+        episodes?.map { it.season }?.distinct()?.sorted() ?: emptyList()
+    }
+    var selectedSeason by remember(seasons) {
+        mutableStateOf(seasons.firstOrNull())
+    }
+    val filteredEpisodes = remember(episodes, selectedSeason) {
+        val list = episodes ?: return@remember emptyList()
+        if (selectedSeason != null && seasons.size > 1) {
+            list.filter { it.season == selectedSeason }
+        } else {
+            list
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(0.86f).fillMaxHeight(0.86f)
+        ) {
+            Column(Modifier.fillMaxSize().padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!series.coverUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = series.coverUrl,
+                            contentDescription = series.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(62.dp, 92.dp).clip(RoundedCornerShape(10.dp))
+                        )
+                        Spacer(Modifier.width(14.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(series.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        val meta = listOfNotNull(series.year, series.rating).joinToString(" · ")
+                        if (meta.isNotBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(meta, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        }
+                        if (!series.plot.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(series.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = strings.close) }
+                }
+                if (seasons.size > 1) {
+                    Spacer(Modifier.height(12.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(seasons, key = { it }) { season ->
+                            FilterChip(
+                                selected = (selectedSeason ?: seasons.firstOrNull()) == season,
+                                onClick = { selectedSeason = season },
+                                label = { Text(strings.seasonLabel(season)) }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                when {
+                    loadError != null -> Text(loadError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    episodes == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                        Text(strings.loadingEpisodes, modifier = Modifier.padding(top = 72.dp))
+                    }
+                    episodes!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(strings.noEpisodesAvailable)
+                    }
+                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(filteredEpisodes, key = { "${it.season}:${it.id}" }) { episode ->
+                            Surface(
+                                onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        strings.episodeLabel(episode.season, episode.episodeNumber),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.width(14.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(episode.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        if (!episode.plot.isNullOrBlank()) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(episode.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        }
+                                    }
+                                    Icon(Icons.Default.PlayArrow, contentDescription = strings.watchNow)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun VodPlayerDialog(title: String, streamUrl: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val strings = LocalAppStrings.current
+    val renderersFactory = remember(context) {
+        DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+    }
+    val player = remember(streamUrl) { ExoPlayer.Builder(context, renderersFactory).build() }
+    var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) { playbackState = state }
+            override fun onPlayerError(error: PlaybackException) { playbackError = error.message ?: strings.playbackError }
+        }
+        player.addListener(listener)
+        player.setMediaItem(MediaItem.fromUri(streamUrl))
+        player.prepare()
+        player.play()
+        onDispose { player.removeListener(listener); player.release() }
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        ImmersiveSystemBars()
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            VideoSurface(
+                player = player,
+                playbackState = playbackState,
+                playbackError = playbackError,
+                fullscreen = true,
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                onFullscreen = onDismiss,
+                onControlsVisibilityChanged = {},
+                onRetry = { playbackError = null; player.prepare(); player.play() },
+                modifier = Modifier.fillMaxSize()
+            )
+            Row(Modifier.align(Alignment.TopStart).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilledIconButton(onClick = onDismiss, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = .7f), contentColor = Color.White)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
@@ -1714,11 +2246,11 @@ private fun ChannelBrowser(
     }
 
     val matchedCount = remember(playlist, epgGuide) {
-        if (epgGuide == null) 0 else playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
+        if (epgGuide == null) 0 else playlist.channels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
     }
     val unmatchedChannels = remember(playlist, epgGuide) {
         if (epgGuide == null) emptyList()
-        else playlist.channels.filter { it.tvgId.isNullOrBlank() || !epgGuide.channels.containsKey(it.tvgId) }
+        else playlist.channels.filter { epgGuide.resolveChannelId(it.tvgId, it.name) == null }
     }
     var showUnmatchedDialog by remember { mutableStateOf(false) }
 
@@ -1753,11 +2285,7 @@ private fun ChannelBrowser(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ShieldMark(Modifier.size(36.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = { isSidebarExpanded = false }) {
                         Icon(Icons.Default.MenuOpen, contentDescription = strings.collapseSidebar)
                     }
@@ -1775,7 +2303,7 @@ private fun ChannelBrowser(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            if (activeProfile.source is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.FolderOpen,
+                            if (activeProfile.source is ContentSource.LocalFile) Icons.Default.FolderOpen else Icons.Default.Link,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.primary
@@ -1784,94 +2312,106 @@ private fun ChannelBrowser(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 if (enabledSourceCount > 1) strings.sourcesCount(enabledSourceCount) else activeProfile.name,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                strings.channelsCount(playlist.channels.size),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (enabledSourceCount > 1) {
+                                Text(
+                                    activeProfile.name,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                        Icon(
-                            Icons.Default.Menu,
-                            contentDescription = strings.switchPlaylist,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                Text(strings.categories, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
 
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    item(key = "group_all_channels") {
-                        GroupItem(strings.allChannels, playlist.channels.size, selectedFilter == allFilter) {
-                            selectedFilter = allFilter
-                            isSidebarExpanded = false
+                    item {
+                        GroupItem(
+                            name = strings.allChannels,
+                            count = playlist.channels.size,
+                            selected = selectedFilter == allFilter,
+                            onClick = { selectedFilter = allFilter }
+                        )
+                    }
+                    if (enabledSourceCount > 1) {
+                        item {
+                            Spacer(Modifier.height(6.dp))
+                            Text(strings.sources, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        items(enabledSources, key = { "source-filter-${it.id}" }) { profile ->
+                            GroupItem(
+                                name = profile.name,
+                                count = sourceCounts[profile.id] ?: 0,
+                                selected = selectedFilter == "source:${profile.id}",
+                                onClick = { selectedFilter = "source:${profile.id}" }
+                            )
                         }
                     }
-                    if (enabledSources.isNotEmpty()) {
-                        item(key = "sources_header") { SidebarSectionLabel(strings.sources) }
-                        items(enabledSources, key = { "source:${it.id}" }) { source ->
-                            val key = "source:${source.id}"
-                            GroupItem(source.name, sourceCounts[source.id] ?: 0, selectedFilter == key) {
-                                selectedFilter = key
-                                isSidebarExpanded = false
-                            }
+                    val uncategorizedCount = groupCounts[""] ?: 0
+                    if (uncategorizedCount > 0) {
+                        item {
+                            GroupItem(
+                                name = strings.uncategorized,
+                                count = uncategorizedCount,
+                                selected = selectedFilter == uncategorizedFilter,
+                                onClick = { selectedFilter = uncategorizedFilter }
+                            )
                         }
                     }
-                    if (playlist.groups.isNotEmpty() || (groupCounts[""] ?: 0) > 0) {
-                        item(key = "categories_header") { SidebarSectionLabel(strings.categories) }
-                    }
-                    items(playlist.groups, key = { it }) { group ->
-                        val key = "group:$group"
-                        GroupItem(group, groupCounts[group] ?: 0, selectedFilter == key) {
-                            selectedFilter = key
-                            isSidebarExpanded = false
-                        }
-                    }
-                    if ((groupCounts[""] ?: 0) > 0) {
-                        item(key = "group_uncategorized") {
-                            GroupItem(strings.uncategorized, groupCounts[""] ?: 0, selectedFilter == uncategorizedFilter) {
-                                selectedFilter = uncategorizedFilter
-                                isSidebarExpanded = false
-                            }
-                        }
+                    items(
+                        groupCounts.keys.filter { it.isNotBlank() }.sorted(),
+                        key = { "group-filter-$it" }
+                    ) { group ->
+                        GroupItem(
+                            name = group,
+                            count = groupCounts[group] ?: 0,
+                            selected = selectedFilter == "group:$group",
+                            onClick = { selectedFilter = "group:$group" }
+                        )
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-                if (epgGuide == null) {
-                    Text(strings.epgNotConfigured, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                } else {
-                    Surface(
-                        onClick = { if (unmatchedChannels.isNotEmpty()) showUnmatchedDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f) else Color.Transparent,
-                        border = if (unmatchedChannels.isNotEmpty()) BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)) else null,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(Modifier.padding(vertical = 6.dp, horizontal = 8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    strings.epgMatched(matchedCount, playlist.channels.size),
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (unmatchedChannels.isNotEmpty()) {
+                if (epgGuide == null || unmatchedChannels.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                    if (epgGuide == null) {
+                        Text(strings.epgNotConfigured, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    } else {
+                        Surface(
+                            onClick = { showUnmatchedDialog = true },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(vertical = 6.dp, horizontal = 8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        strings.epgMatched(matchedCount, playlist.channels.size),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
                                     Icon(
                                         Icons.Default.Info,
                                         contentDescription = strings.viewUnmatchedChannels,
@@ -1879,15 +2419,13 @@ private fun ChannelBrowser(
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
-                            }
-                            Text(
-                                epgSourceName ?: strings.xmltvGuide,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontSize = 11.sp
-                            )
-                            if (unmatchedChannels.isNotEmpty()) {
+                                Text(
+                                    epgSourceName ?: strings.xmltvGuide,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 11.sp
+                                )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
                                     strings.unmatchedEpgCount(unmatchedChannels.size),
@@ -2169,8 +2707,8 @@ private fun GuideChannelRow(
     onClick: () -> Unit
 ) {
     val strings = LocalAppStrings.current
-    val presentation = remember(channel.tvgId, epgGuide, scheduleNow, epgTimeShiftHours, strings) {
-        val current = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)?.current
+    val presentation = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgTimeShiftHours, strings) {
+        val current = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)?.current
         val shiftMillis = epgTimeShiftHours * 3_600_000L
         val adjustedStart = current?.startEpochMilli?.plus(shiftMillis)
         val adjustedStop = current?.stopEpochMilli?.plus(shiftMillis)
@@ -2188,7 +2726,7 @@ private fun GuideChannelRow(
     }
     ChannelRow(
         channel = channel,
-        epgChannel = epgGuide?.channels?.get(channel.tvgId),
+        epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
         nowPlaying = presentation.title,
         endTime = presentation.endTime,
         progress = presentation.progress,
@@ -2233,8 +2771,8 @@ private fun ChannelRow(
                 Text(
                     when {
                         nowPlaying != null -> nowPlaying
-                        channel.tvgId == null -> strings.noEpgId
                         epgChannel != null -> strings.noCurrentProgramme
+                        channel.tvgId == null -> strings.noEpgId
                         else -> strings.noEpgData
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2338,7 +2876,7 @@ private fun PlayerPanel(
             fullscreenPlaying = fullscreen && player.playWhenReady
         )
     }
-    val schedule = epgGuide?.snapshot(channel.tvgId, timeShiftHours = epgTimeShiftHours)
+    val schedule = epgGuide?.snapshot(channel.tvgId, channel.name, timeShiftHours = epgTimeShiftHours)
 
     DisposableEffect(player) {
         var resumePlaybackOnStart = false
@@ -2645,7 +3183,7 @@ private fun FullscreenPlayer(
             resizeModeNotice = null
         }
     }
-    val schedule = epgGuide?.snapshot(channel.tvgId, scheduleNow, epgTimeShiftHours)
+    val schedule = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)
     val channelIndex = channels.indexOf(channel)
     val previousChannel = channels.getOrNull(channelIndex - 1)
     val nextChannel = channels.getOrNull(channelIndex + 1)
@@ -2777,7 +3315,7 @@ private fun FullscreenPlayer(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                ChannelLogo(channel, epgGuide?.channels?.get(channel.tvgId))
+                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name))
                                 Spacer(Modifier.width(14.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(channel.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2936,7 +3474,7 @@ private fun FullscreenGuideDrawer(
     val isCompact = configuration.screenWidthDp < 600
     val now = Instant.now()
     val shiftMillis = epgTimeShiftHours * 3_600_000L
-    val programmes = epgGuide?.programmes?.get(channel.tvgId).orEmpty()
+    val programmes = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty()
         .filter { programme -> (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis > now.toEpochMilli() }
         .sortedBy { it.startEpochMilli }
     Surface(
@@ -3153,6 +3691,8 @@ private fun SettingsDialog(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    hideAdultContent: Boolean,
+    onHideAdultContentChanged: (Boolean) -> Unit,
     epgSource: ContentSource?,
     epgSourceName: String?,
     epgLastUpdate: Long,
@@ -3166,7 +3706,7 @@ private fun SettingsDialog(
     onMoveSource: (PlaylistProfile, Int) -> Unit,
     onRefreshPlaylist: (PlaylistProfile) -> Unit,
     onAddPlaylist: () -> Unit,
-    onRenamePlaylist: (PlaylistProfile) -> Unit,
+    onEditPlaylist: (PlaylistProfile) -> Unit,
     onDeletePlaylist: (PlaylistProfile) -> Unit,
     onEpgUrl: () -> Unit,
     onEpgFile: () -> Unit,
@@ -3236,7 +3776,7 @@ private fun SettingsDialog(
                             onMoveSource = onMoveSource,
                             onRefreshPlaylist = onRefreshPlaylist,
                             onAddPlaylist = onAddPlaylist,
-                            onRenamePlaylist = onRenamePlaylist,
+                            onEditPlaylist = onEditPlaylist,
                             onDeletePlaylist = onDeletePlaylist
                         )
                         1 -> EpgTab(
@@ -3246,6 +3786,7 @@ private fun SettingsDialog(
                             epgTimeShiftHours = epgTimeShiftHours,
                             playlist = playlist,
                             epgGuide = epgGuide,
+                            hideAdultContent = hideAdultContent,
                             loading = loading,
                             onEpgUrl = onEpgUrl,
                             onEpgFile = onEpgFile,
@@ -3259,7 +3800,9 @@ private fun SettingsDialog(
                             playChannelsFullscreen = playChannelsFullscreen,
                             onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                             autoPictureInPicture = autoPictureInPicture,
-                            onAutoPictureInPictureChanged = onAutoPictureInPictureChanged
+                            onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                            hideAdultContent = hideAdultContent,
+                            onHideAdultContentChanged = onHideAdultContentChanged
                         )
                     }
                 }
@@ -3278,7 +3821,7 @@ private fun PlaylistsTab(
     onMoveSource: (PlaylistProfile, Int) -> Unit,
     onRefreshPlaylist: (PlaylistProfile) -> Unit,
     onAddPlaylist: () -> Unit,
-    onRenamePlaylist: (PlaylistProfile) -> Unit,
+    onEditPlaylist: (PlaylistProfile) -> Unit,
     onDeletePlaylist: (PlaylistProfile) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -3348,7 +3891,7 @@ private fun PlaylistsTab(
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        if (item.source is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.FolderOpen,
+                                        if (item.source is ContentSource.LocalFile) Icons.Default.FolderOpen else Icons.Default.Link,
                                         contentDescription = null,
                                         tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
@@ -3407,13 +3950,13 @@ private fun PlaylistsTab(
                                         enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
                                         modifier = Modifier.size(34.dp)
                                     ) { Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(18.dp)) }
-                                    if (item.source is ContentSource.RemoteUrl) {
+                                    if (item.source !is ContentSource.LocalFile) {
                                         IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
                                             Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(18.dp))
                                         }
                                     }
-                                    IconButton(onClick = { onRenamePlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
-                                        Icon(Icons.Default.Edit, contentDescription = strings.rename, modifier = Modifier.size(18.dp))
+                                    IconButton(onClick = { onEditPlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
+                                        Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist, modifier = Modifier.size(18.dp))
                                     }
                                     IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
                                         Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
@@ -3426,7 +3969,7 @@ private fun PlaylistsTab(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    if (item.source is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.FolderOpen,
+                                    if (item.source is ContentSource.LocalFile) Icons.Default.FolderOpen else Icons.Default.Link,
                                     contentDescription = null,
                                     tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(24.dp)
@@ -3483,13 +4026,13 @@ private fun PlaylistsTab(
                                     IconButton(onClick = { onMoveSource(item, 1) }, enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex) {
                                         Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown)
                                     }
-                                    if (item.source is ContentSource.RemoteUrl) {
+                                    if (item.source !is ContentSource.LocalFile) {
                                         IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading) {
                                             Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist)
                                         }
                                     }
-                                    IconButton(onClick = { onRenamePlaylist(item) }, enabled = !loading) {
-                                        Icon(Icons.Default.Edit, contentDescription = strings.rename)
+                                    IconButton(onClick = { onEditPlaylist(item) }, enabled = !loading) {
+                                        Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist)
                                     }
                                     IconButton(onClick = { onDeletePlaylist(item) }, enabled = !loading) {
                                         Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error)
@@ -3513,16 +4056,32 @@ private fun SourceRoleSelector(
     val strings = LocalAppStrings.current
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(
+        Surface(
             onClick = { expanded = true },
             enabled = enabled,
-            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+            modifier = Modifier.padding(top = 4.dp)
         ) {
-            Text(
-                "${strings.sourceRole}: ${sourceRoleLabel(role, strings)}",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Row(
+                Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "${strings.sourceRole}: ${sourceRoleLabel(role, strings)}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SourceRole.entries.forEach { option ->
@@ -3558,6 +4117,7 @@ private fun EpgTab(
     epgTimeShiftHours: Int,
     playlist: Playlist?,
     epgGuide: EpgGuide?,
+    hideAdultContent: Boolean = false,
     loading: Boolean,
     onEpgUrl: () -> Unit,
     onEpgFile: () -> Unit,
@@ -3566,17 +4126,42 @@ private fun EpgTab(
     onEpgTimeShiftChanged: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
 
-    val matchedCount = remember(playlist, epgGuide) {
-        if (epgGuide == null || playlist == null) 0 else playlist.channels.count { it.tvgId != null && epgGuide.channels.containsKey(it.tvgId) }
+    val effectiveChannels = remember(playlist, hideAdultContent) {
+        if (playlist == null) emptyList()
+        else if (hideAdultContent) playlist.channels.filterNot { isAdultContent(it.name, it.group) }
+        else playlist.channels
     }
-    val unmatchedChannels = remember(playlist, epgGuide) {
-        if (epgGuide == null || playlist == null) emptyList()
-        else playlist.channels.filter { it.tvgId.isNullOrBlank() || !epgGuide.channels.containsKey(it.tvgId) }
+    val matchedCount = remember(effectiveChannels, epgGuide) {
+        if (epgGuide == null) 0 else effectiveChannels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
+    }
+    val unmatchedChannels = remember(effectiveChannels, epgGuide) {
+        if (epgGuide == null) effectiveChannels
+        else effectiveChannels.filter { epgGuide.resolveChannelId(it.tvgId, it.name) == null }
     }
     var showUnmatchedInSettings by remember { mutableStateOf(false) }
+
+    val exportText = remember(unmatchedChannels) { generateUnmatchedChannelsText(unmatchedChannels) }
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(exportText.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, strings.channelsListSaved, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Text(strings.xmltvSource, fontSize = if (isCompact) 16.sp else 18.sp, fontWeight = FontWeight.Bold)
@@ -3686,13 +4271,13 @@ private fun EpgTab(
             }
         }
 
-        if (epgGuide != null && playlist != null) {
+        if (effectiveChannels.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
                         else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
-                border = BorderStroke(1.dp, if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
+                border = BorderStroke(1.dp, if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
                         else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -3704,26 +4289,35 @@ private fun EpgTab(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                strings.epgMatched(matchedCount, playlist.channels.size),
+                                if (epgGuide != null) strings.epgMatched(matchedCount, effectiveChannels.size) else strings.unmatchedEpgChannels,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
-                                color = if (unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                if (unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
+                                if (epgGuide != null && unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         if (unmatchedChannels.isNotEmpty()) {
-                            Button(
-                                onClick = { showUnmatchedInSettings = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(strings.viewUnmatchedChannels, fontSize = 12.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedButton(
+                                    onClick = { saveFileLauncher.launch("channels_without_epg.txt") }
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.saveChannelsList, fontSize = 12.sp)
+                                }
+                                Button(
+                                    onClick = { showUnmatchedInSettings = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.viewUnmatchedChannels, fontSize = 12.sp)
+                                }
                             }
                         }
                     }
@@ -3814,7 +4408,9 @@ private fun AboutTab(
     playChannelsFullscreen: Boolean,
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
-    onAutoPictureInPictureChanged: (Boolean) -> Unit
+    onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    hideAdultContent: Boolean,
+    onHideAdultContentChanged: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3933,6 +4529,37 @@ private fun AboutTab(
                 Switch(
                     checked = autoPictureInPicture,
                     onCheckedChange = onAutoPictureInPictureChanged
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onHideAdultContentChanged(!hideAdultContent) }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.hideAdultContent, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Text(
+                        strings.hideAdultContentSubtitle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Switch(
+                    checked = hideAdultContent,
+                    onCheckedChange = onHideAdultContentChanged
                 )
             }
         }
@@ -4192,11 +4819,15 @@ private fun AboutTab(
 private fun AddPlaylistDialog(
     onDismiss: () -> Unit,
     onAddUrl: (String, String) -> Unit,
+    onAddXtream: (String, String, String, String) -> Unit,
     onPickFile: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var mode by remember { mutableIntStateOf(0) }
 
     AlertDialog(
@@ -4211,6 +4842,7 @@ private fun AddPlaylistDialog(
                 ) {
                     Tab(selected = mode == 0, onClick = { mode = 0 }, text = { Text(strings.remoteUrl) })
                     Tab(selected = mode == 1, onClick = { mode = 1 }, text = { Text(strings.localFile) })
+                    Tab(selected = mode == 2, onClick = { mode = 2 }, text = { Text(strings.xtreamCodes) })
                 }
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
@@ -4231,11 +4863,45 @@ private fun AddPlaylistDialog(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                } else {
+                } else if (mode == 1) {
                     Text(
                         strings.orSelectLocalFile,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text(strings.xtreamServer) },
+                        placeholder = { Text("https://server.example:port") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text(strings.username) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text(strings.password) },
+                        singleLine = true,
+                        visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {
+                                Icon(
+                                    if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = null
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -4246,8 +4912,14 @@ private fun AddPlaylistDialog(
                     onClick = { onAddUrl(name.trim(), url.trim()) },
                     enabled = url.startsWith("http://", true) || url.startsWith("https://", true)
                 ) { Text(strings.addPlaylist) }
-            } else {
+            } else if (mode == 1) {
                 Button(onClick = onPickFile) { Text(strings.selectFile) }
+            } else {
+                Button(
+                    onClick = { onAddXtream(name.trim(), url.trim(), username.trim(), password) },
+                    enabled = (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
+                            username.isNotBlank() && password.isNotBlank()
+                ) { Text(strings.connect) }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }
@@ -4255,29 +4927,161 @@ private fun AddPlaylistDialog(
 }
 
 @Composable
-private fun RenamePlaylistDialog(
-    initialName: String,
+private fun EditPlaylistDialog(
+    profile: PlaylistProfile,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: (String, ContentSource, SourceRole) -> Unit
 ) {
     val strings = LocalAppStrings.current
-    var name by remember(initialName) { mutableStateOf(initialName) }
+    var name by remember(profile.id) { mutableStateOf(profile.name) }
+    var role by remember(profile.id) { mutableStateOf(profile.role) }
+    var roleDropdownExpanded by remember { mutableStateOf(false) }
+
+    val initialSource = profile.source
+    var serverUrl by remember(profile.id) {
+        mutableStateOf(
+            when (initialSource) {
+                is ContentSource.Xtream -> initialSource.value
+                is ContentSource.RemoteUrl -> initialSource.value
+                is ContentSource.LocalFile -> initialSource.value
+            }
+        )
+    }
+    var username by remember(profile.id) {
+        mutableStateOf((initialSource as? ContentSource.Xtream)?.username ?: "")
+    }
+    var password by remember(profile.id) {
+        mutableStateOf((initialSource as? ContentSource.Xtream)?.password ?: "")
+    }
+    var showPassword by remember { mutableStateOf(false) }
+
+    val canSave = when (initialSource) {
+        is ContentSource.Xtream -> name.isNotBlank() &&
+                (serverUrl.startsWith("http://", true) || serverUrl.startsWith("https://", true)) &&
+                username.isNotBlank() && password.isNotBlank()
+        is ContentSource.RemoteUrl -> name.isNotBlank() &&
+                (serverUrl.startsWith("http://", true) || serverUrl.startsWith("https://", true))
+        is ContentSource.LocalFile -> name.isNotBlank()
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(strings.rename) },
+        title = { Text(strings.editPlaylist) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(strings.playlistName) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(strings.playlistName) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (initialSource is ContentSource.Xtream) {
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = { Text(strings.xtreamServer) },
+                        placeholder = { Text("https://server.example:port") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text(strings.username) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text(strings.password) },
+                        singleLine = true,
+                        visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {
+                                Icon(
+                                    if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = null
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else if (initialSource is ContentSource.RemoteUrl) {
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = { Text(strings.playlistM3u) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Role Dropdown Box
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = sourceRoleLabel(role, strings),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(strings.sourceRole) },
+                        trailingIcon = {
+                            IconButton(onClick = { roleDropdownExpanded = !roleDropdownExpanded }) {
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { roleDropdownExpanded = true }
+                    )
+                    DropdownMenu(
+                        expanded = roleDropdownExpanded,
+                        onDismissRequest = { roleDropdownExpanded = false }
+                    ) {
+                        SourceRole.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(sourceRoleLabel(option, strings)) },
+                                onClick = {
+                                    role = option
+                                    roleDropdownExpanded = false
+                                },
+                                trailingIcon = if (role == option) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null
+                            )
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(name.trim()) },
-                enabled = name.isNotBlank()
+                onClick = {
+                    val updatedSource = when (initialSource) {
+                        is ContentSource.Xtream -> ContentSource.Xtream(
+                            value = serverUrl.trim(),
+                            displayName = name.trim(),
+                            username = username.trim(),
+                            password = password
+                        )
+                        is ContentSource.RemoteUrl -> ContentSource.RemoteUrl(
+                            value = serverUrl.trim(),
+                            displayName = name.trim()
+                        )
+                        is ContentSource.LocalFile -> ContentSource.LocalFile(
+                            value = initialSource.value,
+                            displayName = name.trim()
+                        )
+                    }
+                    onConfirm(name.trim(), updatedSource, role)
+                },
+                enabled = canSave
             ) { Text(strings.save) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }
@@ -4480,6 +5284,25 @@ private fun StartupUpdateDialog(
     }
 }
 
+private fun generateUnmatchedChannelsText(channels: List<PlaylistChannel>): String {
+    val sb = StringBuilder()
+    sb.appendLine("================================================================================")
+    sb.appendLine("FortressTV - Channels Without EPG Match")
+    sb.appendLine("Total Channels: ${channels.size}")
+    sb.appendLine("Generated: ${DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(LocalDateTime.now())}")
+    sb.appendLine("================================================================================")
+    sb.appendLine()
+    sb.appendLine("Format: [Channel Name] | Group: [Category] | EPG ID: [tvg-id]")
+    sb.appendLine("--------------------------------------------------------------------------------")
+    channels.forEachIndexed { index, ch ->
+        val group = ch.group?.takeIf { it.isNotBlank() } ?: "No Group"
+        val tvgId = ch.tvgId?.takeIf { it.isNotBlank() } ?: "No tvg-id"
+        sb.appendLine("${index + 1}. ${ch.name} | Group: $group | EPG ID: $tvgId")
+    }
+    sb.appendLine("--------------------------------------------------------------------------------")
+    return sb.toString()
+}
+
 @Composable
 private fun UnmatchedEpgDialog(
     unmatchedChannels: List<PlaylistChannel>,
@@ -4487,6 +5310,38 @@ private fun UnmatchedEpgDialog(
     onSelectChannel: (PlaylistChannel) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val exportText = remember(unmatchedChannels) { generateUnmatchedChannelsText(unmatchedChannels) }
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(exportText.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, strings.channelsListSaved, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
+    fun shareList() {
+        val sendIntent = Intent().apply {
+            action = Intent.ACTION_SEND
+            putExtra(Intent.EXTRA_TEXT, exportText)
+            putExtra(Intent.EXTRA_TITLE, strings.unmatchedEpgChannels)
+            type = "text/plain"
+        }
+        val shareIntent = Intent.createChooser(sendIntent, strings.shareChannelsList)
+        context.startActivity(shareIntent)
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
@@ -4516,6 +5371,12 @@ private fun UnmatchedEpgDialog(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium
                         )
+                    }
+                    IconButton(onClick = ::shareList) {
+                        Icon(Icons.Default.Share, contentDescription = strings.shareChannelsList)
+                    }
+                    IconButton(onClick = { saveFileLauncher.launch("channels_without_epg.txt") }) {
+                        Icon(Icons.Default.Download, contentDescription = strings.saveChannelsList)
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = strings.close)
@@ -4600,11 +5461,24 @@ private fun UnmatchedEpgDialog(
                 }
 
                 Spacer(Modifier.height(14.dp))
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(strings.close)
+                    OutlinedButton(
+                        onClick = { saveFileLauncher.launch("channels_without_epg.txt") },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.saveChannelsList, fontSize = 13.sp, maxLines = 1)
+                    }
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(strings.close, fontSize = 13.sp)
+                    }
                 }
             }
         }

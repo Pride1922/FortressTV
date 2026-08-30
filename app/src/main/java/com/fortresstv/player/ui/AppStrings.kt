@@ -40,6 +40,15 @@ interface Strings {
     val noFavoriteChannels: String
     val addFavorite: String
     val removeFavorite: String
+    val noMoviesAvailable: String
+    val noSeriesAvailable: String
+    val allCategories: String
+    val searchMovies: String
+    val searchSeries: String
+    val loadingEpisodes: String
+    val noEpisodesAvailable: String
+    fun seasonLabel(season: Int): String
+    fun episodeLabel(season: Int, episode: Int): String
     fun searchInGroup(group: String): String
     val searchChannels: String
     val noChannelsMatch: String
@@ -52,6 +61,7 @@ interface Strings {
     val retry: String
     val refresh: String
     val edit: String
+    val editPlaylist: String
     val rename: String
     val active: String
     val enabledSource: String
@@ -73,6 +83,10 @@ interface Strings {
     fun tvgIdNotFound(id: String): String
     fun unmatchedEpgCount(count: Int): String
     val viewUnmatchedChannels: String
+    val saveChannelsList: String
+    val shareChannelsList: String
+    val channelsListSaved: String
+    val copiedToClipboard: String
     val xmltvGuide: String
     val now: String
     val next: String
@@ -138,6 +152,11 @@ interface Strings {
     val roleEverything: String
     val remoteUrl: String
     val localFile: String
+    val xtreamCodes: String
+    val xtreamServer: String
+    val username: String
+    val password: String
+    val connect: String
     val selectFile: String
     val deletePlaylistConfirmTitle: String
     fun deletePlaylistConfirmMsg(name: String): String
@@ -168,6 +187,8 @@ interface Strings {
     val updateNow: String
     val installUpdate: String
     val later: String
+    val hideAdultContent: String
+    val hideAdultContentSubtitle: String
     val newUpdateAvailable: String
     fun updateFailed(error: String): String
 }
@@ -189,6 +210,15 @@ object EnglishStrings : Strings {
     override val noFavoriteChannels = "Favorite channels will appear here."
     override val addFavorite = "Add to Favorites"
     override val removeFavorite = "Remove from Favorites"
+    override val noMoviesAvailable = "No Movies are available from the enabled Xtream sources."
+    override val noSeriesAvailable = "No Series are available from the enabled Xtream sources."
+    override val allCategories = "All"
+    override val searchMovies = "Search movies"
+    override val searchSeries = "Search series"
+    override val loadingEpisodes = "Loading episodes..."
+    override val noEpisodesAvailable = "No episodes are available for this Series."
+    override fun seasonLabel(season: Int) = "Season $season"
+    override fun episodeLabel(season: Int, episode: Int) = "S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
     override fun searchInGroup(group: String) = "Search in $group"
     override val searchChannels = "Search channels"
     override val noChannelsMatch = "No channels match your search."
@@ -201,6 +231,7 @@ object EnglishStrings : Strings {
     override val retry = "Retry"
     override val refresh = "Refresh"
     override val edit = "Edit"
+    override val editPlaylist = "Edit Playlist"
     override val rename = "Rename"
     override val active = "Active"
     override val enabledSource = "Enabled"
@@ -222,6 +253,10 @@ object EnglishStrings : Strings {
     override fun tvgIdNotFound(id: String) = "tvg-id \"$id\" not found in XMLTV"
     override fun unmatchedEpgCount(count: Int) = "$count missing"
     override val viewUnmatchedChannels = "View unmatched channels"
+    override val saveChannelsList = "Save Channels List"
+    override val shareChannelsList = "Share Channels List"
+    override val channelsListSaved = "Channel list saved successfully"
+    override val copiedToClipboard = "Copied to clipboard"
     override val xmltvGuide = "XMLTV guide"
     override val now = "NOW"
     override val next = "NEXT"
@@ -287,6 +322,11 @@ object EnglishStrings : Strings {
     override val roleEverything = "Everything"
     override val remoteUrl = "Remote URL (HTTP/HTTPS)"
     override val localFile = "Local File (M3U/M3U8)"
+    override val xtreamCodes = "Xtream Codes"
+    override val xtreamServer = "Server URL"
+    override val username = "Username"
+    override val password = "Password"
+    override val connect = "Connect"
     override val selectFile = "Select File"
     override val deletePlaylistConfirmTitle = "Delete Playlist"
     override fun deletePlaylistConfirmMsg(name: String) = "Are you sure you want to delete \"$name\"? This action cannot be undone."
@@ -318,6 +358,8 @@ object EnglishStrings : Strings {
     override val updateNow = "Update Now"
     override val installUpdate = "Install Update"
     override val later = "Later"
+    override val hideAdultContent = "Hide Adult Content"
+    override val hideAdultContentSubtitle = "Filter out adult (XXX / 18+) channels, movies, and series"
     override val newUpdateAvailable = "New Update Available"
     override fun updateFailed(error: String) = "Update failed: $error"
 }
@@ -339,6 +381,15 @@ object PortugueseStrings : Strings {
     override val noFavoriteChannels = "Os canais favoritos aparecerão aqui."
     override val addFavorite = "Adicionar aos Favoritos"
     override val removeFavorite = "Remover dos Favoritos"
+    override val noMoviesAvailable = "Não existem Filmes disponíveis nas fontes Xtream ativas."
+    override val noSeriesAvailable = "Não existem Séries disponíveis nas fontes Xtream ativas."
+    override val allCategories = "Tudo"
+    override val searchMovies = "Pesquisar filmes"
+    override val searchSeries = "Pesquisar séries"
+    override val loadingEpisodes = "A carregar episódios..."
+    override val noEpisodesAvailable = "Não existem episódios disponíveis para esta Série."
+    override fun seasonLabel(season: Int) = "Temporada $season"
+    override fun episodeLabel(season: Int, episode: Int) = "T${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
     override fun searchInGroup(group: String) = "Pesquisar em $group"
     override val searchChannels = "Pesquisar canais"
     override val noChannelsMatch = "Nenhum canal corresponde à sua pesquisa."
@@ -351,6 +402,7 @@ object PortugueseStrings : Strings {
     override val retry = "Tentar novamente"
     override val refresh = "Atualizar"
     override val edit = "Editar"
+    override val editPlaylist = "Editar Lista"
     override val rename = "Mudar o nome"
     override val active = "Ativo"
     override val enabledSource = "Ativa"
@@ -372,6 +424,10 @@ object PortugueseStrings : Strings {
     override fun tvgIdNotFound(id: String) = "tvg-id \"$id\" não encontrado no XMLTV"
     override fun unmatchedEpgCount(count: Int) = "$count em falta"
     override val viewUnmatchedChannels = "Ver canais sem correspondência"
+    override val saveChannelsList = "Guardar lista de canais"
+    override val shareChannelsList = "Partilhar lista de canais"
+    override val channelsListSaved = "Lista de canais guardada com sucesso"
+    override val copiedToClipboard = "Copiado para a área de transferência"
     override val xmltvGuide = "Guia XMLTV"
     override val now = "Agora"
     override val next = "SEGUINTE"
@@ -437,6 +493,11 @@ object PortugueseStrings : Strings {
     override val roleEverything = "Tudo"
     override val remoteUrl = "URL Remoto (HTTP/HTTPS)"
     override val localFile = "Ficheiro Local (M3U/M3U8)"
+    override val xtreamCodes = "Xtream Codes"
+    override val xtreamServer = "URL do servidor"
+    override val username = "Nome de utilizador"
+    override val password = "Palavra-passe"
+    override val connect = "Ligar"
     override val selectFile = "Selecionar Ficheiro"
     override val deletePlaylistConfirmTitle = "Eliminar Lista"
     override fun deletePlaylistConfirmMsg(name: String) = "Tem a certeza de que deseja eliminar \"$name\"? Esta ação não pode ser anulada."
@@ -468,6 +529,8 @@ object PortugueseStrings : Strings {
     override val updateNow = "Atualizar Agora"
     override val installUpdate = "Instalar Atualização"
     override val later = "Mais Tarde"
+    override val hideAdultContent = "Ocultar Conteúdo para Adultos"
+    override val hideAdultContentSubtitle = "Filtrar canais, filmes e séries para adultos (XXX / 18+)"
     override val newUpdateAvailable = "Nova Atualização Disponível"
     override fun updateFailed(error: String) = "Falha na atualização: $error"
 }

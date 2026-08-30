@@ -4,8 +4,10 @@
 
 - Phase 0: complete
 - Phase 1: complete — multiple enabled sources, independent caches, source roles/order, deterministic Live TV merging, source filters, and Uncategorized navigation
-- Phase 2: in progress — primary library navigation and persistent favorite channels are implemented locally; broader history and watch-state work remains
-- Phases 3–5: pending
+- Phase 2: in progress — primary library navigation and persistent favorite channels are complete; broader history and watch-state work remains
+- Phase 3: complete — encrypted Xtream sources, cached Movie catalogues, poster grids, search, and Movie playback
+- Phase 4: complete — Xtream Series catalogues and lazy episode loading/playback
+- Phase 5: in progress — Adult (XXX) content filtering, EPG smart normalized auto-matching (fuzzy fallback for channels missing tvg-id), unmatched channels exporter, source credential/role editor with password visibility toggles
 
 ## Product direction
 
@@ -23,6 +25,7 @@ Users should not have to switch the entire application between a Live TV source 
 
 - Multiple sources can be enabled simultaneously.
 - The existing M3U/XMLTV Live TV experience remains supported and fast.
+- Xtream Codes API source type fully supported for Live TV, Movies, and Series with encrypted credentials.
 - A second source may provide Movies and Series without replacing Live TV.
 - Each source can be assigned a role: Automatic, Live TV, Movies, Series, Movies and Series, or Everything.
 - Source order is user-controlled. Within a source, provider category and item order are preserved by default.
@@ -31,6 +34,8 @@ Users should not have to switch the entire application between a Live TV source 
 - Large VOD catalogues are lazy, cached, and indexed; they are not fully materialized at startup.
 - Picture-in-Picture remains fullscreen-only.
 - English and Portuguese (Portugal) ship together for every feature.
+- Adult/XXX content filter toggle hides adult categories and streams across Live TV, Movies, Series, and EPG.
+- Smart EPG name matching (`EpgMatcher`) normalizes channel names (stripping country prefixes like `PT:`, quality tags like `FHD`/`4K`/`HEVC`, and accents) to auto-match XMLTV display-names when `tvg-id` is absent.
 
 ## User-library concepts
 
@@ -61,24 +66,21 @@ Each configured source needs:
 
 - Stable source ID
 - User-visible name
-- Source type
+- Source type (`M3U_REMOTE`, `M3U_LOCAL`, `XTREAM`)
 - Enabled state
-- Library role
+- Library role (`AUTOMATIC`, `LIVE_TV`, `MOVIES`, `SERIES`, `MOVIES_AND_SERIES`, `EVERYTHING`)
 - User-controlled priority/order
-- Encrypted connection configuration
+- Encrypted connection configuration (Android KeyStore-backed AES-GCM)
 - Independent refresh policy and last-success metadata
 - Independent cache generation
 - Independent error state
 
 Each imported item needs a stable identity based on its source ID and source-local ID. Display names and stream URLs alone are not sufficiently stable identifiers.
 
-Initial supported source paths:
+Supported source paths:
 
-1. Existing M3U/M3U8 URL or local file for Live TV.
-2. Additional M3U/M3U8 sources with manual or heuristic content classification when metadata is limited.
-3. A richer VOD source type after confirming the legitimate provider format. Xtream-compatible APIs may be considered because they expose Movies, Series, seasons, episodes, artwork, and metadata explicitly.
-
-Stalker/MAC portal support is not planned at this stage.
+1. M3U/M3U8 URL or local file for Live TV, Movies, and Series.
+2. Xtream Codes API servers (Server URL, Username, Password) with lazy episode resolution.
 
 ## Library model
 
@@ -149,6 +151,8 @@ Live TV and EPG responsiveness must not regress when VOD is added.
 ### Phase 5 — Library refinement
 
 - Hidden items and categories
+- Adult content (XXX) filtering across all content types
+- EPG smart normalized auto-matching (`EpgMatcher`) and export of unmatched channels
 - Category reorder/rename where safe
 - Manual EPG assignment
 - Audio and subtitle track selection
@@ -172,12 +176,3 @@ These are intentionally outside the first multi-source/VOD delivery:
 
 They may be reconsidered after the multi-source library is stable and measured.
 
-## Next decision
-
-Before implementing the VOD parser, identify the VOD source format without exposing real credentials:
-
-- M3U/M3U8 URL or local file
-- Xtream-compatible server URL plus username/password
-- Another documented, authorized API
-
-The format determines whether FortressTV receives proper Movie/Series metadata or must rely on configurable M3U classification rules.

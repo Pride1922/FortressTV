@@ -54,6 +54,7 @@ object SourceReader {
                 tempFile.renameTo(targetFile)
                 BufferedInputStream(FileInputStream(targetFile))
             }
+            is ContentSource.Xtream -> error("Xtream sources use the catalogue API")
         }
     }
 
@@ -83,6 +84,7 @@ object SourceReader {
                 if (size == null || modified == null || modified <= 0L) null else "local:${source.value}:$size:$modified"
             }
         }.getOrNull()
+        is ContentSource.Xtream -> null
     }
 
     suspend fun open(context: Context, source: ContentSource): InputStream = withContext(Dispatchers.IO) {
@@ -90,6 +92,7 @@ object SourceReader {
             is ContentSource.LocalFile -> context.contentResolver.openInputStream(Uri.parse(source.value))
                 ?: error("The saved file is no longer available")
             is ContentSource.RemoteUrl -> openUrl(source.value)
+            is ContentSource.Xtream -> error("Xtream sources use the catalogue API")
         }
     }
 

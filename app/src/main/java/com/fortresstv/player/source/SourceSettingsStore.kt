@@ -56,7 +56,16 @@ class SourceSettingsStore(context: Context) {
             val displayName = obj.optString("displayName", name)
             val lastUpdated = obj.optLong("lastUpdated", 0L)
             val channelCount = obj.optInt("channelCount", 0)
-            val source = if (type == "file") ContentSource.LocalFile(value, displayName) else ContentSource.RemoteUrl(value, displayName)
+            val source = when (type) {
+                "file" -> ContentSource.LocalFile(value, displayName)
+                "xtream" -> ContentSource.Xtream(
+                    value = value,
+                    displayName = displayName,
+                    username = obj.optString("username"),
+                    password = obj.optString("password")
+                )
+                else -> ContentSource.RemoteUrl(value, displayName)
+            }
             val activeId = getActivePlaylistId()
             val enabled = if (obj.has("enabled")) obj.optBoolean("enabled", true)
             else activeId == null || activeId == id
@@ -99,7 +108,11 @@ class SourceSettingsStore(context: Context) {
             val obj = JSONObject().apply {
                 put("id", p.id)
                 put("name", p.name)
-                put("type", if (p.source is ContentSource.LocalFile) "file" else "url")
+                put("type", when (p.source) {
+                    is ContentSource.LocalFile -> "file"
+                    is ContentSource.RemoteUrl -> "url"
+                    is ContentSource.Xtream -> "xtream"
+                })
                 put("value", p.source.value)
                 put("displayName", p.source.displayName)
                 put("lastUpdated", p.lastUpdated)
@@ -107,6 +120,10 @@ class SourceSettingsStore(context: Context) {
                 put("enabled", p.enabled)
                 put("role", p.role.name)
                 put("order", p.order)
+                if (p.source is ContentSource.Xtream) {
+                    put("username", p.source.username)
+                    put("password", p.source.password)
+                }
             }
             array.put(obj)
         }
@@ -173,6 +190,13 @@ class SourceSettingsStore(context: Context) {
 
     fun setAutoPictureInPicture(enabled: Boolean) {
         preferences.edit().putBoolean("auto_picture_in_picture", enabled).apply()
+    }
+
+    fun hideAdultContent(): Boolean =
+        preferences.getBoolean("hide_adult_content", false)
+
+    fun setHideAdultContent(enabled: Boolean) {
+        preferences.edit().putBoolean("hide_adult_content", enabled).apply()
     }
 
     private fun lastLegacyPlaylistUpdate(): Long = preferences.getLong("playlist_last_update", 0L)

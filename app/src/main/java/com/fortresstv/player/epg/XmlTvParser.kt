@@ -62,9 +62,14 @@ object XmlTvParser {
         override fun endElement(uri: String?, localName: String?, qName: String) {
             val value = text.toString().trim().ifBlank { null }
             when (qName.lowercase()) {
-                "display-name" -> if (channel?.displayName == null) channel?.displayName = value
+                "display-name" -> if (value != null) channel?.displayNames?.add(value)
                 "channel" -> channel?.takeIf { it.id.isNotBlank() }?.let {
-                    channels[it.id] = EpgChannel(it.id, it.displayName, it.iconUrl)
+                    channels[it.id] = EpgChannel(
+                        id = it.id,
+                        displayName = it.displayNames.firstOrNull(),
+                        iconUrl = it.iconUrl,
+                        displayNames = it.displayNames.toList()
+                    )
                 }.also { channel = null }
                 "title" -> programme?.title = value
                 "desc" -> programme?.description = value
@@ -99,7 +104,7 @@ object XmlTvParser {
 
         private data class MutableChannel(
             val id: String,
-            var displayName: String? = null,
+            val displayNames: MutableList<String> = mutableListOf(),
             var iconUrl: String? = null
         )
 

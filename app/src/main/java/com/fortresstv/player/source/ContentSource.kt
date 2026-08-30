@@ -13,4 +13,11 @@ sealed interface ContentSource {
         override val value: String,
         override val displayName: String
     ) : ContentSource
+
+    data class Xtream(
+        override val value: String,
+        override val displayName: String,
+        val username: String,
+        val password: String
+    ) : ContentSource
 }
