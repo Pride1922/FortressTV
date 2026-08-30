@@ -150,6 +150,9 @@ import com.fortresstv.player.epg.XmlTvTime
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceReader
 import com.fortresstv.player.source.SourceSettingsStore
+import com.fortresstv.player.library.VodProgressEntry
+import com.fortresstv.player.library.VodProgressKind
+import com.fortresstv.player.library.VodProgressStore
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.xtream.XtreamCatalog
@@ -1544,6 +1547,20 @@ fun isAdultContent(name: String?, groupOrCategory: String?): Boolean {
 
 private enum class LibraryDestination { LIVE_TV, MOVIES, SERIES, FAVORITES }
 
+private data class VodPlaybackRequest(
+    val key: String,
+    val kind: VodProgressKind,
+    val sourceId: String,
+    val itemId: String,
+    val seriesId: Int? = null,
+    val title: String,
+    val posterUrl: String?,
+    val containerExtension: String,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val streamUrl: String
+)
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun FortressLibrary(
@@ -1572,11 +1589,13 @@ private fun FortressLibrary(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val progressStore = remember { VodProgressStore(context.applicationContext) }
+    var progressEntries by remember { mutableStateOf(progressStore.entries()) }
     val libraryConfiguration = LocalConfiguration.current
     val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
     var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
-    var vodPlayback by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
     var globalSidebarExpanded by remember { mutableStateOf(false) }
     // Keep catalogue positions alive while the user moves between primary destinations.
     val movieGridState = rememberLazyGridState()
@@ -1641,6 +1660,11 @@ private fun FortressLibrary(
                 LibraryDestination.MOVIES -> XtreamMoviesScreen(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
+                    continueWatching = progressEntries.filter { it.kind == VodProgressKind.MOVIE },
+                    onContinueWatching = { entry ->
+                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
+                    },
+                    onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
                     hideAdultContent = hideAdultContent,
                     gridState = movieGridState,
                     movieWatchlistIds = movieWatchlistIds,
@@ -1648,7 +1672,16 @@ private fun FortressLibrary(
                     onPlay = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
-                            vodPlayback = movie.name to XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            vodPlayback = VodPlaybackRequest(
+                                key = movie.libraryId(catalog.sourceId),
+                                kind = VodProgressKind.MOVIE,
+                                sourceId = catalog.sourceId,
+                                itemId = movie.id.toString(),
+                                title = movie.name,
+                                posterUrl = movie.posterUrl,
+                                containerExtension = movie.containerExtension,
+                                streamUrl = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            )
                         }
                     }
                 )
@@ -1658,8 +1691,27 @@ private fun FortressLibrary(
                     hideAdultContent = hideAdultContent,
                     gridState = seriesGridState,
                     followedSeriesIds = followedSeriesIds,
+                    continueWatching = progressEntries.filter { it.kind == VodProgressKind.EPISODE },
+                    onContinueWatching = { entry ->
+                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
+                    },
+                    onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
                     onToggleFollow = onToggleSeriesFollow,
-                    onPlay = { title, url -> vodPlayback = title to url }
+                    onPlay = { catalog, series, episode, url ->
+                        vodPlayback = VodPlaybackRequest(
+                            key = "episode:${catalog.sourceId}:${episode.id}",
+                            kind = VodProgressKind.EPISODE,
+                            sourceId = catalog.sourceId,
+                            itemId = episode.id,
+                            seriesId = series.id,
+                            title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
+                            posterUrl = episode.posterUrl ?: series.coverUrl,
+                            containerExtension = episode.containerExtension,
+                            season = episode.season,
+                            episode = episode.episodeNumber,
+                            streamUrl = url
+                        )
+                    }
                 )
                 LibraryDestination.FAVORITES -> FavoriteLibraryScreen(
                     channels = effectivePlaylist.channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true },
@@ -1677,10 +1729,23 @@ private fun FortressLibrary(
                     onPlayMovie = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
-                            vodPlayback = movie.name to XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            vodPlayback = VodPlaybackRequest(
+                                key = movie.libraryId(catalog.sourceId), kind = VodProgressKind.MOVIE,
+                                sourceId = catalog.sourceId, itemId = movie.id.toString(), title = movie.name,
+                                posterUrl = movie.posterUrl, containerExtension = movie.containerExtension,
+                                streamUrl = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            )
                         }
                     },
-                    onPlayEpisode = { title, url -> vodPlayback = title to url },
+                    onPlayEpisode = { catalog, series, episode, url ->
+                        vodPlayback = VodPlaybackRequest(
+                            key = "episode:${catalog.sourceId}:${episode.id}", kind = VodProgressKind.EPISODE,
+                            sourceId = catalog.sourceId, itemId = episode.id, seriesId = series.id,
+                            title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
+                            posterUrl = episode.posterUrl ?: series.coverUrl, containerExtension = episode.containerExtension,
+                            season = episode.season, episode = episode.episodeNumber, streamUrl = url
+                        )
+                    },
                     onWatch = { channel ->
                         requestedChannel = channel
                         destination = LibraryDestination.LIVE_TV
@@ -1688,8 +1753,28 @@ private fun FortressLibrary(
                 )
             }
         }
-        vodPlayback?.let { (title, url) ->
-            VodPlayerDialog(title = title, streamUrl = url, onDismiss = { vodPlayback = null })
+        vodPlayback?.let { request ->
+            val previous = progressEntries.firstOrNull { it.key == request.key }
+            VodPlayerDialog(
+                request = request,
+                initialPositionMs = previous?.positionMs ?: 0L,
+                loadNextEpisode = if (request.kind == VodProgressKind.EPISODE) {
+                    suspend { resolveNextEpisodePlayback(request, xtreamProfiles, context) }
+                } else null,
+                onPlayNext = { next -> vodPlayback = next },
+                onSaveProgress = { positionMs, durationMs ->
+                    progressEntries = progressStore.save(
+                        VodProgressEntry(
+                            key = request.key, kind = request.kind, sourceId = request.sourceId,
+                            itemId = request.itemId, seriesId = request.seriesId, title = request.title,
+                            posterUrl = request.posterUrl, containerExtension = request.containerExtension,
+                            season = request.season, episode = request.episode, positionMs = positionMs,
+                            durationMs = durationMs, updatedAtMs = System.currentTimeMillis()
+                        )
+                    )
+                },
+                onDismiss = { vodPlayback = null }
+            )
         }
     }
 }
@@ -1804,10 +1889,118 @@ private data class CatalogCategory(
     val category: XtreamCategory
 )
 
+private fun resolveVodPlayback(
+    entry: VodProgressEntry,
+    catalogs: List<XtreamCatalog>,
+    profiles: List<PlaylistProfile>,
+    context: Context
+): VodPlaybackRequest? {
+    val source = profiles.firstOrNull { it.id == entry.sourceId }?.source as? ContentSource.Xtream ?: return null
+    val client = XtreamClient(context.applicationContext, entry.sourceId, source)
+    val streamUrl = when (entry.kind) {
+        VodProgressKind.MOVIE -> {
+            val movie = catalogs.firstOrNull { it.sourceId == entry.sourceId }
+                ?.movies?.firstOrNull { it.id.toString() == entry.itemId } ?: return null
+            client.movieStreamUrl(movie)
+        }
+        VodProgressKind.EPISODE -> client.episodeStreamUrl(
+            XtreamEpisode(
+                id = entry.itemId,
+                title = entry.title,
+                season = entry.season ?: 0,
+                episodeNumber = entry.episode ?: 0,
+                containerExtension = entry.containerExtension,
+                posterUrl = entry.posterUrl,
+                plot = null
+            )
+        )
+    }
+    return VodPlaybackRequest(
+        key = entry.key, kind = entry.kind, sourceId = entry.sourceId, itemId = entry.itemId,
+        seriesId = entry.seriesId, title = entry.title, posterUrl = entry.posterUrl,
+        containerExtension = entry.containerExtension, season = entry.season, episode = entry.episode,
+        streamUrl = streamUrl
+    )
+}
+
+private suspend fun resolveNextEpisodePlayback(
+    current: VodPlaybackRequest,
+    profiles: List<PlaylistProfile>,
+    context: Context
+): VodPlaybackRequest? {
+    val seriesId = current.seriesId ?: return null
+    val source = profiles.firstOrNull { it.id == current.sourceId }?.source as? ContentSource.Xtream ?: return null
+    val client = XtreamClient(context.applicationContext, current.sourceId, source)
+    val episodes = client.loadSeriesDetails(seriesId).episodes
+    val currentIndex = episodes.indexOfFirst { it.id == current.itemId }
+    val next = episodes.getOrNull(currentIndex + 1) ?: return null
+    return VodPlaybackRequest(
+        key = "episode:${current.sourceId}:${next.id}",
+        kind = VodProgressKind.EPISODE,
+        sourceId = current.sourceId,
+        itemId = next.id,
+        seriesId = seriesId,
+        title = next.title,
+        posterUrl = next.posterUrl ?: current.posterUrl,
+        containerExtension = next.containerExtension,
+        season = next.season,
+        episode = next.episodeNumber,
+        streamUrl = client.episodeStreamUrl(next)
+    )
+}
+
+@Composable
+private fun ContinueWatchingRow(
+    entries: List<VodProgressEntry>,
+    onClick: (VodProgressEntry) -> Unit,
+    onRemove: (VodProgressEntry) -> Unit
+) {
+    if (entries.isEmpty()) return
+    val strings = LocalAppStrings.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        Text(strings.continueWatching, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(entries.take(20), key = { "continue:${it.key}" }) { entry ->
+                Surface(
+                    onClick = { onClick(entry) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.width(230.dp)
+                ) {
+                    Column {
+                        Box(Modifier.fillMaxWidth().height(6.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            Box(
+                                Modifier.fillMaxHeight().fillMaxWidth(entry.progressFraction)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                entry.title,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(start = 12.dp, top = 12.dp, bottom = 12.dp)
+                            )
+                            IconButton(onClick = { onRemove(entry) }) {
+                                Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun XtreamMoviesScreen(
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
+    continueWatching: List<VodProgressEntry>,
+    onContinueWatching: (VodProgressEntry) -> Unit,
+    onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     hideAdultContent: Boolean = false,
     gridState: LazyGridState,
     movieWatchlistIds: Set<String>,
@@ -1863,7 +2056,10 @@ private fun XtreamMoviesScreen(
         onSelectCategory = { selectedCategory = it },
         emptyMessage = strings.noMoviesAvailable,
         itemCount = movies.size,
-        gridState = gridState
+        gridState = gridState,
+        header = {
+            ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
+        }
     ) {
         gridItems(
             movies,
@@ -1907,8 +2103,11 @@ private fun XtreamSeriesScreen(
     hideAdultContent: Boolean = false,
     gridState: LazyGridState,
     followedSeriesIds: Set<String>,
+    continueWatching: List<VodProgressEntry>,
+    onContinueWatching: (VodProgressEntry) -> Unit,
+    onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     onToggleFollow: (String, XtreamSeries) -> Unit,
-    onPlay: (String, String) -> Unit
+    onPlay: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -1959,7 +2158,10 @@ private fun XtreamSeriesScreen(
         onSelectCategory = { selectedCategory = it },
         emptyMessage = strings.noSeriesAvailable,
         itemCount = series.size,
-        gridState = gridState
+        gridState = gridState,
+        header = {
+            ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
+        }
     ) {
         gridItems(
             series,
@@ -1987,7 +2189,7 @@ private fun XtreamSeriesScreen(
                 isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
                 onToggleFollow = { onToggleFollow(entry.catalog.sourceId, entry.series) },
                 onDismiss = { selected = null },
-                onPlay = { episode, url -> onPlay(episode.title, url) }
+                onPlay = { episode, url -> onPlay(entry.catalog, entry.series, episode, url) }
             )
         }
     }
@@ -2006,6 +2208,7 @@ private fun LibraryCatalogScaffold(
     emptyMessage: String,
     itemCount: Int,
     gridState: LazyGridState,
+    header: @Composable () -> Unit = {},
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -2057,6 +2260,7 @@ private fun LibraryCatalogScaffold(
             }
         }
         Spacer(Modifier.height(14.dp))
+        header()
         if (itemCount == 0) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp)
@@ -2504,25 +2708,61 @@ private fun SeriesEpisodesDialog(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-private fun VodPlayerDialog(title: String, streamUrl: String, onDismiss: () -> Unit) {
+private fun VodPlayerDialog(
+    request: VodPlaybackRequest,
+    initialPositionMs: Long,
+    loadNextEpisode: (suspend () -> VodPlaybackRequest?)?,
+    onPlayNext: (VodPlaybackRequest) -> Unit,
+    onSaveProgress: (Long, Long) -> Unit,
+    onDismiss: () -> Unit
+) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
+    val scope = rememberCoroutineScope()
     val renderersFactory = remember(context) {
         DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
     }
-    val player = remember(streamUrl) { ExoPlayer.Builder(context, renderersFactory).build() }
+    val player = remember(request.streamUrl) { ExoPlayer.Builder(context, renderersFactory).build() }
+    var resumePositionMs by remember(request.key) { mutableLongStateOf(initialPositionMs) }
+    var resumeDecisionMade by remember(request.key) { mutableStateOf(initialPositionMs < 10_000L) }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var nextEpisode by remember(request.key) { mutableStateOf<VodPlaybackRequest?>(null) }
+    var loadingNextEpisode by remember(request.key) { mutableStateOf(false) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) { playbackState = state }
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
+                if (state == Player.STATE_ENDED) {
+                    onSaveProgress(player.duration.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+                    if (loadNextEpisode != null && !loadingNextEpisode && nextEpisode == null) {
+                        loadingNextEpisode = true
+                        scope.launch {
+                            nextEpisode = runCatching { loadNextEpisode() }.getOrNull()
+                            loadingNextEpisode = false
+                        }
+                    }
+                }
+            }
             override fun onPlayerError(error: PlaybackException) { playbackError = error.message ?: strings.playbackError }
         }
         player.addListener(listener)
-        player.setMediaItem(MediaItem.fromUri(streamUrl))
+        onDispose {
+            onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    LaunchedEffect(player, resumeDecisionMade) {
+        if (!resumeDecisionMade) return@LaunchedEffect
+        player.setMediaItem(MediaItem.fromUri(request.streamUrl))
         player.prepare()
+        if (resumePositionMs > 0L) player.seekTo(resumePositionMs)
         player.play()
-        onDispose { player.removeListener(listener); player.release() }
+        while (true) {
+            delay(10_000)
+            onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+        }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ImmersiveSystemBars()
@@ -2544,7 +2784,50 @@ private fun VodPlayerDialog(title: String, streamUrl: String, onDismiss: () -> U
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
                 }
                 Spacer(Modifier.width(10.dp))
-                Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(request.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (!resumeDecisionMade) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.align(Alignment.Center).widthIn(max = 430.dp)
+                ) {
+                    Column(Modifier.padding(24.dp)) {
+                        Text(strings.resumePlayback, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text(strings.resumePlaybackDescription, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(20.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(onClick = {
+                                resumePositionMs = 0L
+                                resumeDecisionMade = true
+                            }, modifier = Modifier.weight(1f)) { Text(strings.restartPlayback) }
+                            Button(onClick = { resumeDecisionMade = true }, modifier = Modifier.weight(1f)) {
+                                Text(strings.resume)
+                            }
+                        }
+                    }
+                }
+            }
+            nextEpisode?.let { next ->
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.align(Alignment.Center).widthIn(max = 430.dp)
+                ) {
+                    Column(Modifier.padding(24.dp)) {
+                        Text(strings.nextEpisode, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text(next.title, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(20.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(strings.close) }
+                            Button(onClick = { onPlayNext(next) }, modifier = Modifier.weight(1f)) {
+                                Text(strings.playNextEpisode)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2594,7 +2877,7 @@ private fun FavoriteLibraryScreen(
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
     onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
     onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
-    onPlayEpisode: (String, String) -> Unit,
+    onPlayEpisode: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
     onWatch: (PlaylistChannel) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -2780,7 +3063,7 @@ private fun FavoriteLibraryScreen(
                 isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onDismiss = { selectedSeries = null },
-                onPlay = { episode, url -> onPlayEpisode(episode.title, url) }
+                onPlay = { episode, url -> onPlayEpisode(entry.catalog, entry.series, episode, url) }
             )
         }
     }

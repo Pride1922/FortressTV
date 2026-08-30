@@ -136,6 +136,14 @@ interface Strings {
     val aspectZoom: String
     val aspectFit: String
     val playbackError: String
+    val resumePlayback: String
+    val resumePlaybackDescription: String
+    val resume: String
+    val restartPlayback: String
+    val continueWatching: String
+    val removeFromContinueWatching: String
+    val nextEpisode: String
+    val playNextEpisode: String
 
     val welcomeTitle: String
     val welcomeSubtitle: String
@@ -332,6 +340,14 @@ object EnglishStrings : Strings {
     override val aspectZoom = "Aspect: Zoom"
     override val aspectFit = "Aspect: Fit"
     override val playbackError = "Unable to play this channel."
+    override val resumePlayback = "Continue watching?"
+    override val resumePlaybackDescription = "Resume from where you stopped or restart from the beginning."
+    override val resume = "Resume"
+    override val restartPlayback = "Restart"
+    override val continueWatching = "Continue watching"
+    override val removeFromContinueWatching = "Remove from Continue watching"
+    override val nextEpisode = "Next episode"
+    override val playNextEpisode = "Play next"
 
     override val welcomeTitle = "Secure IPTV Player"
     override val welcomeSubtitle = "Private by default. Hardware-backed AES-256 encrypted storage."
@@ -529,6 +545,14 @@ object PortugueseStrings : Strings {
     override val aspectZoom = "Proporção: Zoom"
     override val aspectFit = "Proporção: Ajustar"
     override val playbackError = "Não foi possível reproduzir este canal."
+    override val resumePlayback = "Continuar a ver?"
+    override val resumePlaybackDescription = "Continue a partir de onde parou ou recomece do início."
+    override val resume = "Continuar"
+    override val restartPlayback = "Recomeçar"
+    override val continueWatching = "Continuar a ver"
+    override val removeFromContinueWatching = "Remover de Continuar a ver"
+    override val nextEpisode = "Próximo episódio"
+    override val playNextEpisode = "Reproduzir próximo"
 
     override val welcomeTitle = "Reprodutor IPTV Seguro"
     override val welcomeSubtitle = "Privacidade por padrão. Armazenamento encriptado com AES-256."
