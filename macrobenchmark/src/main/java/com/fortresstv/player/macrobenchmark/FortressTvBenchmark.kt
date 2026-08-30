@@ -93,8 +93,83 @@ class FortressTvBenchmark {
         device.waitForIdle()
     }
 
+    @Test
+    fun programmeGuideOpen() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait()
+            assertNotNull(
+                "Configure a playlist and EPG before running programmeGuideOpen",
+                device.wait(Until.findObject(By.res("programme_guide_button")), UI_TIMEOUT)
+            )
+        }
+    ) {
+        device.findObject(By.res("programme_guide_button")).click()
+        assertNotNull(
+            "The programme guide did not become ready",
+            device.wait(Until.findObject(By.res("epg_grid")), UI_TIMEOUT)
+        )
+        device.waitForIdle()
+    }
+
+    @Test
+    fun programmeGuideVerticalStress() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = { openProgrammeGuide() }
+    ) {
+        val grid = device.findObject(By.res("epg_grid"))
+        grid.setGestureMargin(device.displayWidth / 5)
+        repeat(2) {
+            grid.fling(Direction.DOWN)
+            grid.fling(Direction.UP)
+        }
+        device.waitForIdle()
+    }
+
+    @Test
+    fun programmeGuideHorizontalStress() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = { openProgrammeGuide() }
+    ) {
+        val grid = device.findObject(By.res("epg_grid"))
+        grid.setGestureMargin(device.displayWidth / 5)
+        repeat(2) {
+            grid.fling(Direction.LEFT)
+            grid.fling(Direction.RIGHT)
+        }
+        device.waitForIdle()
+    }
+
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.openProgrammeGuide() {
+        pressHome()
+        startActivityAndWait()
+        val guideButton = device.wait(
+            Until.findObject(By.res("programme_guide_button")),
+            UI_TIMEOUT
+        )
+        assertNotNull("Configure a playlist and EPG before running the EPG benchmarks", guideButton)
+        guideButton.click()
+        assertNotNull(
+            "The programme guide did not become ready",
+            device.wait(Until.findObject(By.res("epg_grid")), UI_TIMEOUT)
+        )
+    }
+
     private companion object {
         const val PACKAGE_NAME = "com.fortresstv.player"
-        const val UI_TIMEOUT = 10_000L
+        const val UI_TIMEOUT = 30_000L
     }
 }

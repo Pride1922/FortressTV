@@ -38,6 +38,23 @@ a real multi-day EPG before release.
 The `macrobenchmark` module measures cold/warm startup and frame timing for channel and EPG
 scrolling on the physical tablet. See `macrobenchmark/README.md` for prerequisites and commands.
 
+### POCO baseline (2026-08-30)
+
+Measured on the configured Android 16 POCO with 89 channels and the real three-day in-app
+EPG window. Values below are CPU frame duration unless labelled as frame overrun.
+
+| Scenario | P50 | P95 | P99 | P95 overrun |
+| --- | ---: | ---: | ---: | ---: |
+| Channel-list fling | 3.6 ms | 4.8 ms | 5.2 ms | -1.4 ms |
+| EPG single vertical fling | 4.7 ms | 7.3 ms | 10.0 ms | 1.1 ms |
+| EPG repeated vertical stress | 4.7 ms | 6.6 ms | 10.6 ms | 0.0 ms |
+| EPG repeated horizontal stress | 5.9 ms | 19.2 ms | 26.5 ms | 15.7 ms |
+| Opening the EPG | 5.9 ms | 38.3 ms | 47.8 ms | 33.1 ms |
+
+Cold initial display was 511.5 ms median and warm initial display was 157.2 ms median.
+Vertical channel/EPG scrolling is healthy. The next optimization targets are EPG opening
+and horizontal timeline movement; changes should retain the vertical baseline.
+
 ## Release check
 
 Before publishing, test fast vertical flings with EPG and logos loaded, open and scroll the
