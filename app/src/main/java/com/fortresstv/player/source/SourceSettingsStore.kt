@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import com.fortresstv.player.playlist.PlaylistProfile
+import com.fortresstv.player.playlist.SourceRole
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
@@ -36,7 +37,11 @@ class SourceSettingsStore(context: Context) {
             return emptyList()
         }
 
-        return parsePlaylistsJson(raw)
+        val profiles = parsePlaylistsJson(raw)
+        if (!raw.contains("\"enabled\"") || !raw.contains("\"role\"") || !raw.contains("\"order\"")) {
+            savePlaylistsList(profiles)
+        }
+        return profiles
     }
 
     private fun parsePlaylistsJson(json: String): List<PlaylistProfile> = runCatching {
@@ -52,7 +57,14 @@ class SourceSettingsStore(context: Context) {
             val lastUpdated = obj.optLong("lastUpdated", 0L)
             val channelCount = obj.optInt("channelCount", 0)
             val source = if (type == "file") ContentSource.LocalFile(value, displayName) else ContentSource.RemoteUrl(value, displayName)
-            list.add(PlaylistProfile(id, name, source, lastUpdated, channelCount))
+            val activeId = getActivePlaylistId()
+            val enabled = if (obj.has("enabled")) obj.optBoolean("enabled", true)
+            else activeId == null || activeId == id
+            val role = runCatching {
+                SourceRole.valueOf(obj.optString("role", SourceRole.LIVE_TV.name))
+            }.getOrDefault(SourceRole.LIVE_TV)
+            val order = obj.optInt("order", i)
+            list.add(PlaylistProfile(id, name, source, lastUpdated, channelCount, enabled, role, order))
         }
         list
     }.getOrElse { emptyList() }
@@ -92,6 +104,9 @@ class SourceSettingsStore(context: Context) {
                 put("displayName", p.source.displayName)
                 put("lastUpdated", p.lastUpdated)
                 put("channelCount", p.channelCount)
+                put("enabled", p.enabled)
+                put("role", p.role.name)
+                put("order", p.order)
             }
             array.put(obj)
         }
@@ -109,6 +124,10 @@ class SourceSettingsStore(context: Context) {
         val activeId = getActivePlaylistId()
         return playlists.find { it.id == activeId } ?: playlists.firstOrNull()
     }
+
+    fun getEnabledPlaylists(): List<PlaylistProfile> = getPlaylists()
+        .filter { it.enabled }
+        .sortedWith(compareBy<PlaylistProfile> { it.order }.thenBy { it.name.lowercase() })
 
     fun epgSource(): ContentSource? = readSource("epg")
 

@@ -27,6 +27,9 @@ interface Strings {
     val languageTag: String
     val appName: String
     val allChannels: String
+    val sources: String
+    val categories: String
+    val uncategorized: String
     fun searchInGroup(group: String): String
     val searchChannels: String
     val noChannelsMatch: String
@@ -41,6 +44,10 @@ interface Strings {
     val edit: String
     val rename: String
     val active: String
+    val enabledSource: String
+    fun sourcesCount(count: Int): String
+    val moveSourceUp: String
+    val moveSourceDown: String
     val switchAction: String
     val back: String
     val fullscreen: String
@@ -112,6 +119,13 @@ interface Strings {
     val playlistName: String
     val playlistNamePlaceholder: String
     val sourceType: String
+    val sourceRole: String
+    val roleAutomatic: String
+    val roleLiveTv: String
+    val roleMovies: String
+    val roleSeries: String
+    val roleMoviesAndSeries: String
+    val roleEverything: String
     val remoteUrl: String
     val localFile: String
     val selectFile: String
@@ -152,6 +166,9 @@ object EnglishStrings : Strings {
     override val languageTag = "en-GB"
     override val appName = "FortressTV"
     override val allChannels = "All channels"
+    override val sources = "Sources"
+    override val categories = "Categories"
+    override val uncategorized = "Uncategorized"
     override fun searchInGroup(group: String) = "Search in $group"
     override val searchChannels = "Search channels"
     override val noChannelsMatch = "No channels match your search."
@@ -166,6 +183,10 @@ object EnglishStrings : Strings {
     override val edit = "Edit"
     override val rename = "Rename"
     override val active = "Active"
+    override val enabledSource = "Enabled"
+    override fun sourcesCount(count: Int) = "$count ${if (count == 1) "source" else "sources"}"
+    override val moveSourceUp = "Move source up"
+    override val moveSourceDown = "Move source down"
     override val switchAction = "Switch"
     override val back = "Back"
     override val fullscreen = "Fullscreen"
@@ -237,6 +258,13 @@ object EnglishStrings : Strings {
     override val playlistName = "Playlist Name"
     override val playlistNamePlaceholder = "e.g. Sports, Family, Movies"
     override val sourceType = "Source Type"
+    override val sourceRole = "Library content"
+    override val roleAutomatic = "Automatic"
+    override val roleLiveTv = "Live TV"
+    override val roleMovies = "Movies"
+    override val roleSeries = "Series"
+    override val roleMoviesAndSeries = "Movies and Series"
+    override val roleEverything = "Everything"
     override val remoteUrl = "Remote URL (HTTP/HTTPS)"
     override val localFile = "Local File (M3U/M3U8)"
     override val selectFile = "Select File"
@@ -278,6 +306,9 @@ object PortugueseStrings : Strings {
     override val languageTag = "pt-PT"
     override val appName = "FortressTV"
     override val allChannels = "Todos os canais"
+    override val sources = "Fontes"
+    override val categories = "Categorias"
+    override val uncategorized = "Sem categoria"
     override fun searchInGroup(group: String) = "Pesquisar em $group"
     override val searchChannels = "Pesquisar canais"
     override val noChannelsMatch = "Nenhum canal corresponde à sua pesquisa."
@@ -292,6 +323,10 @@ object PortugueseStrings : Strings {
     override val edit = "Editar"
     override val rename = "Mudar o nome"
     override val active = "Ativo"
+    override val enabledSource = "Ativa"
+    override fun sourcesCount(count: Int) = "$count ${if (count == 1) "fonte" else "fontes"}"
+    override val moveSourceUp = "Mover fonte para cima"
+    override val moveSourceDown = "Mover fonte para baixo"
     override val switchAction = "Mudar"
     override val back = "Voltar"
     override val fullscreen = "Ecrã inteiro"
@@ -363,6 +398,13 @@ object PortugueseStrings : Strings {
     override val playlistName = "Nome da Lista"
     override val playlistNamePlaceholder = "ex: Desporto, Família, Filmes"
     override val sourceType = "Tipo de Origem"
+    override val sourceRole = "Conteúdo da biblioteca"
+    override val roleAutomatic = "Automático"
+    override val roleLiveTv = "TV em direto"
+    override val roleMovies = "Filmes"
+    override val roleSeries = "Séries"
+    override val roleMoviesAndSeries = "Filmes e Séries"
+    override val roleEverything = "Tudo"
     override val remoteUrl = "URL Remoto (HTTP/HTTPS)"
     override val localFile = "Ficheiro Local (M3U/M3U8)"
     override val selectFile = "Selecionar Ficheiro"

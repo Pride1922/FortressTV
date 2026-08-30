@@ -68,6 +68,8 @@ import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowDownward
 import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.update.UpdateManager
 import com.fortresstv.player.update.AppUpdateInfo
@@ -116,6 +118,8 @@ import androidx.media3.ui.PlayerView
 import com.fortresstv.player.playlist.M3uParser
 import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
+import com.fortresstv.player.playlist.mergeLivePlaylists
+import com.fortresstv.player.playlist.SourceRole
 import com.fortresstv.player.playlist.searchChannels
 import com.fortresstv.player.player.GestureControl
 import com.fortresstv.player.player.GestureLevel
@@ -281,6 +285,7 @@ private fun FortressTVApp() {
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var playlist by remember { mutableStateOf<Playlist?>(null) }
+    val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
     var epgSource by remember { mutableStateOf<ContentSource?>(null) }
@@ -378,12 +383,13 @@ private fun FortressTVApp() {
                 val now = if (forceRefresh || !hasCache) System.currentTimeMillis() else profile.lastUpdated
                 val updatedProfile = profile.copy(lastUpdated = now, channelCount = parsed.channels.size)
                 settings.savePlaylistProfile(updatedProfile)
-                settings.setActivePlaylistId(updatedProfile.id)
                 val allPlaylists = settings.getPlaylists()
                 withContext(Dispatchers.Main) {
-                    playlist = parsed
-                    activeProfile = updatedProfile
+                    loadedPlaylists[updatedProfile.id] = parsed
                     playlists = allPlaylists
+                    val enabled = allPlaylists.filter { it.enabled }
+                    playlist = mergeLivePlaylists(allPlaylists, loadedPlaylists)
+                    activeProfile = enabled.minByOrNull { it.order }
                 }
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
@@ -442,44 +448,59 @@ private fun FortressTVApp() {
         playChannelsFullscreen = savedFullscreenPreference
         autoPictureInPicture = savedPictureInPicturePreference
 
-        val (savedPlaylists, currentActive) = withContext(Dispatchers.IO) {
-            settings.getPlaylists() to settings.getActivePlaylist()
+        val (savedPlaylists, enabledPlaylists) = withContext(Dispatchers.IO) {
+            val all = settings.getPlaylists()
+            all to settings.getEnabledPlaylists()
         }
         playlists = savedPlaylists
-        activeProfile = currentActive
+        activeProfile = enabledPlaylists.firstOrNull()
 
         var hasFastLoadedPlaylist = false
+        val fastLoadedSourceIds = mutableSetOf<String>()
+        val startupSourceErrors = mutableListOf<String>()
 
         withContext(Dispatchers.IO) {
-            if (currentActive != null) {
-                val cacheKey = "playlist_${currentActive.id}"
-                if (currentActive.source is ContentSource.LocalFile) {
+            for (profile in enabledPlaylists) {
+                val cacheKey = "playlist_${profile.id}"
+                if (profile.source is ContentSource.LocalFile) {
                     runCatching {
-                        parsePlaylist(SourceReader.open(context, currentActive.source))
+                        parsePlaylist(SourceReader.open(context, profile.source))
                     }.onSuccess { parsed ->
                         if (parsed.channels.isNotEmpty()) {
-                            withContext(Dispatchers.Main) { playlist = parsed }
+                            withContext(Dispatchers.Main) {
+                                loadedPlaylists[profile.id] = parsed
+                                playlist = mergeLivePlaylists(savedPlaylists, loadedPlaylists)
+                            }
                             hasFastLoadedPlaylist = true
+                            fastLoadedSourceIds += profile.id
                         }
-                    }
+                    }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
                 } else if (SourceReader.hasCache(context, cacheKey)) {
                     runCatching {
                         parsePlaylist(SourceReader.openCached(context, cacheKey))
                     }.onSuccess { parsed ->
                         if (parsed.channels.isNotEmpty()) {
-                            withContext(Dispatchers.Main) { playlist = parsed }
+                            withContext(Dispatchers.Main) {
+                                loadedPlaylists[profile.id] = parsed
+                                playlist = mergeLivePlaylists(savedPlaylists, loadedPlaylists)
+                            }
                             hasFastLoadedPlaylist = true
+                            fastLoadedSourceIds += profile.id
                         }
-                    }
-                } else if (SourceReader.hasCache(context, "playlist")) {
+                    }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
+                } else if (profile.id == settings.getActivePlaylistId() && SourceReader.hasCache(context, "playlist")) {
                     runCatching {
                         parsePlaylist(SourceReader.openCached(context, "playlist"))
                     }.onSuccess { parsed ->
                         if (parsed.channels.isNotEmpty()) {
-                            withContext(Dispatchers.Main) { playlist = parsed }
+                            withContext(Dispatchers.Main) {
+                                loadedPlaylists[profile.id] = parsed
+                                playlist = mergeLivePlaylists(savedPlaylists, loadedPlaylists)
+                            }
                             hasFastLoadedPlaylist = true
+                            fastLoadedSourceIds += profile.id
                         }
-                    }
+                    }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
                 }
             }
 
@@ -513,32 +534,38 @@ private fun FortressTVApp() {
             }
         }
 
-        if (hasFastLoadedPlaylist || currentActive == null) {
+        if (hasFastLoadedPlaylist || enabledPlaylists.isEmpty() || enabledPlaylists.all { it.source is ContentSource.LocalFile }) {
             restoring = false
+            if (!hasFastLoadedPlaylist && startupSourceErrors.isNotEmpty()) {
+                error = startupSourceErrors.joinToString("\n")
+            }
         }
 
-        if (currentActive != null && currentActive.source is ContentSource.RemoteUrl) {
-            val cacheKey = "playlist_${currentActive.id}"
-            val isFresh = SourceReader.isCacheFresh(context, cacheKey, currentActive.lastUpdated) ||
-                    SourceReader.isCacheFresh(context, "playlist", currentActive.lastUpdated)
+        enabledPlaylists.filter { it.source is ContentSource.RemoteUrl }.forEach { profile ->
+            val cacheKey = "playlist_${profile.id}"
+            val isFresh = fastLoadedSourceIds.contains(profile.id) && (
+                    SourceReader.isCacheFresh(context, cacheKey, profile.lastUpdated) ||
+                    (profile.id == settings.getActivePlaylistId() && SourceReader.isCacheFresh(context, "playlist", profile.lastUpdated))
+                    )
             if (!isFresh) {
                 if (!hasFastLoadedPlaylist) loading = true
                 scope.launch(Dispatchers.IO) {
                     runCatching {
-                        val stream = SourceReader.fetchAndCache(context, currentActive.source, cacheKey)
+                        val stream = SourceReader.fetchAndCache(context, profile.source, cacheKey)
                         val now = System.currentTimeMillis()
                         val parsed = parsePlaylist(stream)
-                        val updated = currentActive.copy(lastUpdated = now, channelCount = parsed.channels.size)
+                        val updated = profile.copy(lastUpdated = now, channelCount = parsed.channels.size)
                         settings.savePlaylistProfile(updated)
                         val all = settings.getPlaylists()
                         withContext(Dispatchers.Main) {
-                            playlist = parsed
-                            activeProfile = updated
+                            loadedPlaylists[updated.id] = parsed
                             playlists = all
+                            playlist = mergeLivePlaylists(all, loadedPlaylists)
+                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                         }
                     }.onFailure { err ->
                         withContext(Dispatchers.Main) {
-                            if (!hasFastLoadedPlaylist) error = "Saved playlist: ${err.message ?: "could not be loaded"}"
+                            if (!hasFastLoadedPlaylist) error = "${profile.name}: ${err.message ?: "could not be loaded"}"
                         }
                     }
                     withContext(Dispatchers.Main) {
@@ -575,7 +602,8 @@ private fun FortressTVApp() {
         val profile = PlaylistProfile(
             id = UUID.randomUUID().toString(),
             name = name,
-            source = ContentSource.LocalFile(uri.toString(), name)
+            source = ContentSource.LocalFile(uri.toString(), name),
+            order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
         )
         loadPlaylistProfile(profile, forceRefresh = true)
     }
@@ -587,7 +615,8 @@ private fun FortressTVApp() {
         val profile = PlaylistProfile(
             id = UUID.randomUUID().toString(),
             name = defaultName,
-            source = ContentSource.LocalFile(uri.toString(), defaultName)
+            source = ContentSource.LocalFile(uri.toString(), defaultName),
+            order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
         )
         loadPlaylistProfile(profile, forceRefresh = true)
     }
@@ -608,7 +637,8 @@ private fun FortressTVApp() {
                     val profile = PlaylistProfile(
                         id = UUID.randomUUID().toString(),
                         name = displayName,
-                        source = ContentSource.RemoteUrl(url.trim(), displayName)
+                        source = ContentSource.RemoteUrl(url.trim(), displayName),
+                        order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                     )
                     loadPlaylistProfile(profile, forceRefresh = true)
                 },
@@ -643,17 +673,11 @@ private fun FortressTVApp() {
                     deletingProfile = null
                     settings.deletePlaylistProfile(profile.id)
                     SourceReader.deleteCache(context, "playlist_${profile.id}")
+                    loadedPlaylists.remove(profile.id)
                     val remaining = settings.getPlaylists()
                     playlists = remaining
-                    if (activeProfile?.id == profile.id) {
-                        val next = settings.getActivePlaylist()
-                        activeProfile = next
-                        if (next != null) {
-                            loadPlaylistProfile(next)
-                        } else {
-                            playlist = null
-                        }
-                    }
+                    playlist = mergeLivePlaylists(remaining, loadedPlaylists)
+                    activeProfile = remaining.filter { it.enabled }.minByOrNull { it.order }
                 }
             )
         }
@@ -717,8 +741,43 @@ private fun FortressTVApp() {
                 epgGuide = epgGuide,
                 loading = loading,
                 onDismiss = { showSettings = false },
-                onSelectPlaylist = { profile ->
-                    loadPlaylistProfile(profile)
+                onPlaylistEnabledChanged = { profile, enabled ->
+                    if (enabled || playlists.count { it.enabled } > 1) {
+                        val updated = profile.copy(enabled = enabled)
+                        settings.savePlaylistProfile(updated)
+                        val all = settings.getPlaylists()
+                        playlists = all
+                        if (enabled) {
+                            loadPlaylistProfile(updated)
+                        } else {
+                            loadedPlaylists.remove(updated.id)
+                            playlist = mergeLivePlaylists(all, loadedPlaylists)
+                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                        }
+                    }
+                },
+                onSourceRoleChanged = { profile, role ->
+                    val updated = profile.copy(role = role)
+                    settings.savePlaylistProfile(updated)
+                    val all = settings.getPlaylists()
+                    playlists = all
+                    playlist = mergeLivePlaylists(all, loadedPlaylists)
+                    activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                },
+                onMoveSource = { profile, direction ->
+                    val ordered = playlists.sortedBy { it.order }.toMutableList()
+                    val from = ordered.indexOfFirst { it.id == profile.id }
+                    val to = (from + direction).coerceIn(0, ordered.lastIndex)
+                    if (from >= 0 && from != to) {
+                        val first = ordered[from]
+                        val second = ordered[to]
+                        settings.savePlaylistProfile(first.copy(order = second.order))
+                        settings.savePlaylistProfile(second.copy(order = first.order))
+                        val all = settings.getPlaylists()
+                        playlists = all
+                        playlist = mergeLivePlaylists(all, loadedPlaylists)
+                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                    }
                 },
                 onRefreshPlaylist = { profile ->
                     loadPlaylistProfile(profile, forceRefresh = true)
@@ -804,6 +863,10 @@ private fun FortressTVApp() {
             ChannelBrowser(
                 playlist = playlist!!,
                 activeProfile = activeProfile!!,
+                enabledSourceCount = playlists.count { it.enabled && it.role.contributesLiveTv() },
+                enabledSources = playlists
+                    .filter { it.enabled && it.role.contributesLiveTv() }
+                    .sortedBy { it.order },
                 epgGuide = epgGuide,
                 epgSourceName = epgSourceName,
                 epgTimeShiftHours = epgTimeShiftHours,
@@ -1311,6 +1374,8 @@ private fun ProgrammeGuideScreen(
 private fun ChannelBrowser(
     playlist: Playlist,
     activeProfile: PlaylistProfile,
+    enabledSourceCount: Int,
+    enabledSources: List<PlaylistProfile>,
     epgGuide: EpgGuide?,
     epgSourceName: String?,
     epgTimeShiftHours: Int = 0,
@@ -1326,7 +1391,8 @@ private fun ChannelBrowser(
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val channelPaneWidth = if (isCompact) 280.dp else 430.dp
 
-    val allGroup = strings.allChannels
+    val allFilter = "all"
+    val uncategorizedFilter = "group:"
     var isSidebarExpanded by remember { mutableStateOf(false) }
     var sidebarInteractionCount by remember { mutableLongStateOf(0L) }
 
@@ -1337,7 +1403,7 @@ private fun ChannelBrowser(
         }
     }
 
-    var selectedGroup by remember(playlist, allGroup) { mutableStateOf(allGroup) }
+    var selectedFilter by remember(playlist) { mutableStateOf(allFilter) }
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
     var showProgrammeGuide by remember(playlist) { mutableStateOf(false) }
@@ -1355,8 +1421,32 @@ private fun ChannelBrowser(
     val groupCounts = remember(playlist) {
         playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
     }
-    val channelsInGroup = remember(playlist, selectedGroup, allGroup) {
-        if (selectedGroup == allGroup) playlist.channels else playlist.channels.filter { it.group == selectedGroup }
+    val sourceCounts = remember(playlist) {
+        playlist.channels.groupingBy { it.sourceId }.eachCount()
+    }
+    val selectedFilterLabel = when {
+        selectedFilter == allFilter -> strings.allChannels
+        selectedFilter.startsWith("source:") -> enabledSources
+            .firstOrNull { it.id == selectedFilter.removePrefix("source:") }
+            ?.name ?: strings.sources
+        selectedFilter == uncategorizedFilter -> strings.uncategorized
+        selectedFilter.startsWith("group:") -> selectedFilter.removePrefix("group:")
+        else -> strings.allChannels
+    }
+    val channelsInGroup = remember(playlist, selectedFilter) {
+        when {
+            selectedFilter == allFilter -> playlist.channels
+            selectedFilter.startsWith("source:") -> {
+                val sourceId = selectedFilter.removePrefix("source:")
+                playlist.channels.filter { it.sourceId == sourceId }
+            }
+            selectedFilter == uncategorizedFilter -> playlist.channels.filter { it.group.isNullOrBlank() }
+            selectedFilter.startsWith("group:") -> {
+                val group = selectedFilter.removePrefix("group:")
+                playlist.channels.filter { it.group == group }
+            }
+            else -> playlist.channels
+        }
     }
     val visibleChannels = remember(channelsInGroup, searchQuery) {
         channelsInGroup.searchChannels(searchQuery)
@@ -1386,7 +1476,7 @@ private fun ChannelBrowser(
     }
     var showUnmatchedDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(selectedGroup, searchQuery) {
+    LaunchedEffect(selectedFilter, searchQuery) {
         channelListState.scrollToItem(0)
     }
 
@@ -1447,7 +1537,7 @@ private fun ChannelBrowser(
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                activeProfile.name,
+                                if (enabledSourceCount > 1) strings.sourcesCount(enabledSourceCount) else activeProfile.name,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp,
                                 maxLines = 1,
@@ -1475,15 +1565,37 @@ private fun ChannelBrowser(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     item(key = "group_all_channels") {
-                        GroupItem(allGroup, playlist.channels.size, selectedGroup == allGroup) {
-                            selectedGroup = allGroup
+                        GroupItem(strings.allChannels, playlist.channels.size, selectedFilter == allFilter) {
+                            selectedFilter = allFilter
                             isSidebarExpanded = false
                         }
                     }
+                    if (enabledSources.isNotEmpty()) {
+                        item(key = "sources_header") { SidebarSectionLabel(strings.sources) }
+                        items(enabledSources, key = { "source:${it.id}" }) { source ->
+                            val key = "source:${source.id}"
+                            GroupItem(source.name, sourceCounts[source.id] ?: 0, selectedFilter == key) {
+                                selectedFilter = key
+                                isSidebarExpanded = false
+                            }
+                        }
+                    }
+                    if (playlist.groups.isNotEmpty() || (groupCounts[""] ?: 0) > 0) {
+                        item(key = "categories_header") { SidebarSectionLabel(strings.categories) }
+                    }
                     items(playlist.groups, key = { it }) { group ->
-                        GroupItem(group, groupCounts[group] ?: 0, selectedGroup == group) {
-                            selectedGroup = group
+                        val key = "group:$group"
+                        GroupItem(group, groupCounts[group] ?: 0, selectedFilter == key) {
+                            selectedFilter = key
                             isSidebarExpanded = false
+                        }
+                    }
+                    if ((groupCounts[""] ?: 0) > 0) {
+                        item(key = "group_uncategorized") {
+                            GroupItem(strings.uncategorized, groupCounts[""] ?: 0, selectedFilter == uncategorizedFilter) {
+                                selectedFilter = uncategorizedFilter
+                                isSidebarExpanded = false
+                            }
                         }
                     }
                 }
@@ -1578,7 +1690,7 @@ private fun ChannelBrowser(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text(strings.searchInGroup(selectedGroup), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = { Text(strings.searchInGroup(selectedFilterLabel), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
@@ -1744,10 +1856,21 @@ private fun ChannelBrowser(
             onSelectChannel = { channel ->
                 selectChannel(channel)
                 searchQuery = ""
-                selectedGroup = allGroup
+                selectedFilter = allFilter
             }
         )
     }
+}
+
+@Composable
+private fun SidebarSectionLabel(label: String) {
+    Text(
+        text = label.uppercase(),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 12.dp, top = 10.dp, bottom = 2.dp)
+    )
 }
 
 @Composable
@@ -2770,7 +2893,9 @@ private fun SettingsDialog(
     epgGuide: EpgGuide?,
     loading: Boolean,
     onDismiss: () -> Unit,
-    onSelectPlaylist: (PlaylistProfile) -> Unit,
+    onPlaylistEnabledChanged: (PlaylistProfile, Boolean) -> Unit,
+    onSourceRoleChanged: (PlaylistProfile, SourceRole) -> Unit,
+    onMoveSource: (PlaylistProfile, Int) -> Unit,
     onRefreshPlaylist: (PlaylistProfile) -> Unit,
     onAddPlaylist: () -> Unit,
     onRenamePlaylist: (PlaylistProfile) -> Unit,
@@ -2838,7 +2963,9 @@ private fun SettingsDialog(
                             playlists = playlists,
                             activeProfile = activeProfile,
                             loading = loading,
-                            onSelectPlaylist = onSelectPlaylist,
+                            onPlaylistEnabledChanged = onPlaylistEnabledChanged,
+                            onSourceRoleChanged = onSourceRoleChanged,
+                            onMoveSource = onMoveSource,
                             onRefreshPlaylist = onRefreshPlaylist,
                             onAddPlaylist = onAddPlaylist,
                             onRenamePlaylist = onRenamePlaylist,
@@ -2878,7 +3005,9 @@ private fun PlaylistsTab(
     playlists: List<PlaylistProfile>,
     activeProfile: PlaylistProfile?,
     loading: Boolean,
-    onSelectPlaylist: (PlaylistProfile) -> Unit,
+    onPlaylistEnabledChanged: (PlaylistProfile, Boolean) -> Unit,
+    onSourceRoleChanged: (PlaylistProfile, SourceRole) -> Unit,
+    onMoveSource: (PlaylistProfile, Int) -> Unit,
     onRefreshPlaylist: (PlaylistProfile) -> Unit,
     onAddPlaylist: () -> Unit,
     onRenamePlaylist: (PlaylistProfile) -> Unit,
@@ -2932,8 +3061,10 @@ private fun PlaylistsTab(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(playlists, key = { it.id }) { item ->
-                    val isActive = item.id == activeProfile?.id
+                items(playlists.sortedBy { it.order }, key = { it.id }) { item ->
+                    val isActive = item.enabled
+                    val orderedSources = playlists.sortedBy { it.order }
+                    val sourceIndex = orderedSources.indexOfFirst { it.id == item.id }
                     val configuration = LocalConfiguration.current
                     val isCompact = configuration.screenWidthDp < 600
 
@@ -2966,7 +3097,7 @@ private fun PlaylistsTab(
                                                     contentColor = MaterialTheme.colorScheme.onPrimary
                                                 ) {
                                                     Text(
-                                                        strings.active.uppercase(),
+                                                        strings.enabledSource.uppercase(),
                                                         fontSize = 9.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
@@ -2979,6 +3110,11 @@ private fun PlaylistsTab(
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                        SourceRoleSelector(
+                                            role = item.role,
+                                            enabled = !loading,
+                                            onRoleChanged = { onSourceRoleChanged(item, it) }
+                                        )
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -2987,12 +3123,22 @@ private fun PlaylistsTab(
                                     horizontalArrangement = Arrangement.End,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (!isActive) {
-                                        OutlinedButton(onClick = { onSelectPlaylist(item) }, enabled = !loading, modifier = Modifier.height(34.dp)) {
-                                            Text(strings.switchAction, fontSize = 12.sp)
-                                        }
-                                        Spacer(Modifier.width(6.dp))
-                                    }
+                                    Switch(
+                                        checked = item.enabled,
+                                        onCheckedChange = { onPlaylistEnabledChanged(item, it) },
+                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    IconButton(
+                                        onClick = { onMoveSource(item, -1) },
+                                        enabled = !loading && sourceIndex > 0,
+                                        modifier = Modifier.size(34.dp)
+                                    ) { Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(18.dp)) }
+                                    IconButton(
+                                        onClick = { onMoveSource(item, 1) },
+                                        enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
+                                        modifier = Modifier.size(34.dp)
+                                    ) { Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(18.dp)) }
                                     if (item.source is ContentSource.RemoteUrl) {
                                         IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading, modifier = Modifier.size(34.dp)) {
                                             Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(18.dp))
@@ -3029,7 +3175,7 @@ private fun PlaylistsTab(
                                                 contentColor = MaterialTheme.colorScheme.onPrimary
                                             ) {
                                                 Text(
-                                                    strings.active.uppercase(),
+                                                    strings.enabledSource.uppercase(),
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -3050,13 +3196,24 @@ private fun PlaylistsTab(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    SourceRoleSelector(
+                                        role = item.role,
+                                        enabled = !loading,
+                                        onRoleChanged = { onSourceRoleChanged(item, it) }
+                                    )
                                 }
                                 Spacer(Modifier.width(10.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    if (!isActive) {
-                                        OutlinedButton(onClick = { onSelectPlaylist(item) }, enabled = !loading) {
-                                            Text(strings.switchAction)
-                                        }
+                                    Switch(
+                                        checked = item.enabled,
+                                        onCheckedChange = { onPlaylistEnabledChanged(item, it) },
+                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1)
+                                    )
+                                    IconButton(onClick = { onMoveSource(item, -1) }, enabled = !loading && sourceIndex > 0) {
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp)
+                                    }
+                                    IconButton(onClick = { onMoveSource(item, 1) }, enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex) {
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown)
                                     }
                                     if (item.source is ContentSource.RemoteUrl) {
                                         IconButton(onClick = { onRefreshPlaylist(item) }, enabled = !loading) {
@@ -3077,6 +3234,52 @@ private fun PlaylistsTab(
             }
         }
     }
+}
+
+@Composable
+private fun SourceRoleSelector(
+    role: SourceRole,
+    enabled: Boolean,
+    onRoleChanged: (SourceRole) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(
+            onClick = { expanded = true },
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+        ) {
+            Text(
+                "${strings.sourceRole}: ${sourceRoleLabel(role, strings)}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SourceRole.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(sourceRoleLabel(option, strings)) },
+                    onClick = {
+                        expanded = false
+                        onRoleChanged(option)
+                    },
+                    trailingIcon = if (option == role) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null
+                )
+            }
+        }
+    }
+}
+
+private fun sourceRoleLabel(role: SourceRole, strings: Strings): String = when (role) {
+    SourceRole.AUTOMATIC -> strings.roleAutomatic
+    SourceRole.LIVE_TV -> strings.roleLiveTv
+    SourceRole.MOVIES -> strings.roleMovies
+    SourceRole.SERIES -> strings.roleSeries
+    SourceRole.MOVIES_AND_SERIES -> strings.roleMoviesAndSeries
+    SourceRole.EVERYTHING -> strings.roleEverything
 }
 
 @Composable
