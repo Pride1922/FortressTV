@@ -80,12 +80,46 @@ class UserLibraryStore(context: Context) {
         return emptyList()
     }
 
+    fun hiddenCategories(profileId: String): Set<String> {
+        return preferences.getStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$profileId", emptySet()).orEmpty().toSet()
+    }
+
+    fun setCategoryHidden(profileId: String, group: String, hidden: Boolean): Set<String> {
+        val updated = hiddenCategories(profileId).toMutableSet().apply {
+            if (hidden) add(group) else remove(group)
+        }
+        preferences.edit().putStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$profileId", updated).apply()
+        return updated
+    }
+
+    fun unhideAllCategories(profileId: String): Set<String> {
+        preferences.edit().remove("${KEY_HIDDEN_CATEGORIES_PREFIX}_$profileId").apply()
+        return emptySet()
+    }
+
+    fun categoryOrder(profileId: String): List<String> {
+        val raw = preferences.getString("${KEY_CATEGORY_ORDER_PREFIX}_$profileId", null) ?: return emptyList()
+        return raw.split("|").filter { it.isNotBlank() }
+    }
+
+    fun setCategoryOrder(profileId: String, order: List<String>): List<String> {
+        preferences.edit().putString("${KEY_CATEGORY_ORDER_PREFIX}_$profileId", order.joinToString("|")).apply()
+        return order
+    }
+
+    fun resetCategoryOrder(profileId: String): List<String> {
+        preferences.edit().remove("${KEY_CATEGORY_ORDER_PREFIX}_$profileId").apply()
+        return emptyList()
+    }
+
     companion object {
         private const val KEY_FAVORITE_CHANNELS = "favorite_channel_ids"
         private const val KEY_RECENT_CHANNELS = "recent_channel_ids"
         private const val KEY_MOVIE_WATCHLIST = "movie_watchlist_ids"
         private const val KEY_FOLLOWED_SERIES = "followed_series_ids"
         private const val KEY_WATCHED_ITEMS = "watched_item_ids"
+        private const val KEY_HIDDEN_CATEGORIES_PREFIX = "hidden_categories"
+        private const val KEY_CATEGORY_ORDER_PREFIX = "category_order"
 
         fun PlaylistChannel.libraryId(): String? {
             if (sourceId.isBlank() || sourceItemId.isBlank()) return null

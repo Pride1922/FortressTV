@@ -37,6 +37,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -87,6 +88,10 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.foundation.shape.CircleShape
@@ -1020,6 +1025,7 @@ private fun FortressTVApp() {
                 loading = loading,
                 error = error,
                 onRetryLoad = retryLoad,
+                userLibrary = userLibrary,
                 favoriteChannelIds = favoriteChannelIds,
                 recentChannelIds = recentChannelIds,
                 onRecordChannelWatched = { channel ->
@@ -1598,6 +1604,7 @@ private fun FortressLibrary(
     hideAdultContent: Boolean = false,
     loading: Boolean,
     error: String?,
+    userLibrary: UserLibraryStore,
     favoriteChannelIds: Set<String>,
     recentChannelIds: List<String>,
     onRecordChannelWatched: (PlaylistChannel) -> Unit,
@@ -1619,6 +1626,12 @@ private fun FortressLibrary(
     val context = LocalContext.current
     val progressStore = remember { VodProgressStore(context.applicationContext) }
     var progressEntries by remember { mutableStateOf(progressStore.entries()) }
+    var hiddenCategories by remember(activeProfile.id) {
+        mutableStateOf(userLibrary.hiddenCategories(activeProfile.id))
+    }
+    var categoryOrder by remember(activeProfile.id) {
+        mutableStateOf(userLibrary.categoryOrder(activeProfile.id))
+    }
     val libraryConfiguration = LocalConfiguration.current
     val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
     var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
@@ -1682,6 +1695,31 @@ private fun FortressLibrary(
                     favoriteChannelIds = favoriteChannelIds,
                     recentChannelIds = recentChannelIds,
                     onRecordChannelWatched = onRecordChannelWatched,
+                    hiddenCategories = hiddenCategories,
+                    categoryOrder = categoryOrder,
+                    onToggleCategoryHidden = { category ->
+                        val isHidden = category in hiddenCategories
+                        hiddenCategories = userLibrary.setCategoryHidden(activeProfile.id, category, !isHidden)
+                    },
+                    onMoveCategory = { category, moveUp ->
+                        val list = (if (categoryOrder.isEmpty()) effectivePlaylist.groups else categoryOrder).toMutableList()
+                        if (category !in list) list.add(category)
+                        val index = list.indexOf(category)
+                        if (moveUp && index > 0) {
+                            list.removeAt(index)
+                            list.add(index - 1, category)
+                        } else if (!moveUp && index < list.size - 1) {
+                            list.removeAt(index)
+                            list.add(index + 1, category)
+                        }
+                        categoryOrder = userLibrary.setCategoryOrder(activeProfile.id, list)
+                    },
+                    onUnhideAllCategories = {
+                        hiddenCategories = userLibrary.unhideAllCategories(activeProfile.id)
+                    },
+                    onResetCategoryOrder = {
+                        categoryOrder = userLibrary.resetCategoryOrder(activeProfile.id)
+                    },
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,
                     onRequestedChannelHandled = { requestedChannel = null },
@@ -2008,6 +2046,13 @@ private suspend fun resolveNextEpisodePlayback(
     )
 }
 
+private enum class VodSortOption {
+    DEFAULT,
+    RATING,
+    YEAR,
+    ALPHABETICAL
+}
+
 @Composable
 private fun ContinueWatchingRow(
     entries: List<VodProgressEntry>,
@@ -2016,34 +2061,128 @@ private fun ContinueWatchingRow(
 ) {
     if (entries.isEmpty()) return
     val strings = LocalAppStrings.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+    val featured = entries.first()
+    val remaining = entries.drop(1)
+
+    Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         Text(strings.continueWatching, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(entries.take(20), key = { "continue:${it.key}" }) { entry ->
-                Surface(
-                    onClick = { onClick(entry) },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier.width(230.dp)
-                ) {
-                    Column {
-                        Box(Modifier.fillMaxWidth().height(6.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                            Box(
-                                Modifier.fillMaxHeight().fillMaxWidth(entry.progressFraction)
-                                    .background(MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(10.dp))
+
+        // Hero Spotlight Banner
+        Surface(
+            onClick = { onClick(featured) },
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (!featured.posterUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = featured.posterUrl,
+                        contentDescription = featured.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .width(60.dp)
+                            .height(84.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    )
+                    Spacer(Modifier.width(14.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                if (featured.kind == VodProgressKind.MOVIE) strings.navMovies else strings.navSeries,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                entry.title,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f).padding(start = 12.dp, top = 12.dp, bottom = 12.dp)
-                            )
-                            IconButton(onClick = { onRemove(entry) }) {
-                                Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching)
+                        Spacer(Modifier.width(8.dp))
+                        val pct = (featured.progressFraction * 100).toInt()
+                        Text(
+                            "$pct% ${strings.watchedProgress.lowercase()}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        featured.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { featured.progressFraction },
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                FilledTonalButton(
+                    onClick = { onClick(featured) },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(strings.resume, fontWeight = FontWeight.Bold)
+                }
+                IconButton(
+                    onClick = { onRemove(featured) },
+                    modifier = Modifier.padding(start = 4.dp)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching)
+                }
+            }
+        }
+
+        if (remaining.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(remaining.take(15), key = { "continue:${it.key}" }) { entry ->
+                    Surface(
+                        onClick = { onClick(entry) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        modifier = Modifier.width(220.dp)
+                    ) {
+                        Column {
+                            Box(Modifier.fillMaxWidth().height(4.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                                Box(
+                                    Modifier.fillMaxHeight().fillMaxWidth(entry.progressFraction)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    entry.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).padding(start = 12.dp, top = 10.dp, bottom = 10.dp)
+                                )
+                                IconButton(onClick = { onRemove(entry) }, modifier = Modifier.size(36.dp)) {
+                                    Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching, modifier = Modifier.size(16.dp))
+                                }
                             }
                         }
                     }
@@ -2073,6 +2212,7 @@ private fun XtreamMoviesScreen(
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
+    var sortOption by remember { mutableStateOf(VodSortOption.DEFAULT) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
@@ -2104,7 +2244,15 @@ private fun XtreamMoviesScreen(
             }
         }
     }
-    LaunchedEffect(appliedQuery, selectedCategory) {
+    val sortedMovies = remember(movies, sortOption) {
+        when (sortOption) {
+            VodSortOption.DEFAULT -> movies
+            VodSortOption.RATING -> movies.sortedByDescending { it.movie.rating?.toDoubleOrNull() ?: 0.0 }
+            VodSortOption.YEAR -> movies.sortedByDescending { it.movie.year?.toIntOrNull() ?: 0 }
+            VodSortOption.ALPHABETICAL -> movies.sortedBy { it.movie.name.lowercase() }
+        }
+    }
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
     LibraryCatalogScaffold(
@@ -2116,15 +2264,17 @@ private fun XtreamMoviesScreen(
         showCategorySourceNames = showSourceNames,
         selectedCategory = selectedCategory,
         onSelectCategory = { selectedCategory = it },
+        sortOption = sortOption,
+        onSelectSortOption = { sortOption = it },
         emptyMessage = strings.noMoviesAvailable,
-        itemCount = movies.size,
+        itemCount = sortedMovies.size,
         gridState = gridState,
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
     ) {
         gridItems(
-            movies,
+            sortedMovies,
             key = { "${it.catalog.sourceId}:${it.movie.id}" },
             contentType = { "movie_poster" }
         ) { entry ->
@@ -2184,6 +2334,7 @@ private fun XtreamSeriesScreen(
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
+    var sortOption by remember { mutableStateOf(VodSortOption.DEFAULT) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
     var series by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
@@ -2215,7 +2366,15 @@ private fun XtreamSeriesScreen(
             }
         }
     }
-    LaunchedEffect(appliedQuery, selectedCategory) {
+    val sortedSeries = remember(series, sortOption) {
+        when (sortOption) {
+            VodSortOption.DEFAULT -> series
+            VodSortOption.RATING -> series.sortedByDescending { it.series.rating?.toDoubleOrNull() ?: 0.0 }
+            VodSortOption.YEAR -> series.sortedByDescending { it.series.year?.toIntOrNull() ?: 0 }
+            VodSortOption.ALPHABETICAL -> series.sortedBy { it.series.name.lowercase() }
+        }
+    }
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
     LibraryCatalogScaffold(
@@ -2227,15 +2386,17 @@ private fun XtreamSeriesScreen(
         showCategorySourceNames = showSourceNames,
         selectedCategory = selectedCategory,
         onSelectCategory = { selectedCategory = it },
+        sortOption = sortOption,
+        onSelectSortOption = { sortOption = it },
         emptyMessage = strings.noSeriesAvailable,
-        itemCount = series.size,
+        itemCount = sortedSeries.size,
         gridState = gridState,
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
     ) {
         gridItems(
-            series,
+            sortedSeries,
             key = { "${it.catalog.sourceId}:${it.series.id}" },
             contentType = { "series_poster" }
         ) { entry ->
@@ -2280,6 +2441,8 @@ private fun LibraryCatalogScaffold(
     showCategorySourceNames: Boolean = false,
     selectedCategory: CatalogCategory? = null,
     onSelectCategory: (CatalogCategory?) -> Unit = {},
+    sortOption: VodSortOption = VodSortOption.DEFAULT,
+    onSelectSortOption: (VodSortOption) -> Unit = {},
     emptyMessage: String,
     itemCount: Int,
     gridState: LazyGridState,
@@ -2333,6 +2496,34 @@ private fun LibraryCatalogScaffold(
                     )
                 }
             }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            FilterChip(
+                selected = sortOption == VodSortOption.DEFAULT,
+                onClick = { onSelectSortOption(VodSortOption.DEFAULT) },
+                label = { Text(strings.sortDefault) }
+            )
+            FilterChip(
+                selected = sortOption == VodSortOption.RATING,
+                onClick = { onSelectSortOption(VodSortOption.RATING) },
+                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                label = { Text(strings.sortByRating) }
+            )
+            FilterChip(
+                selected = sortOption == VodSortOption.YEAR,
+                onClick = { onSelectSortOption(VodSortOption.YEAR) },
+                label = { Text(strings.sortByYear) }
+            )
+            FilterChip(
+                selected = sortOption == VodSortOption.ALPHABETICAL,
+                onClick = { onSelectSortOption(VodSortOption.ALPHABETICAL) },
+                label = { Text(strings.sortAlphabetical) }
+            )
         }
         Spacer(Modifier.height(14.dp))
         header()
@@ -3319,6 +3510,12 @@ private fun ChannelBrowser(
     favoriteChannelIds: Set<String>,
     recentChannelIds: List<String> = emptyList(),
     onRecordChannelWatched: (PlaylistChannel) -> Unit = {},
+    hiddenCategories: Set<String> = emptySet(),
+    categoryOrder: List<String> = emptyList(),
+    onToggleCategoryHidden: (String) -> Unit = {},
+    onMoveCategory: (String, Boolean) -> Unit = { _, _ -> },
+    onUnhideAllCategories: () -> Unit = {},
+    onResetCategoryOrder: () -> Unit = {},
     onToggleFavorite: (PlaylistChannel) -> Unit,
     requestedChannel: PlaylistChannel?,
     onRequestedChannelHandled: () -> Unit,
@@ -3335,6 +3532,7 @@ private fun ChannelBrowser(
     val uncategorizedFilter = "group:"
     var isSidebarExpanded by remember { mutableStateOf(false) }
     var sidebarInteractionCount by remember { mutableLongStateOf(0L) }
+    var showManageCategories by remember { mutableStateOf(false) }
 
     LaunchedEffect(isSidebarExpanded, sidebarInteractionCount) {
         if (isSidebarExpanded) {
@@ -3367,6 +3565,14 @@ private fun ChannelBrowser(
     }
     val groupCounts = remember(playlist) {
         playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
+    }
+    val rawCategories = remember(playlist) {
+        groupCounts.keys.filter { it.isNotBlank() }
+    }
+    val orderedCategories = remember(rawCategories, categoryOrder, hiddenCategories) {
+        val nonHidden = rawCategories.filter { it !in hiddenCategories }
+        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
+        nonHidden.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
     }
     val sourceCounts = remember(playlist) {
         playlist.channels.groupingBy { it.sourceId }.eachCount()
@@ -3507,7 +3713,19 @@ private fun ChannelBrowser(
                 Spacer(Modifier.height(12.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
-                Text(strings.categories, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(strings.categories, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    IconButton(
+                        onClick = { showManageCategories = true },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Default.Tune, contentDescription = strings.manageCategories, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
 
                 LazyColumn(
@@ -3559,7 +3777,7 @@ private fun ChannelBrowser(
                         }
                     }
                     items(
-                        groupCounts.keys.filter { it.isNotBlank() }.sorted(),
+                        orderedCategories,
                         key = { "group-filter-$it" }
                     ) { group ->
                         GroupItem(
@@ -3840,6 +4058,20 @@ private fun ChannelBrowser(
             }
         )
     }
+
+    if (showManageCategories) {
+        ManageCategoriesDialog(
+            categories = rawCategories,
+            groupCounts = groupCounts,
+            hiddenCategories = hiddenCategories,
+            categoryOrder = categoryOrder,
+            onToggleCategoryHidden = onToggleCategoryHidden,
+            onMoveCategory = onMoveCategory,
+            onUnhideAll = onUnhideAllCategories,
+            onResetOrder = onResetCategoryOrder,
+            onDismiss = { showManageCategories = false }
+        )
+    }
 }
 
 @Composable
@@ -4059,6 +4291,15 @@ private fun PlayerPanel(
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
     val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
+    var previousWatchedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
+    var currentTrackedChannel by remember { mutableStateOf(channel) }
+
+    fun handleChannelSwitch(next: PlaylistChannel) {
+        if (next != channel) {
+            previousWatchedChannel = channel
+            onChannelSelected(next)
+        }
+    }
 
     SideEffect {
         (activity as? MainActivity)?.updatePictureInPictureState(
@@ -4115,6 +4356,10 @@ private fun PlayerPanel(
     }
 
     LaunchedEffect(channel.streamUrl) {
+        if (currentTrackedChannel != channel) {
+            previousWatchedChannel = currentTrackedChannel
+            currentTrackedChannel = channel
+        }
         playbackError = null
         player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
         player.prepare()
@@ -4141,7 +4386,33 @@ private fun PlayerPanel(
             )
         }
         Spacer(Modifier.height(16.dp))
-        Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            if (previousWatchedChannel != null) {
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    onClick = { previousWatchedChannel?.let(::handleChannelSwitch) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            previousWatchedChannel?.name.orEmpty(),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
         schedule?.current?.let { current ->
             val startEpoch = current.startEpochMilli + (epgTimeShiftHours * 3600_000L)
             val stopEpoch = current.stopEpochMilli?.let { it + (epgTimeShiftHours * 3600_000L) }
@@ -4193,7 +4464,8 @@ private fun PlayerPanel(
             epgTimeShiftHours = epgTimeShiftHours,
             channels = channels,
             groups = groups,
-            onChannelSelected = onChannelSelected,
+            previousWatchedChannel = previousWatchedChannel,
+            onChannelSelected = ::handleChannelSwitch,
             onExit = { fullscreen = false },
             onRetry = {
                 playbackError = null
@@ -4347,6 +4619,7 @@ private fun FullscreenPlayer(
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
     groups: List<String> = emptyList(),
+    previousWatchedChannel: PlaylistChannel? = null,
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
     onRetry: () -> Unit,
@@ -4438,6 +4711,15 @@ private fun FullscreenPlayer(
                                 contentColor = Color.White
                             )
                         ) { Icon(Icons.Default.DateRange, contentDescription = strings.programmeGuide) }
+                        if (previousWatchedChannel != null) {
+                            FilledIconButton(
+                                onClick = { onChannelSelected(previousWatchedChannel) },
+                                colors = IconButtonDefaults.filledIconButtonColors(
+                                    containerColor = Color.Black.copy(alpha = .68f),
+                                    contentColor = Color.White
+                                )
+                            ) { Icon(Icons.Default.Replay, contentDescription = strings.previousChannel) }
+                        }
                     }
                     Row(
                         modifier = Modifier.align(Alignment.TopEnd).padding(14.dp),
@@ -4526,12 +4808,37 @@ private fun FullscreenPlayer(
                                         )
                                     } ?: Text(strings.noCurrentProgramme, color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
                                 }
+                                if (previousWatchedChannel != null) {
+                                    Surface(
+                                        onClick = { onChannelSelected(previousWatchedChannel) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                                        contentColor = Color.White
+                                    ) {
+                                        Row(
+                                            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                previousWatchedChannel.name,
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                }
                                 schedule?.next?.let { next ->
-                                    Spacer(Modifier.width(16.dp))
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
                                         color = Color.White.copy(alpha = .1f),
-                                        modifier = Modifier.widthIn(max = 280.dp)
+                                        modifier = Modifier.widthIn(max = 240.dp)
                                     ) {
                                         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -6469,6 +6776,181 @@ private fun StartupUpdateDialog(
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(strings.updateNow)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageCategoriesDialog(
+    categories: List<String>,
+    groupCounts: Map<String, Int>,
+    hiddenCategories: Set<String>,
+    categoryOrder: List<String>,
+    onToggleCategoryHidden: (String) -> Unit,
+    onMoveCategory: (String, Boolean) -> Unit,
+    onUnhideAll: () -> Unit,
+    onResetOrder: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var searchQuery by remember { mutableStateOf("") }
+
+    val orderedCategories = remember(categories, categoryOrder) {
+        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
+        categories.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
+    }
+
+    val filteredCategories = remember(orderedCategories, searchQuery) {
+        if (searchQuery.isBlank()) orderedCategories
+        else orderedCategories.filter { it.contains(searchQuery.trim(), ignoreCase = true) }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.85f)
+                .padding(8.dp)
+        ) {
+            Column(Modifier.fillMaxSize().padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            strings.manageCategories,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "${categories.size - hiddenCategories.size}/${categories.size} ${strings.active.lowercase()}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = strings.close)
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(strings.search) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = if (searchQuery.isNotBlank()) {
+                        { IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, contentDescription = null) } }
+                    } else null,
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onUnhideAll,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.showAllCategories, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = onResetOrder,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.resetCategoryOrder, fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(6.dp))
+
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    itemsIndexed(filteredCategories, key = { _, cat -> "manage-cat-$cat" }) { index, category ->
+                        val isHidden = category in hiddenCategories
+                        val count = groupCounts[category] ?: 0
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isHidden) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = { onToggleCategoryHidden(category) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        if (isHidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (isHidden) strings.showCategory else strings.hideCategory,
+                                        tint = if (isHidden) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        category,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp,
+                                        color = if (isHidden) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        strings.channelsCount(count),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                    )
+                                }
+                                if (searchQuery.isBlank()) {
+                                    IconButton(
+                                        onClick = { onMoveCategory(category, true) },
+                                        enabled = index > 0,
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(16.dp))
+                                    }
+                                    IconButton(
+                                        onClick = { onMoveCategory(category, false) },
+                                        enabled = index < filteredCategories.size - 1,
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
                         }
                     }
                 }

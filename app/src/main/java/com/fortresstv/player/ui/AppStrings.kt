@@ -107,6 +107,18 @@ interface Strings {
     val expandSidebar: String
     val showChannelFilters: String
     val hideChannelFilters: String
+    val previousChannel: String
+    val manageCategories: String
+    val hideCategory: String
+    val showCategory: String
+    val showAllCategories: String
+    val resetCategoryOrder: String
+    val search: String
+    val watchedProgress: String
+    val sortDefault: String
+    val sortByRating: String
+    val sortByYear: String
+    val sortAlphabetical: String
     val switchPlaylist: String
     val epgNotConfigured: String
     fun epgMatched(matched: Int, total: Int): String
@@ -321,6 +333,18 @@ object EnglishStrings : Strings {
     override val expandSidebar = "Expand sidebar"
     override val showChannelFilters = "Show channel filters"
     override val hideChannelFilters = "Hide channel filters"
+    override val previousChannel = "Previous channel"
+    override val manageCategories = "Manage categories"
+    override val hideCategory = "Hide category"
+    override val showCategory = "Show category"
+    override val showAllCategories = "Show all"
+    override val resetCategoryOrder = "Reset order"
+    override val search = "Search"
+    override val watchedProgress = "watched"
+    override val sortDefault = "Default"
+    override val sortByRating = "Top Rated"
+    override val sortByYear = "Year"
+    override val sortAlphabetical = "A–Z"
     override val switchPlaylist = "Switch playlist"
     override val epgNotConfigured = "EPG not configured"
     override fun epgMatched(matched: Int, total: Int) = "EPG: $matched/$total matched"
@@ -536,6 +560,18 @@ object PortugueseStrings : Strings {
     override val expandSidebar = "Expandir barra lateral"
     override val showChannelFilters = "Mostrar filtros de canais"
     override val hideChannelFilters = "Ocultar filtros de canais"
+    override val previousChannel = "Canal anterior"
+    override val manageCategories = "Gerir categorias"
+    override val hideCategory = "Ocultar categoria"
+    override val showCategory = "Mostrar categoria"
+    override val showAllCategories = "Mostrar todas"
+    override val resetCategoryOrder = "Repor ordem"
+    override val search = "Pesquisar"
+    override val watchedProgress = "visto"
+    override val sortDefault = "Predefinição"
+    override val sortByRating = "Melhor avaliados"
+    override val sortByYear = "Ano"
+    override val sortAlphabetical = "A–Z"
     override val switchPlaylist = "Mudar de lista"
     override val epgNotConfigured = "EPG não configurado"
     override fun epgMatched(matched: Int, total: Int) = "EPG: $matched/$total correspondidos"
