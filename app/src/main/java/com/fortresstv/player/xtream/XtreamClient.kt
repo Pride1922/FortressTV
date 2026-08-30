@@ -101,8 +101,9 @@ class XtreamClient(
             if (code !in 200..299) error("Xtream server returned HTTP $code")
             connection.inputStream.bufferedReader().use { it.readText() }.also { response ->
                 if (cacheFile != null) {
+                    val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
                     val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
-                    temp.writeText(sanitizeCatalogResponse(response))
+                    temp.writeText(sanitizedResponse)
                     if (cacheFile.exists()) cacheFile.delete()
                     temp.renameTo(cacheFile)
                 }
@@ -201,16 +202,15 @@ class XtreamClient(
     private fun JSONArray.objects(): List<JSONObject> =
         (0 until length()).mapNotNull(::optJSONObject)
 
-    private fun sanitizeCatalogResponse(response: String): String = runCatching {
+    internal fun sanitizeCatalogResponse(response: String): String? = runCatching {
         val array = JSONArray(response)
         for (index in 0 until array.length()) {
             array.optJSONObject(index)?.apply {
                 remove("direct_source")
-                remove("custom_sid")
             }
         }
         array.toString()
-    }.getOrDefault(response)
+    }.getOrNull()
 
     private fun JSONObject.nullableString(key: String): String? =
         optString(key).trim().takeIf { it.isNotEmpty() && !it.equals("null", true) }

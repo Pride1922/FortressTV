@@ -2030,6 +2030,7 @@ private fun VodPlayerDialog(title: String, streamUrl: String, onDismiss: () -> U
                 onFullscreen = onDismiss,
                 onControlsVisibilityChanged = {},
                 onRetry = { playbackError = null; player.prepare(); player.play() },
+                showTrackSettings = true,
                 modifier = Modifier.fillMaxSize()
             )
             Row(Modifier.align(Alignment.TopStart).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3026,6 +3027,7 @@ private fun VideoSurface(
     onFullscreen: () -> Unit,
     onControlsVisibilityChanged: (Boolean) -> Unit,
     onRetry: () -> Unit,
+    showTrackSettings: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
@@ -3068,7 +3070,9 @@ private fun VideoSurface(
                             onControlsVisibilityChanged(controlsVisible)
                         }
                     )
-                    findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility = android.view.View.GONE
+                    setShowSubtitleButton(showTrackSettings)
+                    findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
+                        if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_fullscreen)?.visibility = android.view.View.GONE
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_minimal_fullscreen)?.visibility = android.view.View.GONE
                 }
@@ -3076,6 +3080,9 @@ private fun VideoSurface(
             update = {
                 it.player = player
                 it.resizeMode = resizeMode
+                it.setShowSubtitleButton(showTrackSettings)
+                it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
+                    if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
             },
             modifier = Modifier.fillMaxSize()
         )

@@ -3,9 +3,28 @@ package com.fortresstv.player.xtream
 import com.fortresstv.player.source.ContentSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class XtreamClientTest {
+    @Test
+    fun sanitizesCatalogCacheWithoutDroppingEpgFallbackId() {
+        val client = XtreamClient(
+            sourceId = "test-source",
+            source = ContentSource.Xtream("https://example.com", "Test", "user", "pass")
+        )
+
+        val sanitized = client.sanitizeCatalogResponse(
+            """[{"stream_id":1,"custom_sid":"rtp1.pt","direct_source":"https://secret.example/live"}]"""
+        )
+
+        assertNotNull(sanitized)
+        val item = org.json.JSONArray(sanitized).getJSONObject(0)
+        assertEquals("rtp1.pt", item.getString("custom_sid"))
+        assertEquals(false, item.has("direct_source"))
+        assertNull(client.sanitizeCatalogResponse("not-json"))
+    }
+
     @Test
     fun normalizesServerAndPlayerApiUrls() {
         assertEquals("https://example.com:8443", XtreamClient.normalizeServerUrl("https://example.com:8443/"))
@@ -215,5 +234,4 @@ class XtreamClientTest {
         assertEquals("News", channels[1].group)
     }
 }
-
 
