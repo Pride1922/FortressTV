@@ -149,6 +149,13 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putBoolean("play_channels_fullscreen", enabled).apply()
     }
 
+    fun autoPictureInPicture(): Boolean =
+        preferences.getBoolean("auto_picture_in_picture", true)
+
+    fun setAutoPictureInPicture(enabled: Boolean) {
+        preferences.edit().putBoolean("auto_picture_in_picture", enabled).apply()
+    }
+
     private fun lastLegacyPlaylistUpdate(): Long = preferences.getLong("playlist_last_update", 0L)
 
     private fun saveSource(prefix: String, source: ContentSource) {

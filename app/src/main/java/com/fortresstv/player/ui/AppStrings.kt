@@ -105,6 +105,8 @@ interface Strings {
     val playback: String
     val playChannelsFullscreen: String
     val playChannelsFullscreenDesc: String
+    val autoPictureInPicture: String
+    val autoPictureInPictureDesc: String
     val addNewPlaylist: String
     val addPlaylist: String
     val playlistName: String
@@ -228,6 +230,8 @@ object EnglishStrings : Strings {
     override val playback = "Playback"
     override val playChannelsFullscreen = "Open channels in fullscreen"
     override val playChannelsFullscreenDesc = "Enter fullscreen immediately when you select a channel."
+    override val autoPictureInPicture = "Picture-in-Picture"
+    override val autoPictureInPictureDesc = "Keep fullscreen video in a floating window when you press Home."
     override val addNewPlaylist = "Add New Playlist"
     override val addPlaylist = "Add Playlist"
     override val playlistName = "Playlist Name"
@@ -352,6 +356,8 @@ object PortugueseStrings : Strings {
     override val playback = "Reprodução"
     override val playChannelsFullscreen = "Abrir canais em ecrã inteiro"
     override val playChannelsFullscreenDesc = "Entrar imediatamente em ecrã inteiro ao selecionar um canal."
+    override val autoPictureInPicture = "Imagem em imagem"
+    override val autoPictureInPictureDesc = "Manter o vídeo em ecrã inteiro numa janela flutuante ao premir o botão Início."
     override val addNewPlaylist = "Adicionar Nova Lista"
     override val addPlaylist = "Adicionar Lista"
     override val playlistName = "Nome da Lista"

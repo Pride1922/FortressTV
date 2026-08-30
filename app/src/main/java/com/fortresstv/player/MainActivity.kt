@@ -1,12 +1,15 @@
 package com.fortresstv.player
 
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
@@ -144,6 +147,52 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
 class MainActivity : ComponentActivity() {
+    var pictureInPictureMode by mutableStateOf(false)
+        private set
+
+    private var pictureInPictureEnabled = true
+    private var fullscreenVideoPlaying = false
+
+    fun updatePictureInPictureState(enabled: Boolean, fullscreenPlaying: Boolean) {
+        pictureInPictureEnabled = enabled
+        fullscreenVideoPlaying = fullscreenPlaying
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            setPictureInPictureParams(
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .apply {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            setAutoEnterEnabled(enabled && fullscreenPlaying)
+                            setSeamlessResizeEnabled(true)
+                        }
+                    }
+                    .build()
+            )
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (
+            Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S &&
+            pictureInPictureEnabled && fullscreenVideoPlaying
+        ) {
+            enterPictureInPictureMode(
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+            )
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pictureInPictureMode = isInPictureInPictureMode
+    }
+
     override fun onResume() {
         super.onResume()
         UpdateManager.resumePendingInstall(this)
@@ -194,6 +243,7 @@ private fun FortressTVApp() {
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
+    var autoPictureInPicture by remember { mutableStateOf(true) }
     val strings = getStringsFor(appLanguage)
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
@@ -352,10 +402,12 @@ private fun FortressTVApp() {
         val shift = withContext(Dispatchers.IO) { settings.epgTimeShiftHours() }
         val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
         val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
+        val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
         appLanguage = AppLanguage.fromCode(savedLangCode)
         epgTimeShiftHours = shift
         epgLastUpdate = epgUpdate
         playChannelsFullscreen = savedFullscreenPreference
+        autoPictureInPicture = savedPictureInPicturePreference
 
         val (savedPlaylists, currentActive) = withContext(Dispatchers.IO) {
             settings.getPlaylists() to settings.getActivePlaylist()
@@ -619,6 +671,11 @@ private fun FortressTVApp() {
                     playChannelsFullscreen = enabled
                     scope.launch(Dispatchers.IO) { settings.setPlayChannelsFullscreen(enabled) }
                 },
+                autoPictureInPicture = autoPictureInPicture,
+                onAutoPictureInPictureChanged = { enabled ->
+                    autoPictureInPicture = enabled
+                    scope.launch(Dispatchers.IO) { settings.setAutoPictureInPicture(enabled) }
+                },
                 epgSource = epgSource,
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
@@ -718,6 +775,7 @@ private fun FortressTVApp() {
                 epgSourceName = epgSourceName,
                 epgTimeShiftHours = epgTimeShiftHours,
                 playChannelsFullscreen = playChannelsFullscreen,
+                autoPictureInPicture = autoPictureInPicture,
                 loading = loading,
                 error = error,
                 onOpenSettings = { tab ->
@@ -1224,6 +1282,7 @@ private fun ChannelBrowser(
     epgSourceName: String?,
     epgTimeShiftHours: Int = 0,
     playChannelsFullscreen: Boolean,
+    autoPictureInPicture: Boolean,
     loading: Boolean,
     error: String?,
     onOpenSettings: (Int) -> Unit
@@ -1523,6 +1582,7 @@ private fun ChannelBrowser(
                             channels = playlist.channels,
                             groups = playlist.groups,
                             autoEnterFullscreen = playChannelsFullscreen,
+                            autoPictureInPicture = autoPictureInPicture,
                             onChannelSelected = ::selectChannel,
                             modifier = Modifier.fillMaxWidth().wrapContentHeight()
                         )
@@ -1633,6 +1693,7 @@ private fun ChannelBrowser(
                             channels = playlist.channels,
                             groups = playlist.groups,
                             autoEnterFullscreen = playChannelsFullscreen,
+                            autoPictureInPicture = autoPictureInPicture,
                             onChannelSelected = ::selectChannel,
                             modifier = Modifier.weight(1f).fillMaxHeight()
                         )
@@ -1826,6 +1887,7 @@ private fun PlayerPanel(
     channels: List<PlaylistChannel>,
     groups: List<String> = emptyList(),
     autoEnterFullscreen: Boolean,
+    autoPictureInPicture: Boolean,
     onChannelSelected: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1844,6 +1906,14 @@ private fun PlayerPanel(
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
+    val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
+
+    SideEffect {
+        (activity as? MainActivity)?.updatePictureInPictureState(
+            enabled = autoPictureInPicture,
+            fullscreenPlaying = fullscreen && player.playWhenReady
+        )
+    }
     val schedule = epgGuide?.snapshot(channel.tvgId, timeShiftHours = epgTimeShiftHours)
 
     DisposableEffect(player) {
@@ -1859,6 +1929,7 @@ private fun PlayerPanel(
         }
         val lifecycleObserver = object : DefaultLifecycleObserver {
             override fun onStop(owner: LifecycleOwner) {
+                if ((activity as? MainActivity)?.isInPictureInPictureMode == true) return
                 resumePlaybackOnStart = player.playWhenReady
                 player.pause()
             }
@@ -1873,6 +1944,10 @@ private fun PlayerPanel(
         player.addListener(listener)
         lifecycleOwner?.lifecycle?.addObserver(lifecycleObserver)
         onDispose {
+            (activity as? MainActivity)?.updatePictureInPictureState(
+                enabled = autoPictureInPicture,
+                fullscreenPlaying = false
+            )
             lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
             player.removeListener(listener)
             player.release()
@@ -1964,7 +2039,8 @@ private fun PlayerPanel(
                 playbackError = null
                 player.prepare()
                 player.play()
-            }
+            },
+            inPictureInPicture = inPictureInPicture
         )
     }
 }
@@ -2107,7 +2183,8 @@ private fun FullscreenPlayer(
     groups: List<String> = emptyList(),
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    inPictureInPicture: Boolean
 ) {
     val strings = LocalAppStrings.current
     var controlsVisible by remember { mutableStateOf(true) }
@@ -2164,7 +2241,7 @@ private fun FullscreenPlayer(
                 modifier = Modifier.fillMaxSize()
             )
             AnimatedVisibility(
-                visible = controlsVisible && !showChannels && !showGuide,
+                visible = controlsVisible && !showChannels && !showGuide && !inPictureInPicture,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize()
@@ -2340,7 +2417,7 @@ private fun FullscreenPlayer(
                 }
             }
             AnimatedVisibility(
-                visible = showChannels,
+                visible = showChannels && !inPictureInPicture,
                 enter = slideInHorizontally { -it } + fadeIn(),
                 exit = slideOutHorizontally { -it } + fadeOut(),
                 modifier = Modifier.align(Alignment.CenterStart)
@@ -2360,7 +2437,7 @@ private fun FullscreenPlayer(
                 )
             }
             AnimatedVisibility(
-                visible = showGuide,
+                visible = showGuide && !inPictureInPicture,
                 enter = slideInHorizontally { it } + fadeIn(),
                 exit = slideOutHorizontally { it } + fadeOut(),
                 modifier = Modifier.align(Alignment.CenterEnd)
@@ -2642,6 +2719,8 @@ private fun SettingsDialog(
     onLanguageChanged: (AppLanguage) -> Unit,
     playChannelsFullscreen: Boolean,
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
+    autoPictureInPicture: Boolean,
+    onAutoPictureInPictureChanged: (Boolean) -> Unit,
     epgSource: ContentSource?,
     epgSourceName: String?,
     epgLastUpdate: Long,
@@ -2742,7 +2821,9 @@ private fun SettingsDialog(
                             appLanguage = appLanguage,
                             onLanguageChanged = onLanguageChanged,
                             playChannelsFullscreen = playChannelsFullscreen,
-                            onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged
+                            onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
+                            autoPictureInPicture = autoPictureInPicture,
+                            onAutoPictureInPictureChanged = onAutoPictureInPictureChanged
                         )
                     }
                 }
@@ -3219,7 +3300,9 @@ private fun AboutTab(
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
     playChannelsFullscreen: Boolean,
-    onPlayChannelsFullscreenChanged: (Boolean) -> Unit
+    onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
+    autoPictureInPicture: Boolean,
+    onAutoPictureInPictureChanged: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3307,6 +3390,37 @@ private fun AboutTab(
                 Switch(
                     checked = playChannelsFullscreen,
                     onCheckedChange = onPlayChannelsFullscreenChanged
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onAutoPictureInPictureChanged(!autoPictureInPicture) }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.autoPictureInPicture, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Text(
+                        strings.autoPictureInPictureDesc,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Switch(
+                    checked = autoPictureInPicture,
+                    onCheckedChange = onAutoPictureInPictureChanged
                 )
             }
         }
