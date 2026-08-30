@@ -27,6 +27,7 @@ android {
     }
 
     targetProjectPath = ":app"
+    experimentalProperties["android.experimental.self-instrumenting"] = true
 
     signingConfigs {
         if (keystorePropertiesFile.exists()) {

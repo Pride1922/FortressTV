@@ -171,7 +171,17 @@ class MainActivity : ComponentActivity() {
             .build()
         Coil.setImageLoader(imageLoader)
 
-        setContent { FortressTVTheme { FortressTVApp() } }
+        setContent {
+            FortressTVTheme {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .semantics { testTagsAsResourceId = true }
+                ) {
+                    FortressTVApp()
+                }
+            }
+        }
     }
 }
 
