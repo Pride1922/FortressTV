@@ -171,6 +171,15 @@ interface Strings {
     val removeFromContinueWatching: String
     val nextEpisode: String
     val playNextEpisode: String
+    val autoPlayNext: String
+    val autoPlayNextDesc: String
+    val sleepTimer: String
+    val sleepTimerOff: String
+    val endOfEpisode: String
+    fun sleepTimerSet(minutes: Int): String
+    fun nextEpisodeIn(seconds: Int): String
+    val playNow: String
+    val sleepTimerExpired: String
 
     val welcomeTitle: String
     val welcomeSubtitle: String
@@ -402,6 +411,15 @@ object EnglishStrings : Strings {
     override val removeFromContinueWatching = "Remove from Continue watching"
     override val nextEpisode = "Next episode"
     override val playNextEpisode = "Play next"
+    override val autoPlayNext = "Auto-Play Next"
+    override val autoPlayNextDesc = "Automatically play next episode when current ends"
+    override val sleepTimer = "Sleep Timer"
+    override val sleepTimerOff = "Off"
+    override val endOfEpisode = "End of video"
+    override fun sleepTimerSet(minutes: Int) = "Sleep timer set for $minutes minutes"
+    override fun nextEpisodeIn(seconds: Int) = "Next episode in ${seconds}s"
+    override val playNow = "Play Now"
+    override val sleepTimerExpired = "Sleep timer finished. Playback stopped."
 
     override val welcomeTitle = "Secure IPTV Player"
     override val welcomeSubtitle = "Private by default. Hardware-backed AES-256 encrypted storage."
@@ -634,6 +652,15 @@ object PortugueseStrings : Strings {
     override val removeFromContinueWatching = "Remover de Continuar a ver"
     override val nextEpisode = "Próximo episódio"
     override val playNextEpisode = "Reproduzir próximo"
+    override val autoPlayNext = "Reprodução automática"
+    override val autoPlayNextDesc = "Reproduzir automaticamente o próximo episódio"
+    override val sleepTimer = "Temporizador de suspensão"
+    override val sleepTimerOff = "Desativado"
+    override val endOfEpisode = "No final do vídeo"
+    override fun sleepTimerSet(minutes: Int) = "Temporizador definido para $minutes minutos"
+    override fun nextEpisodeIn(seconds: Int) = "Próximo episódio em ${seconds}s"
+    override val playNow = "Reproduzir Agora"
+    override val sleepTimerExpired = "Temporizador de suspensão terminado. Reprodução parada."
 
     override val welcomeTitle = "Reprodutor IPTV Seguro"
     override val welcomeSubtitle = "Privacidade por padrão. Armazenamento encriptado com AES-256."

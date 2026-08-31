@@ -75,6 +75,9 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
@@ -3384,17 +3387,70 @@ private fun VodPlayerDialog(
     var playbackError by remember { mutableStateOf<String?>(null) }
     var nextEpisode by remember(request.key) { mutableStateOf<VodPlaybackRequest?>(null) }
     var loadingNextEpisode by remember(request.key) { mutableStateOf(false) }
+
+    var controlsVisible by remember { mutableStateOf(true) }
+    var autoPlayNext by remember { mutableStateOf(true) }
+    var autoPlayCountdown by remember(request.key) { mutableIntStateOf(-1) }
+
+    var sleepTimerMinutes by remember { mutableStateOf<Int?>(null) }
+    var sleepTimerEndEpochMs by remember { mutableStateOf<Long?>(null) }
+    var sleepTimerRemainingText by remember { mutableStateOf<String?>(null) }
+    var showSleepTimerDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(sleepTimerEndEpochMs, sleepTimerMinutes) {
+        val targetEpoch = sleepTimerEndEpochMs
+        if (targetEpoch != null) {
+            while (true) {
+                val remainingMs = targetEpoch - System.currentTimeMillis()
+                if (remainingMs <= 0L) {
+                    Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
+                    player.pause()
+                    onDismiss()
+                    break
+                } else {
+                    val mins = ((remainingMs / 1000L) / 60L).toInt() + 1
+                    sleepTimerRemainingText = "${mins}m"
+                }
+                delay(1000)
+            }
+        } else {
+            sleepTimerRemainingText = null
+        }
+    }
+
+    LaunchedEffect(autoPlayCountdown, nextEpisode) {
+        if (autoPlayCountdown > 0) {
+            delay(1000)
+            autoPlayCountdown--
+            if (autoPlayCountdown == 0) {
+                nextEpisode?.let { next ->
+                    onPlayNext(next)
+                }
+            }
+        }
+    }
+
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_ENDED) {
                     onSaveProgress(player.duration.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+                    if (sleepTimerMinutes == -1) {
+                        Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
+                        player.pause()
+                        onDismiss()
+                        return
+                    }
                     if (loadNextEpisode != null && !loadingNextEpisode && nextEpisode == null) {
                         loadingNextEpisode = true
                         scope.launch {
-                            nextEpisode = runCatching { loadNextEpisode() }.getOrNull()
+                            val next = runCatching { loadNextEpisode() }.getOrNull()
                             loadingNextEpisode = false
+                            nextEpisode = next
+                            if (next != null && autoPlayNext) {
+                                autoPlayCountdown = 5
+                            }
                         }
                     }
                 }
@@ -3429,18 +3485,125 @@ private fun VodPlayerDialog(
                 fullscreen = true,
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 onFullscreen = onDismiss,
-                onControlsVisibilityChanged = {},
+                onControlsVisibilityChanged = { controlsVisible = it },
                 onRetry = { playbackError = null; player.prepare(); player.play() },
                 showTrackSettings = true,
                 modifier = Modifier.fillMaxSize()
             )
-            Row(Modifier.align(Alignment.TopStart).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilledIconButton(onClick = onDismiss, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = .7f), contentColor = Color.White)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+            ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
+                            )
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledIconButton(
+                        onClick = onDismiss,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = Color.Black.copy(alpha = 0.7f),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            request.title,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (request.kind == VodProgressKind.EPISODE && (request.season != null || request.episode != null)) {
+                            Text(
+                                "S${(request.season ?: 1).toString().padStart(2, '0')} E${(request.episode ?: 1).toString().padStart(2, '0')}",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    if (loadNextEpisode != null) {
+                        Surface(
+                            onClick = { autoPlayNext = !autoPlayNext },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (autoPlayNext) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                            border = BorderStroke(1.dp, if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.FastForward,
+                                    contentDescription = strings.autoPlayNext,
+                                    tint = if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    strings.autoPlayNext,
+                                    color = if (autoPlayNext) Color.White else Color.White.copy(alpha = 0.7f),
+                                    fontSize = 12.sp,
+                                    fontWeight = if (autoPlayNext) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
+
+                    Surface(
+                        onClick = { showSleepTimerDialog = true },
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                        border = BorderStroke(1.dp, if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Bedtime,
+                                contentDescription = strings.sleepTimer,
+                                tint = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            if (sleepTimerRemainingText != null) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    sleepTimerRemainingText.orEmpty(),
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else if (sleepTimerMinutes == -1) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    strings.endOfEpisode,
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
-                Spacer(Modifier.width(10.dp))
-                Text(request.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+
             if (!resumeDecisionMade) {
                 Surface(
                     shape = RoundedCornerShape(18.dp),
@@ -3464,25 +3627,162 @@ private fun VodPlayerDialog(
                     }
                 }
             }
+
             nextEpisode?.let { next ->
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.align(Alignment.Center).widthIn(max = 430.dp)
-                ) {
-                    Column(Modifier.padding(24.dp)) {
-                        Text(strings.nextEpisode, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        Text(next.title, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(20.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(strings.close) }
-                            Button(onClick = { onPlayNext(next) }, modifier = Modifier.weight(1f)) {
-                                Text(strings.playNextEpisode)
+                if (autoPlayCountdown > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp).widthIn(max = 480.dp)
+                    ) {
+                        Column(Modifier.padding(20.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.FastForward,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        strings.nextEpisodeIn(autoPlayCountdown),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                next.title,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        autoPlayCountdown = -1
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(strings.cancel)
+                                }
+                                Button(
+                                    onClick = {
+                                        autoPlayCountdown = -1
+                                        onPlayNext(next)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(strings.playNow)
+                                }
+                            }
+                        }
+                    }
+                } else if (autoPlayCountdown <= 0) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.align(Alignment.Center).widthIn(max = 430.dp)
+                    ) {
+                        Column(Modifier.padding(24.dp)) {
+                            Text(strings.nextEpisode, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(8.dp))
+                            Text(next.title, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(20.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(strings.close) }
+                                Button(onClick = { onPlayNext(next) }, modifier = Modifier.weight(1f)) {
+                                    Text(strings.playNextEpisode)
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            if (showSleepTimerDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSleepTimerDialog = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Bedtime, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Text(strings.sleepTimer, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val options = listOf(
+                                null to strings.sleepTimerOff,
+                                15 to "15 min",
+                                30 to "30 min",
+                                45 to "45 min",
+                                60 to "60 min",
+                                90 to "90 min",
+                                120 to "120 min",
+                                -1 to strings.endOfEpisode
+                            )
+                            options.forEach { (mins, label) ->
+                                val isSelected = sleepTimerMinutes == mins
+                                Surface(
+                                    onClick = {
+                                        sleepTimerMinutes = mins
+                                        if (mins != null && mins > 0) {
+                                            sleepTimerEndEpochMs = System.currentTimeMillis() + mins * 60_000L
+                                            Toast.makeText(context, strings.sleepTimerSet(mins), Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            sleepTimerEndEpochMs = null
+                                            if (mins == -1) {
+                                                Toast.makeText(context, strings.endOfEpisode, Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                        showSleepTimerDialog = false
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                    border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            label,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (isSelected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showSleepTimerDialog = false }) {
+                            Text(strings.close)
+                        }
+                    }
+                )
             }
         }
     }
