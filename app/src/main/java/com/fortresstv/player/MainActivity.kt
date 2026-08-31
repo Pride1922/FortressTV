@@ -26,6 +26,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedVisibility
@@ -37,7 +38,12 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -55,6 +61,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
@@ -78,8 +85,12 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BrightnessMedium
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -128,6 +139,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -143,6 +155,8 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Key
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -371,6 +385,11 @@ private fun FortressTVApp() {
     var showEpgUrlDialog by remember { mutableStateOf(false) }
     var showRemoveEpgConfirm by remember { mutableStateOf(false) }
     var hideAdultContent by remember { mutableStateOf(settings.hideAdultContent()) }
+    var parentalPin by remember { mutableStateOf(settings.getParentalPin()) }
+    var parentalControlEnabled by remember { mutableStateOf(settings.parentalControlEnabled()) }
+    var activePinDialog by remember { mutableStateOf<PinDialogMode?>(null) }
+    var isAdultContentUnlockedByPin by remember { mutableStateOf(false) }
+    val effectiveHideAdultContent = if (parentalControlEnabled && !isAdultContentUnlockedByPin) true else hideAdultContent
 
     var startupUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var startupUpdateProgress by remember { mutableFloatStateOf(-1f) }
@@ -884,9 +903,29 @@ private fun FortressTVApp() {
                 },
                 hideAdultContent = hideAdultContent,
                 onHideAdultContentChanged = { enabled ->
-                    hideAdultContent = enabled
-                    scope.launch(Dispatchers.IO) { settings.setHideAdultContent(enabled) }
+                    if (parentalControlEnabled && !isAdultContentUnlockedByPin) {
+                        activePinDialog = PinDialogMode.UNLOCK_ADULT
+                    } else {
+                        hideAdultContent = enabled
+                        scope.launch(Dispatchers.IO) { settings.setHideAdultContent(enabled) }
+                    }
                 },
+                parentalControlEnabled = parentalControlEnabled,
+                hasParentalPin = parentalPin != null,
+                onParentalControlToggled = { enabled ->
+                    if (enabled) {
+                        if (parentalPin == null) {
+                            activePinDialog = PinDialogMode.SET
+                        } else {
+                            parentalControlEnabled = true
+                            scope.launch(Dispatchers.IO) { settings.setParentalControlEnabled(true) }
+                        }
+                    } else {
+                        activePinDialog = PinDialogMode.VERIFY
+                    }
+                },
+                onChangeParentalPin = { activePinDialog = PinDialogMode.SET },
+                onRemoveParentalPin = { activePinDialog = PinDialogMode.REMOVE },
                 epgSource = epgSource,
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
@@ -1034,7 +1073,7 @@ private fun FortressTVApp() {
                 epgTimeShiftHours = epgTimeShiftHours,
                 playChannelsFullscreen = playChannelsFullscreen,
                 autoPictureInPicture = autoPictureInPicture,
-                hideAdultContent = hideAdultContent,
+                hideAdultContent = effectiveHideAdultContent,
                 loading = loading,
                 error = error,
                 onRetryLoad = retryLoad,
@@ -1078,6 +1117,45 @@ private fun FortressTVApp() {
                     settingsInitialTab = tab
                     showSettings = true
                 }
+            )
+        }
+
+        activePinDialog?.let { mode ->
+            PinEntryDialog(
+                mode = mode,
+                currentPin = parentalPin,
+                onSuccess = { newPin ->
+                    when (mode) {
+                        PinDialogMode.SET -> {
+                            parentalPin = newPin
+                            parentalControlEnabled = true
+                            scope.launch(Dispatchers.IO) {
+                                settings.setParentalPin(newPin)
+                                settings.setParentalControlEnabled(true)
+                            }
+                            Toast.makeText(context, strings.pinSetSuccess, Toast.LENGTH_SHORT).show()
+                        }
+                        PinDialogMode.VERIFY -> {
+                            parentalControlEnabled = false
+                            scope.launch(Dispatchers.IO) { settings.setParentalControlEnabled(false) }
+                        }
+                        PinDialogMode.REMOVE -> {
+                            parentalPin = null
+                            parentalControlEnabled = false
+                            scope.launch(Dispatchers.IO) {
+                                settings.setParentalPin(null)
+                                settings.setParentalControlEnabled(false)
+                            }
+                            Toast.makeText(context, strings.pinRemovedSuccess, Toast.LENGTH_SHORT).show()
+                        }
+                        PinDialogMode.UNLOCK_ADULT -> {
+                            isAdultContentUnlockedByPin = true
+                        }
+                        PinDialogMode.UNLOCK_SETTINGS -> {}
+                    }
+                    activePinDialog = null
+                },
+                onDismiss = { activePinDialog = null }
             )
         }
     }
@@ -3400,6 +3478,18 @@ private fun SeriesEpisodesDialog(
     }
 }
 
+private fun formatPlaybackTime(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val seconds = totalSeconds % 60
+    val minutes = (totalSeconds / 60) % 60
+    val hours = totalSeconds / 3600
+    return if (hours > 0) {
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+    }
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun VodPlayerDialog(
@@ -3429,6 +3519,12 @@ private fun VodPlayerDialog(
     var autoPlayNext by remember { mutableStateOf(true) }
     var autoPlayCountdown by remember(request.key) { mutableIntStateOf(-1) }
 
+    var currentPositionMs by remember(request.key) { mutableLongStateOf(0L) }
+    var totalDurationMs by remember(request.key) { mutableLongStateOf(0L) }
+    var isPlaying by remember(request.key) { mutableStateOf(true) }
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var sliderDragPositionMs by remember { mutableFloatStateOf(0f) }
+
     var sleepTimerMinutes by remember { mutableStateOf<Int?>(null) }
     var sleepTimerEndEpochMs by remember { mutableStateOf<Long?>(null) }
     var sleepTimerRemainingText by remember { mutableStateOf<String?>(null) }
@@ -3442,6 +3538,17 @@ private fun VodPlayerDialog(
     var showEpisodesDrawer by remember { mutableStateOf(false) }
     var selectedDrawerSeason by remember(request.season) { mutableIntStateOf(request.season ?: 1) }
 
+    LaunchedEffect(player) {
+        while (true) {
+            if (!isDraggingSlider) {
+                currentPositionMs = player.currentPosition.coerceAtLeast(0L)
+                totalDurationMs = player.duration.coerceAtLeast(0L)
+                isPlaying = player.isPlaying
+            }
+            delay(250)
+        }
+    }
+
     LaunchedEffect(request.seriesId, loadAllEpisodes) {
         if (loadAllEpisodes != null && allEpisodes.isEmpty()) {
             val eps = runCatching { loadAllEpisodes() }.getOrDefault(emptyList())
@@ -3454,70 +3561,20 @@ private fun VodPlayerDialog(
 
     LaunchedEffect(showEpisodesDrawer) {
         if (showEpisodesDrawer) {
-            delay(5_000)
+            delay(2_000)
             showEpisodesDrawer = false
         }
     }
 
-    LaunchedEffect(controlsVisible) {
-        if (!controlsVisible && showEpisodesDrawer) {
-            showEpisodesDrawer = false
+    LaunchedEffect(controlsVisible, showEpisodesDrawer, showSleepTimerDialog, showTracksDialog) {
+        if (controlsVisible && !showEpisodesDrawer && !showSleepTimerDialog && !showTracksDialog) {
+            delay(2_000)
+            controlsVisible = false
         }
     }
 
-    val audioTracks = remember(currentTracks) {
-        val list = mutableListOf<PlaybackTrackItem>()
-        currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_AUDIO }?.forEach { group ->
-            for (i in 0 until group.length) {
-                if (group.isTrackSupported(i)) {
-                    val format = group.getTrackFormat(i)
-                    val lang = format.language?.takeIf(String::isNotBlank)
-                    val label = format.label?.takeIf(String::isNotBlank)
-                        ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
-                        ?: "Audio Track ${list.size + 1}"
-                    list.add(
-                        PlaybackTrackItem(
-                            id = "audio_${group.mediaTrackGroup.id}_$i",
-                            type = C.TRACK_TYPE_AUDIO,
-                            label = label,
-                            language = lang,
-                            isSelected = group.isTrackSelected(i),
-                            group = group,
-                            trackIndex = i
-                        )
-                    )
-                }
-            }
-        }
-        list
-    }
-
-    val subtitleTracks = remember(currentTracks) {
-        val list = mutableListOf<PlaybackTrackItem>()
-        currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_TEXT }?.forEach { group ->
-            for (i in 0 until group.length) {
-                if (group.isTrackSupported(i)) {
-                    val format = group.getTrackFormat(i)
-                    val lang = format.language?.takeIf(String::isNotBlank)
-                    val label = format.label?.takeIf(String::isNotBlank)
-                        ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
-                        ?: "Subtitle ${list.size + 1}"
-                    list.add(
-                        PlaybackTrackItem(
-                            id = "sub_${group.mediaTrackGroup.id}_$i",
-                            type = C.TRACK_TYPE_TEXT,
-                            label = label,
-                            language = lang,
-                            isSelected = group.isTrackSelected(i),
-                            group = group,
-                            trackIndex = i
-                        )
-                    )
-                }
-            }
-        }
-        list
-    }
+    val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
+    val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
 
     LaunchedEffect(sleepTimerEndEpochMs, sleepTimerMinutes) {
         val targetEpoch = sleepTimerEndEpochMs
@@ -3610,9 +3667,9 @@ private fun VodPlayerDialog(
                 fullscreen = true,
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 onFullscreen = onDismiss,
-                onControlsVisibilityChanged = { controlsVisible = it },
+                onToggleControls = { controlsVisible = !controlsVisible },
                 onRetry = { playbackError = null; player.prepare(); player.play() },
-                showTrackSettings = true,
+                showTrackSettings = false,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -3620,166 +3677,278 @@ private fun VodPlayerDialog(
                 visible = controlsVisible && !showEpisodesDrawer,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                modifier = Modifier.fillMaxSize()
             ) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
+                Box(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
+                                )
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledIconButton(
+                            onClick = onDismiss,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.7f),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                request.title,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (request.kind == VodProgressKind.EPISODE && (request.season != null || request.episode != null)) {
+                                Text(
+                                    "S${(request.season ?: 1).toString().padStart(2, '0')} E${(request.episode ?: 1).toString().padStart(2, '0')}",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        if (request.kind == VodProgressKind.EPISODE || loadAllEpisodes != null) {
+                            Surface(
+                                onClick = { showEpisodesDrawer = true },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.VideoLibrary,
+                                        contentDescription = strings.episodesDrawer,
+                                        tint = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.episodesDrawer,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (showEpisodesDrawer) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+
+                        Surface(
+                            onClick = { showTracksDialog = true },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                            border = BorderStroke(1.dp, if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Subtitles,
+                                    contentDescription = strings.audioAndSubtitles,
+                                    tint = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    strings.audioAndSubtitles,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+
+                        if (loadNextEpisode != null) {
+                            Surface(
+                                onClick = { autoPlayNext = !autoPlayNext },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (autoPlayNext) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.FastForward,
+                                        contentDescription = strings.autoPlayNext,
+                                        tint = if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.autoPlayNext,
+                                        color = if (autoPlayNext) Color.White else Color.White.copy(alpha = 0.7f),
+                                        fontSize = 12.sp,
+                                        fontWeight = if (autoPlayNext) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+
+                        Surface(
+                            onClick = { showSleepTimerDialog = true },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                            border = BorderStroke(1.dp, if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Bedtime,
+                                    contentDescription = strings.sleepTimer,
+                                    tint = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                if (sleepTimerRemainingText != null) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        sleepTimerRemainingText.orEmpty(),
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else if (sleepTimerMinutes == -1) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.endOfEpisode,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // CENTER PLAYBACK CONTROLS
+                    Row(
+                        Modifier.align(Alignment.Center),
+                        horizontalArrangement = Arrangement.spacedBy(32.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledIconButton(
+                            onClick = {
+                                val target = (player.currentPosition - 10_000L).coerceAtLeast(0L)
+                                player.seekTo(target)
+                                currentPositionMs = target
+                            },
+                            modifier = Modifier.size(54.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.65f),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Icon(Icons.Default.FastRewind, contentDescription = "-10s", modifier = Modifier.size(28.dp))
+                        }
+
+                        FilledIconButton(
+                            onClick = {
+                                if (player.isPlaying) {
+                                    player.pause()
+                                    isPlaying = false
+                                } else {
+                                    player.play()
+                                    isPlaying = true
+                                }
+                            },
+                            modifier = Modifier.size(72.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        ) {
+                            Icon(
+                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
+
+                        FilledIconButton(
+                            onClick = {
+                                val target = (player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))
+                                player.seekTo(target)
+                                currentPositionMs = target
+                            },
+                            modifier = Modifier.size(54.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = Color.Black.copy(alpha = 0.65f),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Icon(Icons.Default.FastForward, contentDescription = "+10s", modifier = Modifier.size(28.dp))
+                        }
+                    }
+
+                    // BOTTOM TIMELINE & PROGRESS BAR
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                                )
+                            )
+                            .padding(horizontal = 24.dp, vertical = 18.dp)
+                    ) {
+                        Slider(
+                            value = if (isDraggingSlider) sliderDragPositionMs else currentPositionMs.toFloat().coerceIn(0f, totalDurationMs.coerceAtLeast(1L).toFloat()),
+                            onValueChange = {
+                                isDraggingSlider = true
+                                sliderDragPositionMs = it
+                            },
+                            onValueChangeFinished = {
+                                player.seekTo(sliderDragPositionMs.toLong())
+                                currentPositionMs = sliderDragPositionMs.toLong()
+                                isDraggingSlider = false
+                            },
+                            valueRange = 0f..(totalDurationMs.coerceAtLeast(1L).toFloat()),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.25f)
                             )
                         )
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    FilledIconButton(
-                        onClick = onDismiss,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = Color.Black.copy(alpha = 0.7f),
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            request.title,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (request.kind == VodProgressKind.EPISODE && (request.season != null || request.episode != null)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Text(
-                                "S${(request.season ?: 1).toString().padStart(2, '0')} E${(request.episode ?: 1).toString().padStart(2, '0')}",
+                                formatPlaybackTime(if (isDraggingSlider) sliderDragPositionMs.toLong() else currentPositionMs),
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                formatPlaybackTime(totalDurationMs),
                                 color = Color.White.copy(alpha = 0.7f),
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium
                             )
-                        }
-                    }
-
-                    if (request.kind == VodProgressKind.EPISODE || loadAllEpisodes != null) {
-                        Surface(
-                            onClick = { showEpisodesDrawer = true },
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
-                            border = BorderStroke(1.dp, if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.VideoLibrary,
-                                    contentDescription = strings.episodesDrawer,
-                                    tint = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    strings.episodesDrawer,
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (showEpisodesDrawer) FontWeight.Bold else FontWeight.Normal
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    }
-
-                    Surface(
-                        onClick = { showTracksDialog = true },
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
-                        border = BorderStroke(1.dp, if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Subtitles,
-                                contentDescription = strings.audioAndSubtitles,
-                                tint = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                strings.audioAndSubtitles,
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
-
-                    if (loadNextEpisode != null) {
-                        Surface(
-                            onClick = { autoPlayNext = !autoPlayNext },
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (autoPlayNext) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
-                            border = BorderStroke(1.dp, if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.FastForward,
-                                    contentDescription = strings.autoPlayNext,
-                                    tint = if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    strings.autoPlayNext,
-                                    color = if (autoPlayNext) Color.White else Color.White.copy(alpha = 0.7f),
-                                    fontSize = 12.sp,
-                                    fontWeight = if (autoPlayNext) FontWeight.Bold else FontWeight.Normal
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    }
-
-                    Surface(
-                        onClick = { showSleepTimerDialog = true },
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
-                        border = BorderStroke(1.dp, if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Bedtime,
-                                contentDescription = strings.sleepTimer,
-                                tint = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            if (sleepTimerRemainingText != null) {
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    sleepTimerRemainingText.orEmpty(),
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            } else if (sleepTimerMinutes == -1) {
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    strings.endOfEpisode,
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                         }
                     }
                 }
@@ -4046,177 +4215,11 @@ private fun VodPlayerDialog(
             }
 
             if (showTracksDialog) {
-                AlertDialog(
-                    onDismissRequest = { showTracksDialog = false },
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Subtitles, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(10.dp))
-                            Text(strings.audioAndSubtitles, fontWeight = FontWeight.Bold)
-                        }
-                    },
-                    text = {
-                        Column(Modifier.fillMaxWidth()) {
-                            TabRow(selectedTabIndex = selectedTrackTab) {
-                                Tab(
-                                    selected = selectedTrackTab == 0,
-                                    onClick = { selectedTrackTab = 0 },
-                                    text = { Text(strings.audioTracks) }
-                                )
-                                Tab(
-                                    selected = selectedTrackTab == 1,
-                                    onClick = { selectedTrackTab = 1 },
-                                    text = { Text(strings.subtitles) }
-                                )
-                            }
-                            Spacer(Modifier.height(14.dp))
-                            if (selectedTrackTab == 0) {
-                                if (audioTracks.isEmpty()) {
-                                    Text(
-                                        strings.noAudioTracksAvailable,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(vertical = 12.dp)
-                                    )
-                                } else {
-                                    LazyColumn(
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.heightIn(max = 280.dp)
-                                    ) {
-                                        items(audioTracks, key = { it.id }) { track ->
-                                            Surface(
-                                                onClick = {
-                                                    player.trackSelectionParameters = player.trackSelectionParameters
-                                                        .buildUpon()
-                                                        .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-                                                        .build()
-                                                    showTracksDialog = false
-                                                },
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                                                border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Row(
-                                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Text(
-                                                        track.label,
-                                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                        color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    if (track.isSelected) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = null,
-                                                            tint = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                LazyColumn(
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.heightIn(max = 280.dp)
-                                ) {
-                                    val isSubtitlesOff = subtitleTracks.none { it.isSelected }
-                                    item {
-                                        Surface(
-                                            onClick = {
-                                                player.trackSelectionParameters = player.trackSelectionParameters
-                                                    .buildUpon()
-                                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                                                    .build()
-                                                showTracksDialog = false
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                                            border = if (isSubtitlesOff) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(
-                                                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(
-                                                    strings.subtitlesOff,
-                                                    fontWeight = if (isSubtitlesOff) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                )
-                                                if (isSubtitlesOff) {
-                                                    Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (subtitleTracks.isEmpty()) {
-                                        item {
-                                            Text(
-                                                strings.noSubtitlesAvailable,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = 13.sp,
-                                                modifier = Modifier.padding(vertical = 8.dp)
-                                            )
-                                        }
-                                    } else {
-                                        items(subtitleTracks, key = { it.id }) { track ->
-                                            Surface(
-                                                onClick = {
-                                                    player.trackSelectionParameters = player.trackSelectionParameters
-                                                        .buildUpon()
-                                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                                        .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-                                                        .build()
-                                                    showTracksDialog = false
-                                                },
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                                                border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Row(
-                                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Text(
-                                                        track.label,
-                                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                        color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    if (track.isSelected) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = null,
-                                                            tint = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showTracksDialog = false }) {
-                            Text(strings.close)
-                        }
-                    }
+                PlaybackTracksDialog(
+                    player = player,
+                    audioTracks = audioTracks,
+                    subtitleTracks = subtitleTracks,
+                    onDismiss = { showTracksDialog = false }
                 )
             }
 
@@ -4297,6 +4300,7 @@ private fun VodPlayerDialog(
     }
 }
 
+@UnstableApi
 private data class PlaybackTrackItem(
     val id: String,
     val type: Int,
@@ -4306,6 +4310,246 @@ private data class PlaybackTrackItem(
     val group: Tracks.Group,
     val trackIndex: Int
 )
+
+@UnstableApi
+private fun extractAudioTracks(currentTracks: Tracks?): List<PlaybackTrackItem> {
+    val list = mutableListOf<PlaybackTrackItem>()
+    currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_AUDIO }?.forEach { group ->
+        for (i in 0 until group.length) {
+            if (group.isTrackSupported(i)) {
+                val format = group.getTrackFormat(i)
+                val lang = format.language?.takeIf(String::isNotBlank)
+                val label = format.label?.takeIf(String::isNotBlank)
+                    ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
+                    ?: "Audio Track ${list.size + 1}"
+                list.add(
+                    PlaybackTrackItem(
+                        id = "audio_${group.mediaTrackGroup.id}_$i",
+                        type = C.TRACK_TYPE_AUDIO,
+                        label = label,
+                        language = lang,
+                        isSelected = group.isTrackSelected(i),
+                        group = group,
+                        trackIndex = i
+                    )
+                )
+            }
+        }
+    }
+    return list
+}
+
+@UnstableApi
+private fun extractSubtitleTracks(currentTracks: Tracks?): List<PlaybackTrackItem> {
+    val list = mutableListOf<PlaybackTrackItem>()
+    currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_TEXT }?.forEach { group ->
+        for (i in 0 until group.length) {
+            if (group.isTrackSupported(i)) {
+                val format = group.getTrackFormat(i)
+                val lang = format.language?.takeIf(String::isNotBlank)
+                val label = format.label?.takeIf(String::isNotBlank)
+                    ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
+                    ?: "Subtitle ${list.size + 1}"
+                list.add(
+                    PlaybackTrackItem(
+                        id = "sub_${group.mediaTrackGroup.id}_$i",
+                        type = C.TRACK_TYPE_TEXT,
+                        label = label,
+                        language = lang,
+                        isSelected = group.isTrackSelected(i),
+                        group = group,
+                        trackIndex = i
+                    )
+                )
+            }
+        }
+    }
+    return list
+}
+
+@UnstableApi
+@Composable
+private fun PlaybackTracksDialog(
+    player: Player,
+    audioTracks: List<PlaybackTrackItem>,
+    subtitleTracks: List<PlaybackTrackItem>,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var selectedTrackTab by remember { mutableIntStateOf(0) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Subtitles, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text(strings.audioAndSubtitles, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                TabRow(selectedTabIndex = selectedTrackTab) {
+                    Tab(
+                        selected = selectedTrackTab == 0,
+                        onClick = { selectedTrackTab = 0 },
+                        text = { Text(strings.audioTracks) }
+                    )
+                    Tab(
+                        selected = selectedTrackTab == 1,
+                        onClick = { selectedTrackTab = 1 },
+                        text = { Text(strings.subtitles) }
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                if (selectedTrackTab == 0) {
+                    if (audioTracks.isEmpty()) {
+                        Text(
+                            strings.noAudioTracksAvailable,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.heightIn(max = 280.dp)
+                        ) {
+                            items(audioTracks, key = { it.id }) { track ->
+                                Surface(
+                                    onClick = {
+                                        player.trackSelectionParameters = player.trackSelectionParameters
+                                            .buildUpon()
+                                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                            .build()
+                                        onDismiss()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                    border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            track.label,
+                                            fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (track.isSelected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.heightIn(max = 280.dp)
+                    ) {
+                        val isSubtitlesOff = subtitleTracks.none { it.isSelected }
+                        item {
+                            Surface(
+                                onClick = {
+                                    player.trackSelectionParameters = player.trackSelectionParameters
+                                        .buildUpon()
+                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                        .build()
+                                    onDismiss()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                border = if (isSubtitlesOff) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        strings.subtitlesOff,
+                                        fontWeight = if (isSubtitlesOff) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (isSubtitlesOff) {
+                                        Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (subtitleTracks.isEmpty()) {
+                            item {
+                                Text(
+                                    strings.noSubtitlesAvailable,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                            }
+                        } else {
+                            items(subtitleTracks, key = { it.id }) { track ->
+                                Surface(
+                                    onClick = {
+                                        player.trackSelectionParameters = player.trackSelectionParameters
+                                            .buildUpon()
+                                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                            .build()
+                                        onDismiss()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                    border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            track.label,
+                                            fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (track.isSelected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.close)
+            }
+        }
+    )
+}
 
 @Composable
 private fun LibraryPlaceholder(title: String, message: String) {
@@ -5461,7 +5705,7 @@ private fun PlayerPanel(
                 fullscreen = false,
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
                 onFullscreen = { fullscreen = true },
-                onControlsVisibilityChanged = {},
+                onToggleControls = {},
                 onRetry = {
                     playbackError = null
                     player.prepare()
@@ -5574,14 +5818,13 @@ private fun VideoSurface(
     fullscreen: Boolean,
     resizeMode: Int,
     onFullscreen: () -> Unit,
-    onControlsVisibilityChanged: (Boolean) -> Unit,
+    onToggleControls: () -> Unit = {},
+    onControlsVisibilityChanged: ((Boolean) -> Unit)? = null,
     onRetry: () -> Unit,
     showTrackSettings: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
-    var controlsVisible by remember { mutableStateOf(true) }
-    var playerView by remember { mutableStateOf<PlayerView?>(null) }
     var gestureLevel by remember { mutableStateOf<GestureLevel?>(null) }
     LaunchedEffect(gestureLevel) {
         if (gestureLevel != null) {
@@ -5589,41 +5832,42 @@ private fun VideoSurface(
             gestureLevel = null
         }
     }
-    LaunchedEffect(fullscreen, controlsVisible, playerView) {
-        if (fullscreen && controlsVisible && playerView != null) {
-            delay(5_000)
-            playerView?.hideController()
-            controlsVisible = false
-            onControlsVisibilityChanged(false)
+    val onSurfaceClick: () -> Unit = {
+        if (fullscreen) {
+            onToggleControls()
+        } else {
+            onFullscreen()
         }
     }
     Box(
         modifier
             .background(Color.Black)
-            .clickable(enabled = fullscreen && !showTrackSettings) {
-                controlsVisible = !controlsVisible
-                onControlsVisibilityChanged(controlsVisible)
-            }
+            .clickable(enabled = !showTrackSettings) { onSurfaceClick() }
     ) {
         AndroidView(
             factory = { viewContext ->
                 val view = if (fullscreen) {
                     GesturePlayerView(viewContext).apply {
                         onGestureLevelChanged = { gestureLevel = it }
+                        onSingleTap = { onSurfaceClick() }
                     }
-                } else PlayerView(viewContext)
+                } else {
+                    PlayerView(viewContext).apply {
+                        isClickable = true
+                    }
+                }
                 view.apply {
-                    playerView = this
                     this.player = player
                     useController = showTrackSettings
                     controllerAutoShow = showTrackSettings
-                    controllerShowTimeoutMs = 5_000
+                    controllerShowTimeoutMs = 3_500
                     this.resizeMode = resizeMode
                     keepScreenOn = true
+                    setOnClickListener { onSurfaceClick() }
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
-                            controlsVisible = visibility == android.view.View.VISIBLE
-                            onControlsVisibilityChanged(controlsVisible)
+                            val isVisible = visibility == android.view.View.VISIBLE
+                            onControlsVisibilityChanged?.invoke(isVisible)
                         }
                     )
                     setShowSubtitleButton(showTrackSettings)
@@ -5643,6 +5887,13 @@ private fun VideoSurface(
                 it.player = player
                 it.resizeMode = resizeMode
                 it.useController = showTrackSettings
+                it.controllerShowTimeoutMs = 3_500
+                it.setControllerVisibilityListener(
+                    PlayerView.ControllerVisibilityListener { visibility ->
+                        val isVisible = visibility == android.view.View.VISIBLE
+                        onControlsVisibilityChanged?.invoke(isVisible)
+                    }
+                )
                 it.setShowSubtitleButton(showTrackSettings)
                 it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
                     if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
@@ -5652,6 +5903,8 @@ private fun VideoSurface(
                     it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility = android.view.View.GONE
                     it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_basic_controls)?.visibility = android.view.View.GONE
                 }
+                (it as? GesturePlayerView)?.onSingleTap = { onSurfaceClick() }
+                it.setOnClickListener { onSurfaceClick() }
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -5670,47 +5923,48 @@ private fun VideoSurface(
         }
         AnimatedVisibility(
             visible = gestureLevel != null,
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = fadeIn() + scaleIn(initialScale = 0.9f),
+            exit = fadeOut() + scaleOut(targetScale = 0.9f),
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 32.dp)
+                .padding(top = 44.dp)
         ) {
-            Surface(
-                color = Color.Black.copy(alpha = .76f),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Column(
-                    Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            val level = gestureLevel
+            if (level != null) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.78f),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
                 ) {
-                    Text(
-                        if (gestureLevel?.control == GestureControl.BRIGHTNESS) strings.brightness else strings.volume,
-                        color = Color.White.copy(alpha = .75f),
-                        fontSize = 13.sp
-                    )
-                    Text(
-                        "${((gestureLevel?.value ?: 0f) * 100).toInt()}%",
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (level.control == GestureControl.BRIGHTNESS) Icons.Default.BrightnessMedium else Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        LinearProgressIndicator(
+                            progress = { level.value.coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .width(100.dp)
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color.White.copy(alpha = 0.2f)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "${(level.value * 100).toInt()}%",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
-            }
-        }
-        if (!fullscreen) {
-            IconButton(
-                onClick = onFullscreen,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(Color.Black.copy(alpha = .62f), RoundedCornerShape(10.dp))
-            ) {
-                Icon(
-                    Icons.Default.Fullscreen,
-                    contentDescription = strings.fullscreen,
-                    tint = Color.White
-                )
             }
         }
     }
@@ -5740,14 +5994,40 @@ private fun FullscreenPlayer(
     var controlsVisible by remember { mutableStateOf(true) }
     var showChannels by remember { mutableStateOf(false) }
     var showGuide by remember { mutableStateOf(false) }
+    var showTracksDialog by remember { mutableStateOf(false) }
     var locked by remember { mutableStateOf(false) }
     var lockPromptVisible by remember { mutableStateOf(false) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var resizeModeNotice by remember { mutableStateOf<String?>(null) }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
-    LaunchedEffect(controlsVisible, showChannels, showGuide, locked) {
-        if (controlsVisible && !showChannels && !showGuide && !locked) {
-            delay(5_000)
+    var currentTracks by remember { mutableStateOf<Tracks?>(player.currentTracks) }
+    var channelSwitchNotice by remember { mutableStateOf<PlaylistChannel?>(null) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                currentTracks = tracks
+            }
+        }
+        player.addListener(listener)
+        currentTracks = player.currentTracks
+        onDispose {
+            player.removeListener(listener)
+        }
+    }
+
+    LaunchedEffect(channel) {
+        channelSwitchNotice = channel
+        delay(1_800)
+        channelSwitchNotice = null
+    }
+
+    val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
+    val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
+
+    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, locked) {
+        if (controlsVisible && !showChannels && !showGuide && !showTracksDialog && !locked) {
+            delay(3_500)
             controlsVisible = false
         }
     }
@@ -5803,10 +6083,39 @@ private fun FullscreenPlayer(
                 fullscreen = true,
                 resizeMode = resizeMode,
                 onFullscreen = onExit,
-                onControlsVisibilityChanged = { controlsVisible = it },
+                onToggleControls = { controlsVisible = !controlsVisible },
                 onRetry = onRetry,
                 modifier = Modifier.fillMaxSize()
             )
+
+            // CHANNEL SWITCH HUD TOAST
+            AnimatedVisibility(
+                visible = channelSwitchNotice != null && !controlsVisible && !showChannels && !showGuide && !inPictureInPicture,
+                enter = fadeIn() + slideInVertically { -it / 2 },
+                exit = fadeOut() + slideOutVertically { -it / 2 },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 28.dp)
+            ) {
+                val switchChannel = channelSwitchNotice
+                if (switchChannel != null) {
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.Black.copy(alpha = 0.82f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ChannelLogo(switchChannel, epgGuide?.findChannel(switchChannel.tvgId, switchChannel.name), modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text(switchChannel.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             AnimatedVisibility(
                 visible = controlsVisible && !showChannels && !showGuide && !inPictureInPicture,
                 enter = fadeIn(),
@@ -5814,78 +6123,177 @@ private fun FullscreenPlayer(
                 modifier = Modifier.fillMaxSize()
             ) {
                 Box(Modifier.fillMaxSize()) {
+                    // TOP BAR
                     Row(
-                        modifier = Modifier.align(Alignment.TopStart).padding(14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
+                                )
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        FilledIconButton(
-                            onClick = onExit,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
-                            )
-                        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back) }
-                        FilledIconButton(
-                            onClick = { showChannels = true },
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
-                            )
-                        ) { Icon(Icons.Default.Menu, contentDescription = strings.miniGuide) }
-                        FilledIconButton(
-                            onClick = { showGuide = true },
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
-                            )
-                        ) { Icon(Icons.Default.DateRange, contentDescription = strings.programmeGuide) }
-                        if (previousWatchedChannel != null) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             FilledIconButton(
-                                onClick = { onChannelSelected(previousWatchedChannel) },
+                                onClick = onExit,
+                                shape = CircleShape,
                                 colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = Color.Black.copy(alpha = .68f),
+                                    containerColor = Color.Black.copy(alpha = 0.6f),
                                     contentColor = Color.White
                                 )
-                            ) { Icon(Icons.Default.Replay, contentDescription = strings.previousChannel) }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.align(Alignment.TopEnd).padding(14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        FilledIconButton(
-                            onClick = {
-                                resizeMode = when (resizeMode) {
-                                    AspectRatioFrameLayout.RESIZE_MODE_FIT -> {
-                                        resizeModeNotice = strings.aspectFill
-                                        AspectRatioFrameLayout.RESIZE_MODE_FILL
-                                    }
-                                    AspectRatioFrameLayout.RESIZE_MODE_FILL -> {
-                                        resizeModeNotice = strings.aspectZoom
-                                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                                    }
-                                    else -> {
-                                        resizeModeNotice = strings.aspectFit
-                                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                            }
+                            Surface(
+                                onClick = { showChannels = true },
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Menu,
+                                        contentDescription = strings.miniGuide,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.miniGuide,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            Surface(
+                                onClick = { showGuide = true },
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.DateRange,
+                                        contentDescription = strings.programmeGuide,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.programmeGuide,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            if (audioTracks.isNotEmpty() || subtitleTracks.isNotEmpty()) {
+                                Surface(
+                                    onClick = { showTracksDialog = true },
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                                    border = BorderStroke(1.dp, if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f))
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Subtitles,
+                                            contentDescription = strings.audioAndSubtitles,
+                                            tint = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            strings.audioAndSubtitles,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Medium
+                                        )
                                     }
                                 }
-                            },
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
-                            )
-                        ) { Icon(Icons.Default.AspectRatio, contentDescription = strings.aspectRatio) }
-                        FilledIconButton(
-                            onClick = {
-                                locked = true
-                                controlsVisible = false
-                            },
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
-                            )
-                        ) { Icon(Icons.Default.Lock, contentDescription = strings.lockControls) }
+                            }
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                onClick = {
+                                    resizeMode = when (resizeMode) {
+                                        AspectRatioFrameLayout.RESIZE_MODE_FIT -> {
+                                            resizeModeNotice = strings.aspectFill
+                                            AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                        }
+                                        AspectRatioFrameLayout.RESIZE_MODE_FILL -> {
+                                            resizeModeNotice = strings.aspectZoom
+                                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                        }
+                                        else -> {
+                                            resizeModeNotice = strings.aspectFit
+                                            AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.AspectRatio,
+                                        contentDescription = strings.aspectRatio,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        when (resizeMode) {
+                                            AspectRatioFrameLayout.RESIZE_MODE_FILL -> strings.aspectFill
+                                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> strings.aspectZoom
+                                            else -> strings.aspectFit
+                                        },
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            FilledIconButton(
+                                onClick = {
+                                    locked = true
+                                    controlsVisible = false
+                                },
+                                shape = CircleShape,
+                                colors = IconButtonDefaults.filledIconButtonColors(
+                                    containerColor = Color.Black.copy(alpha = 0.6f),
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Icon(Icons.Default.Lock, contentDescription = strings.lockControls)
+                            }
+                        }
                     }
+
+                    // CENTER CHANNEL SWITCH BUTTONS
                     Row(
                         modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 24.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -5894,27 +6302,39 @@ private fun FullscreenPlayer(
                         FilledIconButton(
                             onClick = { previousChannel?.let(onChannelSelected) },
                             enabled = previousChannel != null,
+                            shape = CircleShape,
                             colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
+                                containerColor = Color.Black.copy(alpha = 0.6f),
+                                contentColor = Color.White,
+                                disabledContainerColor = Color.Black.copy(alpha = 0.25f),
+                                disabledContentColor = Color.White.copy(alpha = 0.3f)
                             ),
-                            modifier = Modifier.size(54.dp)
-                        ) { Icon(Icons.Default.SkipPrevious, contentDescription = null, modifier = Modifier.size(30.dp)) }
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Icon(Icons.Default.SkipPrevious, contentDescription = null, modifier = Modifier.size(28.dp))
+                        }
                         FilledIconButton(
                             onClick = { nextChannel?.let(onChannelSelected) },
                             enabled = nextChannel != null,
+                            shape = CircleShape,
                             colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = Color.Black.copy(alpha = .68f),
-                                contentColor = Color.White
+                                containerColor = Color.Black.copy(alpha = 0.6f),
+                                contentColor = Color.White,
+                                disabledContainerColor = Color.Black.copy(alpha = 0.25f),
+                                disabledContentColor = Color.White.copy(alpha = 0.3f)
                             ),
-                            modifier = Modifier.size(54.dp)
-                        ) { Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(30.dp)) }
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(28.dp))
+                        }
                     }
+
+                    // BOTTOM CHANNEL INFO CARD
                     Surface(
                         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        color = Color.Black.copy(alpha = .85f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = .15f))
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color.Black.copy(alpha = 0.78f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
                     ) {
                         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
                             Row(
@@ -5924,8 +6344,55 @@ private fun FullscreenPlayer(
                                 ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name))
                                 Spacer(Modifier.width(14.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(channel.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            channel.name,
+                                            color = Color.White,
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        val isFavorited = channel.libraryId()?.let(favoriteChannelIds::contains) == true
+                                        IconButton(
+                                            onClick = { onToggleFavorite(channel) },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                if (isFavorited) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                                contentDescription = if (isFavorited) strings.removeFavorite else strings.addFavorite,
+                                                tint = if (isFavorited) Color(0xFFFFD700) else Color.White.copy(alpha = 0.6f),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(4.dp))
+                                        Surface(
+                                            color = Color(0xFFE50914).copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(1.dp, Color(0xFFE50914).copy(alpha = 0.5f))
+                                        ) {
+                                            Row(
+                                                Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    Modifier
+                                                        .size(6.dp)
+                                                        .background(Color(0xFFE50914), CircleShape)
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(
+                                                    strings.liveBadge,
+                                                    color = Color.White,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
                                     schedule?.current?.let { current ->
+                                        Spacer(Modifier.height(2.dp))
                                         Text(
                                             current.title,
                                             color = MaterialTheme.colorScheme.primary,
@@ -6022,6 +6489,14 @@ private fun FullscreenPlayer(
                         }
                     }
                 }
+            }
+            if (showTracksDialog) {
+                PlaybackTracksDialog(
+                    player = player,
+                    audioTracks = audioTracks,
+                    subtitleTracks = subtitleTracks,
+                    onDismiss = { showTracksDialog = false }
+                )
             }
             AnimatedVisibility(
                 visible = showChannels && !inPictureInPicture,
@@ -6483,6 +6958,65 @@ private fun FullscreenChannelDrawer(
 
                     Spacer(Modifier.height(8.dp))
 
+                    if (recentChannels.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Replay,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                strings.quickRecents,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(recentChannels.take(5), key = { "mini-recent-${it.libraryId()}" }) { recentCh ->
+                                val isCurrent = recentCh.libraryId() == selectedChannel.libraryId()
+                                Surface(
+                                    onClick = {
+                                        if (!isCurrent) onChannelSelected(recentCh)
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.09f),
+                                    border = if (isCurrent) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        ChannelLogo(
+                                            channel = recentCh,
+                                            epgChannel = epgGuide?.findChannel(recentCh.tvgId, recentCh.name),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            recentCh.name,
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
+
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -6720,6 +7254,11 @@ private fun SettingsDialog(
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
     hideAdultContent: Boolean,
     onHideAdultContentChanged: (Boolean) -> Unit,
+    parentalControlEnabled: Boolean,
+    hasParentalPin: Boolean,
+    onParentalControlToggled: (Boolean) -> Unit,
+    onChangeParentalPin: () -> Unit,
+    onRemoveParentalPin: () -> Unit,
     epgSource: ContentSource?,
     epgSourceName: String?,
     epgLastUpdate: Long,
@@ -6835,7 +7374,12 @@ private fun SettingsDialog(
                                     autoPictureInPicture = autoPictureInPicture,
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
                                     hideAdultContent = hideAdultContent,
-                                    onHideAdultContentChanged = onHideAdultContentChanged
+                                    onHideAdultContentChanged = onHideAdultContentChanged,
+                                    parentalControlEnabled = parentalControlEnabled,
+                                    hasParentalPin = hasParentalPin,
+                                    onParentalControlToggled = onParentalControlToggled,
+                                    onChangeParentalPin = onChangeParentalPin,
+                                    onRemoveParentalPin = onRemoveParentalPin
                                 )
                                 1 -> PlaylistsTab(
                                     playlists = playlists,
@@ -6896,7 +7440,12 @@ private fun SettingsDialog(
                                 autoPictureInPicture = autoPictureInPicture,
                                 onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
                                 hideAdultContent = hideAdultContent,
-                                onHideAdultContentChanged = onHideAdultContentChanged
+                                onHideAdultContentChanged = onHideAdultContentChanged,
+                                parentalControlEnabled = parentalControlEnabled,
+                                hasParentalPin = hasParentalPin,
+                                onParentalControlToggled = onParentalControlToggled,
+                                onChangeParentalPin = onChangeParentalPin,
+                                onRemoveParentalPin = onRemoveParentalPin
                             )
                             1 -> PlaylistsTab(
                                 playlists = playlists,
@@ -7012,7 +7561,12 @@ private fun GeneralTab(
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
     hideAdultContent: Boolean,
-    onHideAdultContentChanged: (Boolean) -> Unit
+    onHideAdultContentChanged: (Boolean) -> Unit,
+    parentalControlEnabled: Boolean,
+    hasParentalPin: Boolean,
+    onParentalControlToggled: (Boolean) -> Unit,
+    onChangeParentalPin: () -> Unit,
+    onRemoveParentalPin: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     Column(
@@ -7075,6 +7629,42 @@ private fun GeneralTab(
                 checked = autoPictureInPicture,
                 onCheckedChange = onAutoPictureInPictureChanged
             )
+        }
+
+        // Parental Control Group
+        SettingsGroup(title = strings.parentalControl) {
+            SettingsToggleRow(
+                title = strings.parentalControl,
+                subtitle = strings.parentalControlDesc,
+                icon = if (parentalControlEnabled) Icons.Default.Lock else Icons.Default.LockOpen,
+                checked = parentalControlEnabled,
+                onCheckedChange = onParentalControlToggled
+            )
+            if (parentalControlEnabled) {
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onChangeParentalPin,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.changeParentalPin, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = onRemoveParentalPin,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.removeParentalPin, fontSize = 12.sp)
+                    }
+                }
+            }
         }
 
         // Content Filter Group
@@ -8682,6 +9272,197 @@ private fun UnmatchedEpgDialog(
             }
         }
     }
+}
+
+enum class PinDialogMode {
+    SET,
+    VERIFY,
+    REMOVE,
+    UNLOCK_ADULT,
+    UNLOCK_SETTINGS
+}
+
+@Composable
+private fun PinEntryDialog(
+    mode: PinDialogMode,
+    currentPin: String?,
+    onSuccess: (String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var enteredPin by remember { mutableStateOf("") }
+    var firstEnteredPin by remember { mutableStateOf<String?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val title = when (mode) {
+        PinDialogMode.SET -> if (firstEnteredPin == null) strings.enterNewPin else strings.confirmParentalPin
+        PinDialogMode.VERIFY, PinDialogMode.REMOVE -> strings.enterParentalPin
+        PinDialogMode.UNLOCK_ADULT -> strings.unlockAdultContent
+        PinDialogMode.UNLOCK_SETTINGS -> strings.unlockSettings
+    }
+
+    fun onDigit(digit: String) {
+        if (enteredPin.length < 4) {
+            errorMessage = null
+            val newPin = enteredPin + digit
+            enteredPin = newPin
+            if (newPin.length == 4) {
+                when (mode) {
+                    PinDialogMode.SET -> {
+                        if (firstEnteredPin == null) {
+                            firstEnteredPin = newPin
+                            enteredPin = ""
+                        } else {
+                            if (newPin == firstEnteredPin) {
+                                onSuccess(newPin)
+                            } else {
+                                errorMessage = strings.pinsDoNotMatch
+                                enteredPin = ""
+                                firstEnteredPin = null
+                            }
+                        }
+                    }
+                    PinDialogMode.VERIFY, PinDialogMode.UNLOCK_ADULT, PinDialogMode.UNLOCK_SETTINGS -> {
+                        if (newPin == currentPin) {
+                            onSuccess(newPin)
+                        } else {
+                            errorMessage = strings.pinIncorrect
+                            enteredPin = ""
+                        }
+                    }
+                    PinDialogMode.REMOVE -> {
+                        if (newPin == currentPin) {
+                            onSuccess(null)
+                        } else {
+                            errorMessage = strings.pinIncorrect
+                            enteredPin = ""
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun onBackspace() {
+        if (enteredPin.isNotEmpty()) {
+            errorMessage = null
+            enteredPin = enteredPin.dropLast(1)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Icon(
+                    Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp, textAlign = TextAlign.Center)
+            }
+        },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) {
+                // PIN dots indicators
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(vertical = 12.dp)
+                ) {
+                    for (i in 0 until 4) {
+                        val isFilled = i < enteredPin.length
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isFilled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                                )
+                        )
+                    }
+                }
+
+                if (errorMessage != null) {
+                    Text(
+                        errorMessage.orEmpty(),
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                } else {
+                    Spacer(Modifier.height(20.dp))
+                }
+
+                // Numeric Keypad
+                val buttons = listOf(
+                    listOf("1", "2", "3"),
+                    listOf("4", "5", "6"),
+                    listOf("7", "8", "9"),
+                    listOf("C", "0", "⌫")
+                )
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    buttons.forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            row.forEach { key ->
+                                Surface(
+                                    onClick = {
+                                        when (key) {
+                                            "C" -> {
+                                                enteredPin = ""
+                                                errorMessage = null
+                                            }
+                                            "⌫" -> onBackspace()
+                                            else -> onDigit(key)
+                                        }
+                                    },
+                                    shape = CircleShape,
+                                    color = if (key == "C" || key == "⌫") MaterialTheme.colorScheme.surfaceVariant
+                                    else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (key == "⌫") {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.Backspace,
+                                                contentDescription = "Backspace",
+                                                modifier = Modifier.size(20.dp),
+                                                tint = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        } else {
+                                            Text(
+                                                key,
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.cancel)
+            }
+        }
+    )
 }
 
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)

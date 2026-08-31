@@ -199,6 +199,42 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putBoolean("hide_adult_content", enabled).apply()
     }
 
+    fun getParentalPin(): String? =
+        preferences.getString("parental_pin", null)?.let(::decrypt)
+
+    fun setParentalPin(pin: String?) {
+        if (pin.isNullOrBlank()) {
+            preferences.edit().remove("parental_pin").apply()
+        } else {
+            preferences.edit().putString("parental_pin", encrypt(pin)).apply()
+        }
+    }
+
+    fun isParentalPinSet(): Boolean = !getParentalPin().isNullOrBlank()
+
+    fun verifyParentalPin(pin: String): Boolean = getParentalPin() == pin
+
+    fun parentalControlEnabled(): Boolean =
+        preferences.getBoolean("parental_control_enabled", false)
+
+    fun setParentalControlEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean("parental_control_enabled", enabled).apply()
+    }
+
+    fun getRecentChannelIds(): List<String> {
+        val raw = preferences.getString("recent_channel_ids", null) ?: return emptyList()
+        return raw.split(",").map(String::trim).filter(String::isNotEmpty)
+    }
+
+    fun addRecentChannelId(id: String) {
+        if (id.isBlank()) return
+        val current = getRecentChannelIds().toMutableList()
+        current.remove(id)
+        current.add(0, id)
+        val trimmed = current.take(15)
+        preferences.edit().putString("recent_channel_ids", trimmed.joinToString(",")).apply()
+    }
+
     private fun lastLegacyPlaylistUpdate(): Long = preferences.getLong("playlist_last_update", 0L)
 
     private fun saveSource(prefix: String, source: ContentSource) {

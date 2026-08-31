@@ -270,6 +270,23 @@ interface Strings {
     val hideAdultContentSubtitle: String
     val newUpdateAvailable: String
     fun updateFailed(error: String): String
+
+    val parentalControl: String
+    val parentalControlDesc: String
+    val setParentalPin: String
+    val changeParentalPin: String
+    val removeParentalPin: String
+    val enterParentalPin: String
+    val confirmParentalPin: String
+    val enterNewPin: String
+    val pinIncorrect: String
+    val pinsDoNotMatch: String
+    val pinSetSuccess: String
+    val pinRemovedSuccess: String
+    val unlockAdultContent: String
+    val unlockSettings: String
+
+    val quickRecents: String
 }
 
 object EnglishStrings : Strings {
@@ -520,6 +537,23 @@ object EnglishStrings : Strings {
     override val hideAdultContentSubtitle = "Filter out adult (XXX / 18+) channels, movies, and series"
     override val newUpdateAvailable = "New Update Available"
     override fun updateFailed(error: String) = "Update failed: $error"
+
+    override val parentalControl = "Parental Control"
+    override val parentalControlDesc = "Protect adult content and settings with a 4-digit PIN"
+    override val setParentalPin = "Set 4-Digit PIN"
+    override val changeParentalPin = "Change PIN"
+    override val removeParentalPin = "Remove PIN"
+    override val enterParentalPin = "Enter 4-digit PIN"
+    override val confirmParentalPin = "Confirm 4-digit PIN"
+    override val enterNewPin = "Enter new 4-digit PIN"
+    override val pinIncorrect = "Incorrect PIN. Try again."
+    override val pinsDoNotMatch = "PINs do not match. Try again."
+    override val pinSetSuccess = "PIN set successfully"
+    override val pinRemovedSuccess = "PIN removed"
+    override val unlockAdultContent = "Unlock Adult Content"
+    override val unlockSettings = "Unlock Settings"
+
+    override val quickRecents = "Recently Watched"
 }
 
 object PortugueseStrings : Strings {
@@ -770,6 +804,23 @@ object PortugueseStrings : Strings {
     override val hideAdultContentSubtitle = "Filtrar canais, filmes e séries para adultos (XXX / 18+)"
     override val newUpdateAvailable = "Nova Atualização Disponível"
     override fun updateFailed(error: String) = "Falha na atualização: $error"
+
+    override val parentalControl = "Controlo Parental"
+    override val parentalControlDesc = "Proteger conteúdo para adultos e definições com um PIN de 4 dígitos"
+    override val setParentalPin = "Definir PIN de 4 dígitos"
+    override val changeParentalPin = "Alterar PIN"
+    override val removeParentalPin = "Remover PIN"
+    override val enterParentalPin = "Introduza o PIN de 4 dígitos"
+    override val confirmParentalPin = "Confirme o PIN de 4 dígitos"
+    override val enterNewPin = "Introduza o novo PIN de 4 dígitos"
+    override val pinIncorrect = "PIN incorreto. Tente novamente."
+    override val pinsDoNotMatch = "Os PINs não coincidem. Tente novamente."
+    override val pinSetSuccess = "PIN definido com sucesso"
+    override val pinRemovedSuccess = "PIN removido com sucesso"
+    override val unlockAdultContent = "Desbloquear Conteúdo para Adultos"
+    override val unlockSettings = "Desbloquear Definições"
+
+    override val quickRecents = "Canais Recentes"
 }
 
 val LocalAppStrings = staticCompositionLocalOf<Strings> { EnglishStrings }

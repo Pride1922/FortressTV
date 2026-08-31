@@ -22,6 +22,7 @@ data class GestureLevel(val control: GestureControl, val value: Float)
 @UnstableApi
 class GesturePlayerView(context: Context) : PlayerView(context) {
     var onGestureLevelChanged: ((GestureLevel) -> Unit)? = null
+    var onSingleTap: (() -> Unit)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -61,9 +62,31 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
                 }
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> adjusting = false
+            MotionEvent.ACTION_UP -> {
+                if (!adjusting) {
+                    val dx = abs(event.x - downX)
+                    val dy = abs(event.y - downY)
+                    if (dx <= touchSlop && dy <= touchSlop) {
+                        onSingleTap?.invoke()
+                        performClick()
+                    }
+                }
+                adjusting = false
+            }
+
+            MotionEvent.ACTION_CANCEL -> adjusting = false
         }
         return super.dispatchTouchEvent(event)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        super.onTouchEvent(event)
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     private fun currentBrightness(): Float {
