@@ -1692,6 +1692,13 @@ private fun ProgrammeGuideScreen(
     var selectedGroup by remember { mutableStateOf(allGroup) }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     var categorySearchQuery by remember { mutableStateOf("") }
+    val channelsInGroup = remember(playlist.channels, selectedGroup, allGroup, favoritesGroup, favoriteChannels, hiddenCategories) {
+        when (selectedGroup) {
+            allGroup -> if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+            favoritesGroup -> favoriteChannels
+            else -> playlist.channels.filter { it.group == selectedGroup }
+        }
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1737,13 +1744,13 @@ private fun ProgrammeGuideScreen(
         adjustedNow in start until stop
     } == true
 
-    val todayGuideBlocks = remember(epgGuide, playlist, dates, zone, shiftMillis) {
+    val todayGuideBlocks = remember(epgGuide, playlist, dates, zone, shiftMillis, selectedGroup) {
         mutableStateMapOf<PlaylistChannel, List<GuideProgrammeBlock>>()
     }
-    var todayGuideReady by remember(epgGuide, playlist, dates, zone, shiftMillis) {
+    var todayGuideReady by remember(epgGuide, playlist, dates, zone, shiftMillis, selectedGroup) {
         mutableStateOf(false)
     }
-    val guideDayIndex = remember(epgGuide, playlist, dates, zone, shiftMillis) {
+    val guideDayIndex = remember(epgGuide, playlist, dates, zone, shiftMillis, selectedGroup) {
         mutableStateMapOf<LocalDate, Map<PlaylistChannel, List<GuideProgrammeBlock>>>(
             today to todayGuideBlocks
         )
@@ -1762,29 +1769,32 @@ private fun ProgrammeGuideScreen(
     ): Map<PlaylistChannel, List<GuideProgrammeBlock>> = withContext(Dispatchers.Default) {
         val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
         val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        playlist.channels.mapNotNull { channel ->
-            val resolvedId = resolvedChannelMap[channel]
-            val progs = (resolvedId?.let { dayProgrammesMap?.get(it) })
+        val blocksByEpgChannel = HashMap<String, List<GuideProgrammeBlock>>()
+        channelsInGroup.mapNotNull { channel ->
+            val resolvedId = resolvedChannelMap[channel] ?: return@mapNotNull null
+            val progs = (dayProgrammesMap?.get(resolvedId))
                 ?: (if (dayProgrammesMap == null) epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty() else emptyList())
             if (progs.isEmpty()) return@mapNotNull null
 
-            val blocks = progs.mapNotNull { programme ->
-                val adjustedStart = programme.startEpochMilli + shiftMillis
-                val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
-                val adjustedStop = rawStop + shiftMillis
-                if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
-                    null
-                } else {
-                    val clippedStart = maxOf(adjustedStart, dayStart)
-                    val clippedStop = minOf(adjustedStop, dayEnd)
-                    GuideProgrammeBlock(
-                        programme = programme,
-                        startMinutes = (clippedStart - dayStart) / 60_000f,
-                        durationMinutes = ((clippedStop - clippedStart) / 60_000f).coerceIn(5f, 24f * 60f),
-                        adjustedStartMillis = adjustedStart,
-                        adjustedStopMillis = adjustedStop,
-                        timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
-                    )
+            val blocks = blocksByEpgChannel.getOrPut(resolvedId) {
+                progs.mapNotNull { programme ->
+                    val adjustedStart = programme.startEpochMilli + shiftMillis
+                    val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
+                    val adjustedStop = rawStop + shiftMillis
+                    if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
+                        null
+                    } else {
+                        val clippedStart = maxOf(adjustedStart, dayStart)
+                        val clippedStop = minOf(adjustedStop, dayEnd)
+                        GuideProgrammeBlock(
+                            programme = programme,
+                            startMinutes = (clippedStart - dayStart) / 60_000f,
+                            durationMinutes = ((clippedStop - clippedStart) / 60_000f).coerceIn(5f, 24f * 60f),
+                            adjustedStartMillis = adjustedStart,
+                            adjustedStopMillis = adjustedStop,
+                            timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                        )
+                    }
                 }
             }
             if (blocks.isEmpty()) null else channel to blocks
@@ -1793,7 +1803,7 @@ private fun ProgrammeGuideScreen(
 
     var isDayLoading by remember { mutableStateOf(false) }
 
-    LaunchedEffect(epgGuide, epgRepository, playlist, selectedDate, zone, shiftMillis) {
+    LaunchedEffect(epgGuide, epgRepository, playlist, selectedDate, zone, shiftMillis, selectedGroup) {
         if ((selectedDate == today && todayGuideReady) ||
             (selectedDate != today && guideDayIndex.containsKey(selectedDate))
         ) {
@@ -1803,10 +1813,23 @@ private fun ProgrammeGuideScreen(
         isDayLoading = true
         val date = selectedDate
         val targetEpochDay = date.toEpochDay()
+        val dayLoadStartedNanos = android.os.SystemClock.elapsedRealtimeNanos()
         val loadedDay = if (date != today) epgRepository?.loadDay(targetEpochDay) else null
+        val partitionLoadMillis = (android.os.SystemClock.elapsedRealtimeNanos() - dayLoadStartedNanos) / 1_000_000.0
         val dayData = if (date == today) epgGuide?.programmes else loadedDay?.programmes
 
+        val blockBuildStartedNanos = android.os.SystemClock.elapsedRealtimeNanos()
         val dayIndex = computeDayBlocks(date, dayData)
+        val blockBuildMillis = (android.os.SystemClock.elapsedRealtimeNanos() - blockBuildStartedNanos) / 1_000_000.0
+        val partitionMetadata = epgGuide?.manifest?.partitions?.get(targetEpochDay)
+        Log.i(
+            "FortressTV.EPG",
+            "day epochDay=$targetEpochDay partitionMs=${"%.1f".format(partitionLoadMillis)} " +
+                "blocksMs=${"%.1f".format(blockBuildMillis)} playlistChannels=${playlist.channels.size} " +
+                "matchedChannels=${dayIndex.size} blocks=${dayIndex.values.sumOf { it.size }} " +
+                "programmes=${partitionMetadata?.programmeCount ?: 0} " +
+                "compressedBytes=${partitionMetadata?.compressedSize ?: 0}"
+        )
 
         if (selectedDate == date) {
             if (date == today) {
@@ -1825,14 +1848,6 @@ private fun ProgrammeGuideScreen(
         }
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
-
-    val channelsInGroup = remember(playlist.channels, selectedGroup, allGroup, favoritesGroup, favoriteChannels, hiddenCategories) {
-        when (selectedGroup) {
-            allGroup -> if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
-            favoritesGroup -> favoriteChannels
-            else -> playlist.channels.filter { it.group == selectedGroup }
-        }
-    }
 
     val visibleChannels = remember(channelsInGroup, searchQuery, guideBlocksByChannel) {
         if (searchQuery.isBlank()) {
