@@ -4,8 +4,6 @@ import android.content.Context
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,7 +42,7 @@ class DefaultEpgRepository(
     private var activeLruDay: EpgDay? = null
 
     // In-flight load deduplication
-    private val inFlightLoads = ConcurrentHashMap<Long, Deferred<EpgDay?>>()
+    private val inFlightLoads = ConcurrentHashMap<DayLoadKey, Deferred<EpgDay?>>()
 
     override fun setGuide(guide: EpgGuide?) {
         _guide.value = guide
@@ -71,9 +69,14 @@ class DefaultEpgRepository(
         val currentManifest = _manifest.value ?: return null
         if (!currentManifest.partitions.containsKey(epochDay)) return null
 
-        return coroutineScope {
-            val loadDeferred = async(Dispatchers.IO) {
-                val loaded = if (context != null) {
+        val loadKey = DayLoadKey(currentManifest.generationId, epochDay)
+        val newLoad = CompletableDeferred<EpgDay?>()
+        val existingLoad = inFlightLoads.putIfAbsent(loadKey, newLoad)
+        if (existingLoad != null) return existingLoad.await()
+
+        try {
+            val loaded = withContext(Dispatchers.IO) {
+                if (context != null) {
                     EpgDiskCache.loadDayPartition(context, currentManifest, epochDay)
                 } else if (epgDir != null) {
                     val partitionMeta = currentManifest.partitions[epochDay]
@@ -86,9 +89,12 @@ class DefaultEpgRepository(
                         }.getOrNull()
                     } else null
                 } else null
+            }
 
-                if (loaded != null) {
-                    lruMutex.withLock {
+            if (loaded != null) {
+                lruMutex.withLock {
+                    // Do not publish a stale partition if the guide changed while it was loading.
+                    if (_manifest.value?.generationId == currentManifest.generationId) {
                         if (epochDay == currentManifest.todayEpochDay) {
                             pinnedTodayDay = loaded
                             _today.value = loaded
@@ -97,14 +103,14 @@ class DefaultEpgRepository(
                         }
                     }
                 }
-                loaded
             }
-
-            try {
-                loadDeferred.await()
-            } finally {
-                inFlightLoads.remove(epochDay)
-            }
+            newLoad.complete(loaded)
+            return loaded
+        } catch (t: Throwable) {
+            newLoad.completeExceptionally(t)
+            throw t
+        } finally {
+            inFlightLoads.remove(loadKey, newLoad)
         }
     }
 
@@ -117,4 +123,6 @@ class DefaultEpgRepository(
             }
         }
     }
+
+    private data class DayLoadKey(val generationId: String, val epochDay: Long)
 }

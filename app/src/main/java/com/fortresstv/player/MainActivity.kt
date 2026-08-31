@@ -1816,29 +1816,12 @@ private fun ProgrammeGuideScreen(
                 }
                 todayGuideReady = true
             } else {
+                // Keep UI-derived data bounded to today plus the active day, matching the
+                // repository's raw-partition cache instead of retaining all seven days.
+                guideDayIndex.keys.filter { it != today && it != date }.forEach(guideDayIndex::remove)
                 guideDayIndex[date] = dayIndex
             }
             isDayLoading = false
-        }
-    }
-
-    // Eager background preloader for all days in the guide
-    LaunchedEffect(todayGuideReady, epgRepository, dates) {
-        if (!todayGuideReady) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            for (date in dates) {
-                if (date != today && !guideDayIndex.containsKey(date)) {
-                    val loaded = epgRepository?.loadDay(date.toEpochDay())
-                    if (loaded != null) {
-                        val blocks = computeDayBlocks(date, loaded.programmes)
-                        withContext(Dispatchers.Main) {
-                            if (!guideDayIndex.containsKey(date)) {
-                                guideDayIndex[date] = blocks
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
