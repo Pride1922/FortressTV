@@ -45,6 +45,17 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
@@ -2866,96 +2877,350 @@ private fun LibraryCatalogScaffold(
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
     val strings = LocalAppStrings.current
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(18.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                title,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(itemCount.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChanged,
-                placeholder = { Text(searchPlaceholder) },
-                singleLine = true,
-                trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { onQueryChanged("") }) { Text("×", fontSize = 24.sp) } }) else null,
-                modifier = Modifier.widthIn(max = 360.dp)
-            )
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var isSidebarExpanded by remember { mutableStateOf(false) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+    var categorySearchQuery by remember { mutableStateOf("") }
+
+    BackHandler(isSidebarExpanded) {
+        isSidebarExpanded = false
+    }
+
+    val filteredCategories = remember(categories, categorySearchQuery) {
+        if (categorySearchQuery.isBlank()) categories
+        else categories.filter {
+            it.category.name.contains(categorySearchQuery, ignoreCase = true) ||
+                (showCategorySourceNames && it.sourceName.contains(categorySearchQuery, ignoreCase = true))
         }
-        if (categories.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
             ) {
-                item(key = "all_categories") {
-                    FilterChip(
-                        selected = selectedCategory == null,
-                        onClick = { onSelectCategory(null) },
-                        label = { Text(strings.allCategories) }
-                    )
-                }
-                items(categories, key = { "${it.sourceId}:${it.category.id}" }) { category ->
-                    FilterChip(
-                        selected = selectedCategory == category,
-                        onClick = { onSelectCategory(if (selectedCategory == category) null else category) },
-                        label = {
-                            Text(
-                                if (showCategorySourceNames) "${category.sourceName} · ${category.category.name}"
-                                else category.category.name
+                focusManager.clearFocus()
+                keyboardController?.hide()
+            },
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Row(Modifier.fillMaxSize()) {
+            // 1. Collapsible Categories Sidebar Drawer
+            AnimatedVisibility(
+                visible = isSidebarExpanded,
+                enter = expandHorizontally() + fadeIn(),
+                exit = shrinkHorizontally() + fadeOut()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(260.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            strings.categories,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        IconButton(
+                            onClick = {
+                                isSidebarExpanded = false
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.MenuOpen, contentDescription = strings.hideChannelFilters)
+                        }
+                    }
+
+                    if (categories.size > 8) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = categorySearchQuery,
+                            onValueChange = { categorySearchQuery = it },
+                            placeholder = { Text(strings.search, fontSize = 13.sp) },
+                            singleLine = true,
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            trailingIcon = if (categorySearchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(
+                                        onClick = { categorySearchQuery = "" },
+                                        modifier = Modifier.size(20.dp)
+                                    ) {
+                                        Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                            } else null,
+                            shape = RoundedCornerShape(10.dp),
+                            textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(Modifier.height(8.dp))
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        item(key = "all_categories_sidebar") {
+                            GroupItem(
+                                name = strings.allCategories,
+                                count = itemCount,
+                                selected = selectedCategory == null,
+                                onClick = {
+                                    onSelectCategory(null)
+                                    isSidebarExpanded = false
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                }
                             )
                         }
+                        items(filteredCategories, key = { "${it.sourceId}:${it.category.id}" }) { cat ->
+                            GroupItem(
+                                name = if (showCategorySourceNames) "${cat.sourceName} · ${cat.category.name}" else cat.category.name,
+                                count = 0,
+                                selected = selectedCategory == cat,
+                                onClick = {
+                                    onSelectCategory(cat)
+                                    isSidebarExpanded = false
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. Main Content Area (Top Bar + Grid)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                // Compact Top Bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (categories.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                isSidebarExpanded = !isSidebarExpanded
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                if (isSidebarExpanded) Icons.AutoMirrored.Filled.MenuOpen else Icons.Default.FilterList,
+                                contentDescription = strings.categories,
+                                tint = if (selectedCategory != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+
+                    Text(
+                        title,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+
+                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                    ) {
+                        Text(
+                            text = itemCount.toString(),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    if (selectedCategory != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            onClick = { onSelectCategory(null) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    selectedCategory.category.name,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    Icons.Default.Clear,
+                                    contentDescription = strings.allCategories,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    // Sort Button + Dropdown Menu
+                    Box {
+                        OutlinedButton(
+                            onClick = { sortMenuExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                when (sortOption) {
+                                    VodSortOption.DEFAULT -> strings.sortDefault
+                                    VodSortOption.RATING -> strings.sortByRating
+                                    VodSortOption.YEAR -> strings.sortByYear
+                                    VodSortOption.ALPHABETICAL -> strings.sortAlphabetical
+                                },
+                                fontSize = 12.sp
+                            )
+                            Spacer(Modifier.width(2.dp))
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                        DropdownMenu(
+                            expanded = sortMenuExpanded,
+                            onDismissRequest = { sortMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(strings.sortDefault, fontSize = 12.sp) },
+                                onClick = {
+                                    onSelectSortOption(VodSortOption.DEFAULT)
+                                    sortMenuExpanded = false
+                                },
+                                trailingIcon = if (sortOption == VodSortOption.DEFAULT) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.sortByRating, fontSize = 12.sp) },
+                                onClick = {
+                                    onSelectSortOption(VodSortOption.RATING)
+                                    sortMenuExpanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                                trailingIcon = if (sortOption == VodSortOption.RATING) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.sortByYear, fontSize = 12.sp) },
+                                onClick = {
+                                    onSelectSortOption(VodSortOption.YEAR)
+                                    sortMenuExpanded = false
+                                },
+                                trailingIcon = if (sortOption == VodSortOption.YEAR) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.sortAlphabetical, fontSize = 12.sp) },
+                                onClick = {
+                                    onSelectSortOption(VodSortOption.ALPHABETICAL)
+                                    sortMenuExpanded = false
+                                },
+                                trailingIcon = if (sortOption == VodSortOption.ALPHABETICAL) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    // Compact Search Field
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = onQueryChanged,
+                        placeholder = { Text(searchPlaceholder, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = if (query.isNotEmpty()) {
+                            {
+                                IconButton(
+                                    onClick = {
+                                        onQueryChanged("")
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        } else null,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            }
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                        modifier = Modifier.widthIn(min = 180.dp, max = 320.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+                header()
+
+                if (itemCount == 0) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(150.dp),
+                        state = gridState,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        content = content
                     )
                 }
             }
-        }
-        Spacer(Modifier.height(6.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            FilterChip(
-                selected = sortOption == VodSortOption.DEFAULT,
-                onClick = { onSelectSortOption(VodSortOption.DEFAULT) },
-                label = { Text(strings.sortDefault) }
-            )
-            FilterChip(
-                selected = sortOption == VodSortOption.RATING,
-                onClick = { onSelectSortOption(VodSortOption.RATING) },
-                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                label = { Text(strings.sortByRating) }
-            )
-            FilterChip(
-                selected = sortOption == VodSortOption.YEAR,
-                onClick = { onSelectSortOption(VodSortOption.YEAR) },
-                label = { Text(strings.sortByYear) }
-            )
-            FilterChip(
-                selected = sortOption == VodSortOption.ALPHABETICAL,
-                onClick = { onSelectSortOption(VodSortOption.ALPHABETICAL) },
-                label = { Text(strings.sortAlphabetical) }
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        header()
-        if (itemCount == 0) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp)
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(150.dp),
-                state = gridState,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxSize(),
-                content = content
-            )
         }
     }
 }
