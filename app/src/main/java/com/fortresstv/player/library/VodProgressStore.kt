@@ -48,6 +48,12 @@ class VodProgressStore(context: Context) {
         return updated
     }
 
+    fun setAll(entries: List<VodProgressEntry>): List<VodProgressEntry> {
+        val limited = entries.sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
+        preferences.edit().putString(KEY_ENTRIES, encode(limited)).apply()
+        return limited
+    }
+
     companion object {
         private const val KEY_ENTRIES = "entries_json"
         private const val MINIMUM_PROGRESS_MS = 10_000L

@@ -135,6 +135,17 @@ import com.fortresstv.player.ui.AppLanguage
 import com.fortresstv.player.ui.LocalAppStrings
 import com.fortresstv.player.ui.getStringsFor
 import com.fortresstv.player.ui.Strings
+import com.fortresstv.player.backup.BackupManager
+import com.fortresstv.player.backup.BackupRestoreResult
+import com.fortresstv.player.backup.BackupExportResult
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.UUID
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -149,6 +160,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
@@ -355,24 +369,34 @@ class MainActivity : ComponentActivity() {
             val focusManager = LocalFocusManager.current
             val keyboardController = LocalSoftwareKeyboardController.current
             val view = LocalView.current
+
+            val keyboardDismissNestedScroll = remember(focusManager, keyboardController) {
+                object : NestedScrollConnection {
+                    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                        if (source == NestedScrollSource.UserInput && (available.x != 0f || available.y != 0f)) {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                        }
+                        return Offset.Zero
+                    }
+                }
+            }
+
             FortressTVTheme {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .semantics { testTagsAsResourceId = true }
+                        .nestedScroll(keyboardDismissNestedScroll)
                         .pointerInput(Unit) {
-                            awaitEachGesture {
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    if (event.type == PointerEventType.Press) {
-                                        focusManager.clearFocus()
-                                        keyboardController?.hide()
-                                        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                                        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-                                        view.findFocus()?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
-                                    }
+                            detectTapGestures(
+                                onTap = {
+                                    focusManager.clearFocus(force = true)
+                                    keyboardController?.hide()
+                                    val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                    imm?.hideSoftInputFromWindow(view.windowToken, 0)
                                 }
-                            }
+                            )
                         }
                 ) {
                     FortressTVApp()
@@ -384,13 +408,9 @@ class MainActivity : ComponentActivity() {
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            currentFocus?.let { focusView ->
-                val outRect = android.graphics.Rect()
-                focusView.getGlobalVisibleRect(outRect)
-                if (!outRect.contains(ev.rawX.toInt(), ev.rawY.toInt())) {
-                    focusView.clearFocus()
-                    imm?.hideSoftInputFromWindow(focusView.windowToken, 0)
-                }
+            if (imm?.isAcceptingText == true) {
+                val view = currentFocus ?: window.decorView
+                imm.hideSoftInputFromWindow(view.windowToken, 0)
             }
         }
         return super.dispatchTouchEvent(ev)
@@ -403,6 +423,8 @@ private fun FortressTVApp() {
     val scope = rememberCoroutineScope()
     val settings = remember { SourceSettingsStore(context.applicationContext) }
     val userLibrary = remember { UserLibraryStore(context.applicationContext) }
+    val vodProgressStore = remember { VodProgressStore(context.applicationContext) }
+    val backupManager = remember { BackupManager(settings, userLibrary, vodProgressStore) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -420,6 +442,13 @@ private fun FortressTVApp() {
     var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
     var followedSeriesIds by remember { mutableStateOf(userLibrary.followedSeriesIds()) }
     var watchedItemIds by remember { mutableStateOf(userLibrary.watchedItemIds()) }
+
+    var showCreateBackupDialog by remember { mutableStateOf(false) }
+    var showRestoreBackupPasswordDialog by remember { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    var backupPasswordForExport by remember { mutableStateOf<String?>(null) }
+    var restoreErrorMessage by remember { mutableStateOf<String?>(null) }
+    var isRestoringBackup by remember { mutableStateOf(false) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
     var epgSource by remember { mutableStateOf<ContentSource?>(null) }
@@ -890,10 +919,131 @@ private fun FortressTVApp() {
         loadEpg(ContentSource.LocalFile(uri.toString(), uri.lastPathSegment?.substringAfterLast('/') ?: "XMLTV guide"), save = true, forceRefresh = true)
     }
 
+    val createBackupFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val pass = backupPasswordForExport
+        backupPasswordForExport = null
+        if (uri != null && !pass.isNullOrBlank()) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        val result = backupManager.exportBackup(pass.toCharArray(), os, BuildConfig.VERSION_NAME)
+                        withContext(Dispatchers.Main) {
+                            when (result) {
+                                is BackupExportResult.Success -> {
+                                    Toast.makeText(context, strings.backupCreatedSuccess, Toast.LENGTH_LONG).show()
+                                }
+                                is BackupExportResult.Error -> {
+                                    Toast.makeText(context, strings.backupFailed(result.message), Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }
+                }.onFailure { err ->
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, strings.backupFailed(err.message ?: "Could not save backup"), Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
+    val restoreBackupPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            pendingRestoreUri = uri
+            restoreErrorMessage = null
+            showRestoreBackupPasswordDialog = true
+        }
+    }
+
+    fun executeRestore(password: String, merge: Boolean) {
+        val uri = pendingRestoreUri ?: return
+        isRestoringBackup = true
+        restoreErrorMessage = null
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("Could not open backup file")
+                val result = inputStream.use { stream ->
+                    backupManager.restoreBackup(password.toCharArray(), stream, merge)
+                }
+                withContext(Dispatchers.Main) {
+                    when (result) {
+                        is BackupRestoreResult.Success -> {
+                            isRestoringBackup = false
+                            showRestoreBackupPasswordDialog = false
+                            pendingRestoreUri = null
+
+                            // Synchronize UI states with restored data
+                            val allPlaylists = settings.getPlaylists()
+                            playlists = allPlaylists
+                            val newLang = AppLanguage.fromCode(settings.getLanguage())
+                            appLanguage = newLang
+                            playChannelsFullscreen = settings.playChannelsFullscreen()
+                            autoPictureInPicture = settings.autoPictureInPicture()
+                            hideAdultContent = settings.hideAdultContent()
+                            parentalControlEnabled = settings.parentalControlEnabled()
+                            parentalPin = settings.getParentalPin()
+                            epgSource = settings.epgSource()
+                            epgSourceName = epgSource?.displayName
+                            epgTimeShiftHours = settings.epgTimeShiftHours()
+                            favoriteChannelIds = userLibrary.favoriteChannelIds()
+                            recentChannelIds = userLibrary.recentChannelIds()
+                            movieWatchlistIds = userLibrary.movieWatchlistIds()
+                            followedSeriesIds = userLibrary.followedSeriesIds()
+                            watchedItemIds = userLibrary.watchedItemIds()
+
+                            // Clear existing cache memory and trigger reload
+                            loadedPlaylists.clear()
+                            xtreamCatalogs.clear()
+                            val nextActive = settings.getActivePlaylist()
+                            activeProfile = nextActive
+                            if (nextActive != null) {
+                                if (nextActive.source is ContentSource.Xtream) loadXtreamProfile(nextActive, forceRefresh = true)
+                                else loadPlaylistProfile(nextActive, forceRefresh = true)
+                            }
+                            val savedEpg = settings.epgSource()
+                            if (savedEpg != null) {
+                                loadEpg(savedEpg, save = false, forceRefresh = true)
+                            }
+
+                            Toast.makeText(
+                                context,
+                                strings.backupRestoreSuccess(result.restoredPlaylistsCount, result.restoredFavoritesCount),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        is BackupRestoreResult.InvalidPassword -> {
+                            isRestoringBackup = false
+                            restoreErrorMessage = strings.backupIncorrectPassword
+                        }
+                        is BackupRestoreResult.InvalidFormat -> {
+                            isRestoringBackup = false
+                            restoreErrorMessage = strings.backupCorruptFile
+                        }
+                        is BackupRestoreResult.Error -> {
+                            isRestoringBackup = false
+                            restoreErrorMessage = strings.backupFailed(result.message)
+                        }
+                    }
+                }
+            }.onFailure { err ->
+                withContext(Dispatchers.Main) {
+                    isRestoringBackup = false
+                    restoreErrorMessage = strings.backupFailed(err.message ?: "Failed to read backup file")
+                }
+            }
+        }
+    }
+
     CompositionLocalProvider(LocalAppStrings provides strings) {
         Box(Modifier.fillMaxSize()) {
             if (restoring) {
-                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onOpenFile = {}, onOpenUrl = {})
+                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onOpenFile = {}, onOpenUrl = {}, onRestoreBackup = {})
             } else if (playlist == null || activeProfile == null) {
                 WelcomeScreen(
                     loading = loading,
@@ -901,7 +1051,8 @@ private fun FortressTVApp() {
                     error = error,
                     onRetry = retryLoad,
                     onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
-                    onOpenUrl = { showAddPlaylistDialog = true }
+                    onOpenUrl = { showAddPlaylistDialog = true },
+                    onRestoreBackup = { restoreBackupPicker.launch(arrayOf("*/*", "application/octet-stream")) }
                 )
             } else {
                 FortressLibrary(
@@ -1086,7 +1237,40 @@ private fun FortressTVApp() {
                 onEpgTimeShiftChanged = { shift ->
                     epgTimeShiftHours = shift
                     settings.saveEpgTimeShiftHours(shift)
+                },
+                onCreateBackup = {
+                    showCreateBackupDialog = true
+                },
+                onRestoreBackup = {
+                    restoreBackupPicker.launch(arrayOf("*/*", "application/octet-stream"))
                 }
+            )
+        }
+
+        if (showCreateBackupDialog) {
+            CreateBackupDialog(
+                onDismiss = { showCreateBackupDialog = false },
+                onConfirm = { password ->
+                    showCreateBackupDialog = false
+                    backupPasswordForExport = password
+                    val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                    createBackupFileLauncher.launch("fortresstv-backup-$dateStr.ftv")
+                }
+            )
+        }
+
+        if (showRestoreBackupPasswordDialog && pendingRestoreUri != null) {
+            RestoreBackupPasswordDialog(
+                onDismiss = {
+                    showRestoreBackupPasswordDialog = false
+                    pendingRestoreUri = null
+                    restoreErrorMessage = null
+                },
+                onConfirm = { password, merge ->
+                    executeRestore(password, merge)
+                },
+                errorMessage = restoreErrorMessage,
+                isRestoring = isRestoringBackup
             )
         }
 
@@ -1309,7 +1493,8 @@ private fun WelcomeScreen(
     error: String?,
     onRetry: (() -> Unit)?,
     onOpenFile: () -> Unit,
-    onOpenUrl: () -> Unit
+    onOpenUrl: () -> Unit,
+    onRestoreBackup: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -1342,7 +1527,8 @@ private fun WelcomeScreen(
                 if (showActions && isCompact && isPortrait) {
                     Column(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                             Icon(Icons.Default.FolderOpen, contentDescription = null)
@@ -1354,21 +1540,37 @@ private fun WelcomeScreen(
                             Spacer(Modifier.width(8.dp))
                             Text(strings.remoteUrl)
                         }
+                        TextButton(onClick = onRestoreBackup, enabled = !loading) {
+                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.restoreFromBackup, fontSize = 13.sp)
+                        }
                     }
                 } else if (showActions) {
-                    Row(
+                    Column(
                         Modifier.widthIn(max = 520.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
+                            }
+                            OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
+                                Icon(Icons.Default.Link, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(strings.remoteUrl)
+                            }
                         }
-                        OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
-                            Icon(Icons.Default.Link, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(strings.remoteUrl)
+                        TextButton(onClick = onRestoreBackup, enabled = !loading) {
+                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(strings.restoreFromBackup, fontSize = 13.sp)
                         }
                     }
                 }
@@ -5281,7 +5483,7 @@ private fun ChannelBrowser(
     val keyboardController = LocalSoftwareKeyboardController.current
     val view = LocalView.current
     fun hideKeyboard() {
-        focusManager.clearFocus()
+        focusManager.clearFocus(force = true)
         keyboardController?.hide()
         (view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
             ?.hideSoftInputFromWindow(view.windowToken, 0)
@@ -5652,14 +5854,7 @@ private fun ChannelBrowser(
                 .fillMaxHeight()
                 .padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 16.dp)
                 .pointerInput(Unit) {
-                    awaitEachGesture {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.type == PointerEventType.Press) {
-                                hideKeyboard()
-                            }
-                        }
-                    }
+                    detectTapGestures(onTap = { hideKeyboard() })
                 }
         ) {
             Row(
@@ -7781,7 +7976,9 @@ private fun SettingsDialog(
     onEpgFile: () -> Unit,
     onRefreshEpg: () -> Unit,
     onRemoveEpg: () -> Unit,
-    onEpgTimeShiftChanged: (Int) -> Unit
+    onEpgTimeShiftChanged: (Int) -> Unit,
+    onCreateBackup: () -> Unit,
+    onRestoreBackup: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
@@ -7797,10 +7994,20 @@ private fun SettingsDialog(
 
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
 
     fun hideKeyboard() {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+            ?: (view.context as? ComponentActivity)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
     }
 
     BackHandler(onBack = {
@@ -7817,14 +8024,7 @@ private fun SettingsDialog(
                 indication = null
             ) { hideKeyboard() }
             .pointerInput(Unit) {
-                awaitEachGesture {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) {
-                            hideKeyboard()
-                        }
-                    }
-                }
+                detectTapGestures(onTap = { hideKeyboard() })
             },
         contentAlignment = Alignment.Center
     ) {
@@ -7914,7 +8114,9 @@ private fun SettingsDialog(
                                     hasParentalPin = hasParentalPin,
                                     onParentalControlToggled = onParentalControlToggled,
                                     onChangeParentalPin = onChangeParentalPin,
-                                    onRemoveParentalPin = onRemoveParentalPin
+                                    onRemoveParentalPin = onRemoveParentalPin,
+                                    onCreateBackup = onCreateBackup,
+                                    onRestoreBackup = onRestoreBackup
                                 )
                                 1 -> PlaylistsTab(
                                     playlists = playlists,
@@ -7981,7 +8183,9 @@ private fun SettingsDialog(
                                 hasParentalPin = hasParentalPin,
                                 onParentalControlToggled = onParentalControlToggled,
                                 onChangeParentalPin = onChangeParentalPin,
-                                onRemoveParentalPin = onRemoveParentalPin
+                                onRemoveParentalPin = onRemoveParentalPin,
+                                onCreateBackup = onCreateBackup,
+                                onRestoreBackup = onRestoreBackup
                             )
                             1 -> PlaylistsTab(
                                 playlists = playlists,
@@ -8117,7 +8321,9 @@ private fun GeneralTab(
     hasParentalPin: Boolean,
     onParentalControlToggled: (Boolean) -> Unit,
     onChangeParentalPin: () -> Unit,
-    onRemoveParentalPin: () -> Unit
+    onRemoveParentalPin: () -> Unit,
+    onCreateBackup: () -> Unit,
+    onRestoreBackup: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     Column(
@@ -8180,6 +8386,71 @@ private fun GeneralTab(
                 checked = autoPictureInPicture,
                 onCheckedChange = onAutoPictureInPictureChanged
             )
+        }
+
+        // Backup & Restore Group
+        SettingsGroup(title = strings.backupAndRestore) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onCreateBackup)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Backup,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(strings.createBackup, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(
+                        strings.createBackupDesc,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp
+                    )
+                }
+                Icon(
+                    Icons.Default.FileUpload,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onRestoreBackup)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Restore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(strings.restoreBackup, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(
+                        strings.restoreBackupDesc,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp
+                    )
+                }
+                Icon(
+                    Icons.Default.FileDownload,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
 
         // Parental Control Group
@@ -9014,10 +9285,20 @@ private fun AddPlaylistDialog(
     var mode by remember { mutableIntStateOf(0) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
 
     fun hideKeyboard() {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+            ?: (view.context as? ComponentActivity)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
     }
 
     BackHandler(onBack = {
@@ -9034,14 +9315,7 @@ private fun AddPlaylistDialog(
                 indication = null
             ) { hideKeyboard() }
             .pointerInput(Unit) {
-                awaitEachGesture {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) {
-                            hideKeyboard()
-                        }
-                    }
-                }
+                detectTapGestures(onTap = { hideKeyboard() })
             },
         contentAlignment = Alignment.Center
     ) {
@@ -9253,9 +9527,20 @@ private fun EditPlaylistDialog(
         is ContentSource.LocalFile -> name.isNotBlank()
     }
 
+    val view = LocalView.current
+
     fun hideKeyboard() {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+            ?: (view.context as? ComponentActivity)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
     }
 
     BackHandler(onBack = {
@@ -9272,14 +9557,7 @@ private fun EditPlaylistDialog(
                 indication = null
             ) { hideKeyboard() }
             .pointerInput(Unit) {
-                awaitEachGesture {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) {
-                            hideKeyboard()
-                        }
-                    }
-                }
+                detectTapGestures(onTap = { hideKeyboard() })
             },
         contentAlignment = Alignment.Center
     ) {
@@ -9497,18 +9775,14 @@ private fun SourceUrlDialog(
         text = {
             Column(
                 Modifier.pointerInput(Unit) {
-                    awaitEachGesture {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.type == PointerEventType.Press) {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                                val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                                imm?.hideSoftInputFromWindow(view.windowToken, 0)
-                                view.findFocus()?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
-                            }
+                    detectTapGestures(
+                        onTap = {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                            val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                            imm?.hideSoftInputFromWindow(view.windowToken, 0)
                         }
-                    }
+                    )
                 }
             ) {
                 Text("Enter a direct HTTP or HTTPS URL. It will be encrypted on this device.")
@@ -10353,8 +10627,431 @@ private fun PinEntryDialog(
     )
 }
 
+@Composable
+private fun CreateBackupDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (password: String) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
+    val focusRequester = remember { FocusRequester() }
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    fun hideKeyboard() {
+        runCatching { focusRequester.requestFocus() }
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        view.clearFocus()
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+            ?: (view.context as? ComponentActivity)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
+    }
+
+    BackHandler(onBack = {
+        hideKeyboard()
+        onDismiss()
+    })
+
+    Dialog(
+        onDismissRequest = {
+            hideKeyboard()
+        },
+        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .focusRequester(focusRequester)
+                .focusable()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { hideKeyboard() })
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                modifier = Modifier
+                    .widthIn(max = 480.dp)
+                    .fillMaxWidth(0.92f)
+                    .padding(16.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { hideKeyboard() })
+                    }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { hideKeyboard() })
+                        }
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        strings.createBackup,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        strings.backupPasswordExplanation,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = {
+                            password = it
+                            errorMessage = null
+                        },
+                        label = { Text(strings.backupPassword) },
+                        singleLine = true,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = confirmPassword,
+                        onValueChange = {
+                            confirmPassword = it
+                            errorMessage = null
+                        },
+                        label = { Text(strings.confirmBackupPassword) },
+                        singleLine = true,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                hideKeyboard()
+                                when {
+                                    password.isBlank() -> errorMessage = strings.backupPasswordRequired
+                                    password.length < 4 -> errorMessage = strings.backupPasswordMinLength
+                                    password != confirmPassword -> errorMessage = strings.backupPasswordMismatch
+                                    else -> onConfirm(password)
+                                }
+                            }
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (errorMessage != null) {
+                        Text(
+                            errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                hideKeyboard()
+                                onDismiss()
+                            }
+                        ) {
+                            Text(strings.cancel)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                hideKeyboard()
+                                when {
+                                    password.isBlank() -> errorMessage = strings.backupPasswordRequired
+                                    password.length < 4 -> errorMessage = strings.backupPasswordMinLength
+                                    password != confirmPassword -> errorMessage = strings.backupPasswordMismatch
+                                    else -> onConfirm(password)
+                                }
+                            }
+                        ) {
+                            Text(strings.exportBackupAction)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RestoreBackupPasswordDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (password: String, merge: Boolean) -> Unit,
+    errorMessage: String?,
+    isRestoring: Boolean
+) {
+    val strings = LocalAppStrings.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
+    val focusRequester = remember { FocusRequester() }
+    var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var mergeMode by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    val displayError = errorMessage ?: localError
+
+    fun hideKeyboard() {
+        runCatching { focusRequester.requestFocus() }
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        view.clearFocus()
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+            ?: (view.context as? ComponentActivity)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
+    }
+
+    BackHandler(onBack = {
+        if (!isRestoring) {
+            hideKeyboard()
+            onDismiss()
+        }
+    })
+
+    Dialog(
+        onDismissRequest = {
+            hideKeyboard()
+        },
+        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .focusRequester(focusRequester)
+                .focusable()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { hideKeyboard() })
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                modifier = Modifier
+                    .widthIn(max = 500.dp)
+                    .fillMaxWidth(0.92f)
+                    .padding(16.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { hideKeyboard() })
+                    }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { hideKeyboard() })
+                        }
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        strings.restoreBackup,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        strings.enterBackupPassword,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = {
+                            password = it
+                            localError = null
+                        },
+                        label = { Text(strings.backupPassword) },
+                        singleLine = true,
+                        enabled = !isRestoring,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                hideKeyboard()
+                                if (password.isBlank()) {
+                                    localError = strings.backupPasswordRequired
+                                } else {
+                                    onConfirm(password, mergeMode)
+                                }
+                            }
+                        ),
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        strings.restoreModePrompt,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !isRestoring) {
+                                        hideKeyboard()
+                                        mergeMode = false
+                                    }
+                                    .padding(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = !mergeMode,
+                                    onClick = {
+                                        if (!isRestoring) {
+                                            hideKeyboard()
+                                            mergeMode = false
+                                        }
+                                    }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(strings.restoreModeReplace, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(strings.restoreModeReplaceDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !isRestoring) {
+                                        hideKeyboard()
+                                        mergeMode = true
+                                    }
+                                    .padding(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = mergeMode,
+                                    onClick = {
+                                        if (!isRestoring) {
+                                            hideKeyboard()
+                                            mergeMode = true
+                                        }
+                                    }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(strings.restoreModeMerge, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(strings.restoreModeMergeDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+
+                    if (isRestoring) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(Modifier.size(24.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text(strings.restoreBackup, fontSize = 13.sp)
+                        }
+                    }
+
+                    if (displayError != null && !isRestoring) {
+                        Text(
+                            displayError,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                hideKeyboard()
+                                onDismiss()
+                            },
+                            enabled = !isRestoring
+                        ) {
+                            Text(strings.cancel)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                hideKeyboard()
+                                if (password.isBlank()) {
+                                    localError = strings.backupPasswordRequired
+                                } else {
+                                    onConfirm(password, mergeMode)
+                                }
+                            },
+                            enabled = !isRestoring
+                        ) {
+                            Text(strings.restoreBackupAction)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
 @Composable
 private fun WelcomePreview() = FortressTVTheme {
-    WelcomeScreen(false, true, null, onRetry = null, onOpenFile = {}, onOpenUrl = {})
+    WelcomeScreen(false, true, null, onRetry = null, onOpenFile = {}, onOpenUrl = {}, onRestoreBackup = {})
 }

@@ -113,6 +113,26 @@ class UserLibraryStore(context: Context) {
         return order
     }
 
+    fun setFavoriteChannelIds(ids: Set<String>) {
+        preferences.edit().putStringSet(KEY_FAVORITE_CHANNELS, ids).apply()
+    }
+
+    fun setMovieWatchlistIds(ids: Set<String>) {
+        preferences.edit().putStringSet(KEY_MOVIE_WATCHLIST, ids).apply()
+    }
+
+    fun setFollowedSeriesIds(ids: Set<String>) {
+        preferences.edit().putStringSet(KEY_FOLLOWED_SERIES, ids).apply()
+    }
+
+    fun setWatchedItemIds(ids: Set<String>) {
+        preferences.edit().putStringSet(KEY_WATCHED_ITEMS, ids).apply()
+    }
+
+    fun setRecentChannelIds(ids: List<String>) {
+        preferences.edit().putString(KEY_RECENT_CHANNELS, ids.take(20).joinToString("|")).apply()
+    }
+
     fun resetCategoryOrder(profileId: String): List<String> {
         preferences.edit().remove("${KEY_CATEGORY_ORDER_PREFIX}_$profileId").apply()
         return emptyList()

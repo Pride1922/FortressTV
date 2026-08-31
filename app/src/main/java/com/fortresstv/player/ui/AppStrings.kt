@@ -286,8 +286,33 @@ interface Strings {
     val pinRemovedSuccess: String
     val unlockAdultContent: String
     val unlockSettings: String
-
     val quickRecents: String
+
+    val backupAndRestore: String
+    val createBackup: String
+    val createBackupDesc: String
+    val restoreBackup: String
+    val restoreBackupDesc: String
+    val restoreFromBackup: String
+    val backupPassword: String
+    val enterBackupPassword: String
+    val confirmBackupPassword: String
+    val backupPasswordExplanation: String
+    val backupPasswordRequired: String
+    val backupPasswordMismatch: String
+    val backupPasswordMinLength: String
+    val backupCreatedSuccess: String
+    fun backupRestoreSuccess(playlists: Int, favorites: Int): String
+    val backupIncorrectPassword: String
+    val backupCorruptFile: String
+    fun backupFailed(error: String): String
+    val restoreModePrompt: String
+    val restoreModeReplace: String
+    val restoreModeReplaceDesc: String
+    val restoreModeMerge: String
+    val restoreModeMergeDesc: String
+    val exportBackupAction: String
+    val restoreBackupAction: String
 }
 
 object EnglishStrings : Strings {
@@ -554,8 +579,33 @@ object EnglishStrings : Strings {
     override val pinRemovedSuccess = "PIN removed"
     override val unlockAdultContent = "Unlock Adult Content"
     override val unlockSettings = "Unlock Settings"
-
     override val quickRecents = "Recently Watched"
+
+    override val backupAndRestore = "Backup & Restore"
+    override val createBackup = "Create Backup"
+    override val createBackupDesc = "Save an encrypted backup of your playlists, settings, and library"
+    override val restoreBackup = "Restore Backup"
+    override val restoreBackupDesc = "Restore playlists, settings, and library from an encrypted file"
+    override val restoreFromBackup = "Restore from Backup"
+    override val backupPassword = "Backup Password"
+    override val enterBackupPassword = "Enter backup password"
+    override val confirmBackupPassword = "Confirm backup password"
+    override val backupPasswordExplanation = "This password encrypts your playlist URLs, credentials, and settings using AES-256-GCM. Keep it safe to restore on another device."
+    override val backupPasswordRequired = "Please enter a password"
+    override val backupPasswordMismatch = "Passwords do not match"
+    override val backupPasswordMinLength = "Password must be at least 4 characters"
+    override val backupCreatedSuccess = "Backup created successfully"
+    override fun backupRestoreSuccess(playlists: Int, favorites: Int) = "Restored $playlists ${if (playlists == 1) "playlist" else "playlists"} and $favorites ${if (favorites == 1) "favorite" else "favorites"}"
+    override val backupIncorrectPassword = "Incorrect backup password"
+    override val backupCorruptFile = "Invalid or corrupted backup file"
+    override fun backupFailed(error: String) = "Backup operation failed: $error"
+    override val restoreModePrompt = "Choose how to apply this backup"
+    override val restoreModeReplace = "Replace everything"
+    override val restoreModeReplaceDesc = "Overwrites existing playlists, favorites, and settings"
+    override val restoreModeMerge = "Merge with current"
+    override val restoreModeMergeDesc = "Combines restored playlists and library with your existing items"
+    override val exportBackupAction = "Export"
+    override val restoreBackupAction = "Restore"
 }
 
 object PortugueseStrings : Strings {
@@ -824,6 +874,32 @@ object PortugueseStrings : Strings {
     override val unlockSettings = "Desbloquear Definições"
 
     override val quickRecents = "Canais Recentes"
+
+    override val backupAndRestore = "Cópia de segurança e restauro"
+    override val createBackup = "Criar cópia de segurança"
+    override val createBackupDesc = "Guardar uma cópia encriptada das suas listas, definições e biblioteca"
+    override val restoreBackup = "Restaurar cópia de segurança"
+    override val restoreBackupDesc = "Restaurar listas, definições e biblioteca a partir de um ficheiro encriptado"
+    override val restoreFromBackup = "Restaurar de cópia de segurança"
+    override val backupPassword = "Palavra-passe da cópia de segurança"
+    override val enterBackupPassword = "Introduza a palavra-passe"
+    override val confirmBackupPassword = "Confirme a palavra-passe"
+    override val backupPasswordExplanation = "Esta palavra-passe encripta os URLs das listas, credenciais e definições com AES-256-GCM. Guarde-a num local seguro para restaurar noutro dispositivo."
+    override val backupPasswordRequired = "Por favor introduza uma palavra-passe"
+    override val backupPasswordMismatch = "As palavras-passe não coincidem"
+    override val backupPasswordMinLength = "A palavra-passe deve ter pelo menos 4 carateres"
+    override val backupCreatedSuccess = "Cópia de segurança criada com sucesso"
+    override fun backupRestoreSuccess(playlists: Int, favorites: Int) = "Restauradas $playlists ${if (playlists == 1) "lista" else "listas"} e $favorites ${if (favorites == 1) "favorito" else "favoritos"}"
+    override val backupIncorrectPassword = "Palavra-passe da cópia de segurança incorreta"
+    override val backupCorruptFile = "Ficheiro de cópia de segurança inválido ou corrompido"
+    override fun backupFailed(error: String) = "Falha na operação de cópia de segurança: $error"
+    override val restoreModePrompt = "Escolha como aplicar esta cópia de segurança"
+    override val restoreModeReplace = "Substituir tudo"
+    override val restoreModeReplaceDesc = "Substitui as listas, favoritos e definições existentes"
+    override val restoreModeMerge = "Fundir com o atual"
+    override val restoreModeMergeDesc = "Combina as listas e biblioteca restauradas com os itens existentes"
+    override val exportBackupAction = "Exportar"
+    override val restoreBackupAction = "Restaurar"
 }
 
 val LocalAppStrings = staticCompositionLocalOf<Strings> { EnglishStrings }
