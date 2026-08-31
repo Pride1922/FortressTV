@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.scale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
@@ -139,9 +140,15 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -2115,6 +2122,9 @@ private fun FortressLibrary(
                 loadNextEpisode = if (request.kind == VodProgressKind.EPISODE) {
                     suspend { resolveNextEpisodePlayback(request, xtreamProfiles, context) }
                 } else null,
+                loadAllEpisodes = if (request.kind == VodProgressKind.EPISODE) {
+                    suspend { resolveAllSeriesEpisodesPlayback(request, xtreamProfiles, context) }
+                } else null,
                 onPlayNext = { next -> vodPlayback = next },
                 onSaveProgress = { positionMs, durationMs ->
                     val isCompleted = durationMs > 0 && positionMs >= durationMs * 0.95
@@ -2300,6 +2310,32 @@ private suspend fun resolveNextEpisodePlayback(
         episode = next.episodeNumber,
         streamUrl = client.episodeStreamUrl(next)
     )
+}
+
+private suspend fun resolveAllSeriesEpisodesPlayback(
+    current: VodPlaybackRequest,
+    profiles: List<PlaylistProfile>,
+    context: Context
+): List<VodPlaybackRequest> {
+    val seriesId = current.seriesId ?: return emptyList()
+    val source = profiles.firstOrNull { it.id == current.sourceId }?.source as? ContentSource.Xtream ?: return emptyList()
+    val client = XtreamClient(context.applicationContext, current.sourceId, source)
+    val episodes = client.loadSeriesDetails(seriesId).episodes
+    return episodes.map { episode ->
+        VodPlaybackRequest(
+            key = "episode:${current.sourceId}:${episode.id}",
+            kind = VodProgressKind.EPISODE,
+            sourceId = current.sourceId,
+            itemId = episode.id,
+            seriesId = seriesId,
+            title = episode.title,
+            posterUrl = episode.posterUrl ?: current.posterUrl,
+            containerExtension = episode.containerExtension,
+            season = episode.season,
+            episode = episode.episodeNumber,
+            streamUrl = client.episodeStreamUrl(episode)
+        )
+    }
 }
 
 private enum class VodSortOption {
@@ -3370,6 +3406,7 @@ private fun VodPlayerDialog(
     request: VodPlaybackRequest,
     initialPositionMs: Long,
     loadNextEpisode: (suspend () -> VodPlaybackRequest?)?,
+    loadAllEpisodes: (suspend () -> List<VodPlaybackRequest>)? = null,
     onPlayNext: (VodPlaybackRequest) -> Unit,
     onSaveProgress: (Long, Long) -> Unit,
     onDismiss: () -> Unit
@@ -3396,6 +3433,91 @@ private fun VodPlayerDialog(
     var sleepTimerEndEpochMs by remember { mutableStateOf<Long?>(null) }
     var sleepTimerRemainingText by remember { mutableStateOf<String?>(null) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
+
+    var currentTracks by remember { mutableStateOf<Tracks?>(null) }
+    var showTracksDialog by remember { mutableStateOf(false) }
+    var selectedTrackTab by remember { mutableIntStateOf(0) }
+
+    var allEpisodes by remember(request.seriesId) { mutableStateOf<List<VodPlaybackRequest>>(emptyList()) }
+    var showEpisodesDrawer by remember { mutableStateOf(false) }
+    var selectedDrawerSeason by remember(request.season) { mutableIntStateOf(request.season ?: 1) }
+
+    LaunchedEffect(request.seriesId, loadAllEpisodes) {
+        if (loadAllEpisodes != null && allEpisodes.isEmpty()) {
+            val eps = runCatching { loadAllEpisodes() }.getOrDefault(emptyList())
+            allEpisodes = eps
+            if (eps.isNotEmpty() && request.season == null) {
+                selectedDrawerSeason = eps.firstNotNullOfOrNull { it.season } ?: 1
+            }
+        }
+    }
+
+    LaunchedEffect(showEpisodesDrawer) {
+        if (showEpisodesDrawer) {
+            delay(5_000)
+            showEpisodesDrawer = false
+        }
+    }
+
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible && showEpisodesDrawer) {
+            showEpisodesDrawer = false
+        }
+    }
+
+    val audioTracks = remember(currentTracks) {
+        val list = mutableListOf<PlaybackTrackItem>()
+        currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_AUDIO }?.forEach { group ->
+            for (i in 0 until group.length) {
+                if (group.isTrackSupported(i)) {
+                    val format = group.getTrackFormat(i)
+                    val lang = format.language?.takeIf(String::isNotBlank)
+                    val label = format.label?.takeIf(String::isNotBlank)
+                        ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
+                        ?: "Audio Track ${list.size + 1}"
+                    list.add(
+                        PlaybackTrackItem(
+                            id = "audio_${group.mediaTrackGroup.id}_$i",
+                            type = C.TRACK_TYPE_AUDIO,
+                            label = label,
+                            language = lang,
+                            isSelected = group.isTrackSelected(i),
+                            group = group,
+                            trackIndex = i
+                        )
+                    )
+                }
+            }
+        }
+        list
+    }
+
+    val subtitleTracks = remember(currentTracks) {
+        val list = mutableListOf<PlaybackTrackItem>()
+        currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_TEXT }?.forEach { group ->
+            for (i in 0 until group.length) {
+                if (group.isTrackSupported(i)) {
+                    val format = group.getTrackFormat(i)
+                    val lang = format.language?.takeIf(String::isNotBlank)
+                    val label = format.label?.takeIf(String::isNotBlank)
+                        ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
+                        ?: "Subtitle ${list.size + 1}"
+                    list.add(
+                        PlaybackTrackItem(
+                            id = "sub_${group.mediaTrackGroup.id}_$i",
+                            type = C.TRACK_TYPE_TEXT,
+                            label = label,
+                            language = lang,
+                            isSelected = group.isTrackSelected(i),
+                            group = group,
+                            trackIndex = i
+                        )
+                    )
+                }
+            }
+        }
+        list
+    }
 
     LaunchedEffect(sleepTimerEndEpochMs, sleepTimerMinutes) {
         val targetEpoch = sleepTimerEndEpochMs
@@ -3455,6 +3577,9 @@ private fun VodPlayerDialog(
                     }
                 }
             }
+            override fun onTracksChanged(tracks: Tracks) {
+                currentTracks = tracks
+            }
             override fun onPlayerError(error: PlaybackException) { playbackError = error.message ?: strings.playbackError }
         }
         player.addListener(listener)
@@ -3492,7 +3617,7 @@ private fun VodPlayerDialog(
             )
 
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !showEpisodesDrawer,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
@@ -3536,6 +3661,62 @@ private fun VodPlayerDialog(
                             )
                         }
                     }
+
+                    if (request.kind == VodProgressKind.EPISODE || loadAllEpisodes != null) {
+                        Surface(
+                            onClick = { showEpisodesDrawer = true },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                            border = BorderStroke(1.dp, if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.VideoLibrary,
+                                    contentDescription = strings.episodesDrawer,
+                                    tint = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    strings.episodesDrawer,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (showEpisodesDrawer) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
+
+                    Surface(
+                        onClick = { showTracksDialog = true },
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                        border = BorderStroke(1.dp, if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Subtitles,
+                                contentDescription = strings.audioAndSubtitles,
+                                tint = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                strings.audioAndSubtitles,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
 
                     if (loadNextEpisode != null) {
                         Surface(
@@ -3711,6 +3892,334 @@ private fun VodPlayerDialog(
                 }
             }
 
+            BackHandler(enabled = showEpisodesDrawer) {
+                showEpisodesDrawer = false
+            }
+
+            AnimatedVisibility(
+                visible = showEpisodesDrawer,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            showEpisodesDrawer = false
+                        }
+                )
+            }
+
+            AnimatedVisibility(
+                visible = showEpisodesDrawer,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    tonalElevation = 8.dp,
+                    modifier = Modifier
+                        .widthIn(min = 320.dp, max = 400.dp)
+                        .fillMaxHeight()
+                ) {
+                    Column(Modifier.fillMaxSize().padding(16.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.VideoLibrary,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.episodesDrawer,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            IconButton(onClick = { showEpisodesDrawer = false }) {
+                                Icon(Icons.Default.Close, contentDescription = strings.close)
+                            }
+                        }
+
+                        val seasons = remember(allEpisodes) {
+                            allEpisodes.mapNotNull { it.season }.distinct().sorted()
+                        }
+                        if (seasons.size > 1) {
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(seasons, key = { "drawer-season-$it" }) { s ->
+                                    FilterChip(
+                                        selected = selectedDrawerSeason == s,
+                                        onClick = { selectedDrawerSeason = s },
+                                        label = { Text(strings.seasonNumber(s)) }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(8.dp))
+
+                        val currentSeasonEpisodes = remember(allEpisodes, selectedDrawerSeason) {
+                            allEpisodes.filter { (it.season ?: 1) == selectedDrawerSeason }
+                        }
+
+                        if (currentSeasonEpisodes.isEmpty()) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                            }
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(currentSeasonEpisodes, key = { it.key }) { ep ->
+                                    val isPlaying = ep.itemId == request.itemId
+                                    Surface(
+                                        onClick = {
+                                            if (!isPlaying) {
+                                                showEpisodesDrawer = false
+                                                onPlayNext(ep)
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                        border = if (isPlaying) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                            ) {
+                                                Text(
+                                                    "E${(ep.episode ?: 1).toString().padStart(2, '0')}",
+                                                    color = if (isPlaying) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(
+                                                    ep.title,
+                                                    fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.SemiBold,
+                                                    fontSize = 14.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                if (isPlaying) {
+                                                    Text(
+                                                        strings.nowPlayingBadge,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (showTracksDialog) {
+                AlertDialog(
+                    onDismissRequest = { showTracksDialog = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Subtitles, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Text(strings.audioAndSubtitles, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    text = {
+                        Column(Modifier.fillMaxWidth()) {
+                            TabRow(selectedTabIndex = selectedTrackTab) {
+                                Tab(
+                                    selected = selectedTrackTab == 0,
+                                    onClick = { selectedTrackTab = 0 },
+                                    text = { Text(strings.audioTracks) }
+                                )
+                                Tab(
+                                    selected = selectedTrackTab == 1,
+                                    onClick = { selectedTrackTab = 1 },
+                                    text = { Text(strings.subtitles) }
+                                )
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            if (selectedTrackTab == 0) {
+                                if (audioTracks.isEmpty()) {
+                                    Text(
+                                        strings.noAudioTracksAvailable,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 12.dp)
+                                    )
+                                } else {
+                                    LazyColumn(
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.heightIn(max = 280.dp)
+                                    ) {
+                                        items(audioTracks, key = { it.id }) { track ->
+                                            Surface(
+                                                onClick = {
+                                                    player.trackSelectionParameters = player.trackSelectionParameters
+                                                        .buildUpon()
+                                                        .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                                        .build()
+                                                    showTracksDialog = false
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(
+                                                        track.label,
+                                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                        color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    if (track.isSelected) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = null,
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.heightIn(max = 280.dp)
+                                ) {
+                                    val isSubtitlesOff = subtitleTracks.none { it.isSelected }
+                                    item {
+                                        Surface(
+                                            onClick = {
+                                                player.trackSelectionParameters = player.trackSelectionParameters
+                                                    .buildUpon()
+                                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                                    .build()
+                                                showTracksDialog = false
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                            border = if (isSubtitlesOff) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    strings.subtitlesOff,
+                                                    fontWeight = if (isSubtitlesOff) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (isSubtitlesOff) {
+                                                    Icon(
+                                                        Icons.Default.Check,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (subtitleTracks.isEmpty()) {
+                                        item {
+                                            Text(
+                                                strings.noSubtitlesAvailable,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 13.sp,
+                                                modifier = Modifier.padding(vertical = 8.dp)
+                                            )
+                                        }
+                                    } else {
+                                        items(subtitleTracks, key = { it.id }) { track ->
+                                            Surface(
+                                                onClick = {
+                                                    player.trackSelectionParameters = player.trackSelectionParameters
+                                                        .buildUpon()
+                                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                                        .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                                        .build()
+                                                    showTracksDialog = false
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(
+                                                        track.label,
+                                                        fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                        color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    if (track.isSelected) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = null,
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showTracksDialog = false }) {
+                            Text(strings.close)
+                        }
+                    }
+                )
+            }
+
             if (showSleepTimerDialog) {
                 AlertDialog(
                     onDismissRequest = { showSleepTimerDialog = false },
@@ -3787,6 +4296,16 @@ private fun VodPlayerDialog(
         }
     }
 }
+
+private data class PlaybackTrackItem(
+    val id: String,
+    val type: Int,
+    val label: String,
+    val language: String?,
+    val isSelected: Boolean,
+    val group: Tracks.Group,
+    val trackIndex: Int
+)
 
 @Composable
 private fun LibraryPlaceholder(title: String, message: String) {

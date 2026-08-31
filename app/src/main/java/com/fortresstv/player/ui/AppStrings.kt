@@ -180,6 +180,15 @@ interface Strings {
     fun nextEpisodeIn(seconds: Int): String
     val playNow: String
     val sleepTimerExpired: String
+    val audioAndSubtitles: String
+    val audioTracks: String
+    val subtitles: String
+    val subtitlesOff: String
+    val noSubtitlesAvailable: String
+    val noAudioTracksAvailable: String
+    val episodesDrawer: String
+    fun seasonNumber(season: Int): String
+    val nowPlayingBadge: String
 
     val welcomeTitle: String
     val welcomeSubtitle: String
@@ -420,6 +429,15 @@ object EnglishStrings : Strings {
     override fun nextEpisodeIn(seconds: Int) = "Next episode in ${seconds}s"
     override val playNow = "Play Now"
     override val sleepTimerExpired = "Sleep timer finished. Playback stopped."
+    override val audioAndSubtitles = "Audio & Subtitles"
+    override val audioTracks = "Audio"
+    override val subtitles = "Subtitles"
+    override val subtitlesOff = "Off"
+    override val noSubtitlesAvailable = "No subtitles available"
+    override val noAudioTracksAvailable = "No audio tracks available"
+    override val episodesDrawer = "Episodes"
+    override fun seasonNumber(season: Int) = "Season $season"
+    override val nowPlayingBadge = "Now Playing"
 
     override val welcomeTitle = "Secure IPTV Player"
     override val welcomeSubtitle = "Private by default. Hardware-backed AES-256 encrypted storage."
@@ -661,6 +679,15 @@ object PortugueseStrings : Strings {
     override fun nextEpisodeIn(seconds: Int) = "Próximo episódio em ${seconds}s"
     override val playNow = "Reproduzir Agora"
     override val sleepTimerExpired = "Temporizador de suspensão terminado. Reprodução parada."
+    override val audioAndSubtitles = "Áudio e Legendas"
+    override val audioTracks = "Áudio"
+    override val subtitles = "Legendas"
+    override val subtitlesOff = "Desativado"
+    override val noSubtitlesAvailable = "Nenhuma legenda disponível"
+    override val noAudioTracksAvailable = "Nenhuma faixa de áudio disponível"
+    override val episodesDrawer = "Episódios"
+    override fun seasonNumber(season: Int) = "Temporada $season"
+    override val nowPlayingBadge = "A reproduzir"
 
     override val welcomeTitle = "Reprodutor IPTV Seguro"
     override val welcomeSubtitle = "Privacidade por padrão. Armazenamento encriptado com AES-256."
