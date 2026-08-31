@@ -18,9 +18,39 @@ data class EpgProgramme(
     val stopEpochMilli: Long?
 )
 
+data class EpgPartitionMetadata(
+    val epochDay: Long,
+    val filename: String,
+    val programmeCount: Int,
+    val compressedSize: Long = 0L,
+    val checksum: String = ""
+)
+
+data class EpgManifest(
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
+    val generationId: String,
+    val sourceFingerprint: String,
+    val timezoneId: String,
+    val loadedDays: Int,
+    val todayEpochDay: Long,
+    val createdAtMillis: Long = System.currentTimeMillis(),
+    val channels: Map<String, EpgChannel>,
+    val partitions: Map<Long, EpgPartitionMetadata>
+) {
+    companion object {
+        const val CURRENT_SCHEMA_VERSION = 5
+    }
+}
+
+data class EpgDay(
+    val epochDay: Long,
+    val programmes: Map<String, List<EpgProgramme>>
+)
+
 data class EpgGuide(
     val channels: Map<String, EpgChannel>,
-    val programmes: Map<String, List<EpgProgramme>>
+    val programmes: Map<String, List<EpgProgramme>> = emptyMap(),
+    val manifest: EpgManifest? = null
 ) {
     private val resolutionCache = ConcurrentHashMap<String, String>()
 

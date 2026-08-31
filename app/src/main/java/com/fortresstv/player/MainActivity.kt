@@ -217,6 +217,8 @@ import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.EpgProgramme
 import com.fortresstv.player.epg.EpgDiskCache
 import com.fortresstv.player.epg.XmlTvParser
+import com.fortresstv.player.epg.EpgRepository
+import com.fortresstv.player.epg.DefaultEpgRepository
 import com.fortresstv.player.epg.snapshot
 import com.fortresstv.player.epg.XmlTvTime
 import com.fortresstv.player.source.ContentSource
@@ -464,6 +466,7 @@ private fun FortressTVApp() {
     var epgLastUpdate by remember { mutableLongStateOf(0L) }
     var epgTimeShiftHours by remember { mutableIntStateOf(0) }
     var epgLoadedDays by remember { mutableIntStateOf(3) }
+    val epgRepository = remember { DefaultEpgRepository(context) }
 
     var error by remember { mutableStateOf<String?>(null) }
     var retryLoad by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -553,15 +556,30 @@ private fun FortressTVApp() {
     ): EpgGuide = withContext(Dispatchers.IO) {
         val baseFingerprint = SourceReader.fingerprint(context, source, "epg")
         val fingerprint = if (baseFingerprint != null) "$baseFingerprint#days=$loadedDays" else null
-        if (allowCachedResult) {
-            EpgDiskCache.load(context, fingerprint)?.let { cached ->
+        if (allowCachedResult && fingerprint != null) {
+            EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { cached ->
                 stream.close()
+                epgRepository.setGuide(cached)
                 return@withContext cached
             }
         }
-        val parsed = parseEpg(stream, loadedDays)
-        EpgDiskCache.save(context, fingerprint, parsed)
-        parsed
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+        val manifest = BufferedInputStream(stream).use { buffered ->
+            buffered.mark(2)
+            val first = buffered.read()
+            val second = buffered.read()
+            buffered.reset()
+            val decompressed = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
+            XmlTvParser.parseToDisk(
+                input = decompressed,
+                context = context,
+                fingerprint = fingerprint.orEmpty(),
+                loadedDays = loadedDays
+            )
+        }
+        val guide = EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)
+        epgRepository.setGuide(guide)
+        guide
     }
 
     fun loadPlaylistProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
@@ -1080,6 +1098,7 @@ private fun FortressTVApp() {
                     epgSourceName = epgSourceName,
                     epgTimeShiftHours = epgTimeShiftHours,
                     epgLoadedDays = epgLoadedDays,
+                    epgRepository = epgRepository,
                     playChannelsFullscreen = playChannelsFullscreen,
                     autoPictureInPicture = autoPictureInPicture,
                     hideAdultContent = effectiveHideAdultContent,
@@ -1622,6 +1641,7 @@ private fun ProgrammeGuideScreen(
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int,
     epgLoadedDays: Int = 3,
+    epgRepository: EpgRepository? = null,
     favoriteChannelIds: Set<String> = emptySet(),
     onToggleFavorite: (PlaylistChannel) -> Unit = {},
     categoryOrder: List<String> = emptyList(),
@@ -1728,48 +1748,97 @@ private fun ProgrammeGuideScreen(
             today to todayGuideBlocks
         )
     }
-    LaunchedEffect(epgGuide, playlist, selectedDate, zone, shiftMillis) {
+
+    val resolvedChannelMap = remember(playlist.channels, epgGuide) {
+        val guide = epgGuide ?: return@remember emptyMap<PlaylistChannel, String?>()
+        playlist.channels.associateWith { channel ->
+            guide.resolveChannelId(channel.tvgId, channel.name)
+        }
+    }
+
+    suspend fun computeDayBlocks(
+        date: LocalDate,
+        dayProgrammesMap: Map<String, List<EpgProgramme>>?
+    ): Map<PlaylistChannel, List<GuideProgrammeBlock>> = withContext(Dispatchers.Default) {
+        val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        playlist.channels.mapNotNull { channel ->
+            val resolvedId = resolvedChannelMap[channel]
+            val progs = (resolvedId?.let { dayProgrammesMap?.get(it) })
+                ?: (if (dayProgrammesMap == null) epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty() else emptyList())
+            if (progs.isEmpty()) return@mapNotNull null
+
+            val blocks = progs.mapNotNull { programme ->
+                val adjustedStart = programme.startEpochMilli + shiftMillis
+                val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
+                val adjustedStop = rawStop + shiftMillis
+                if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
+                    null
+                } else {
+                    val clippedStart = maxOf(adjustedStart, dayStart)
+                    val clippedStop = minOf(adjustedStop, dayEnd)
+                    GuideProgrammeBlock(
+                        programme = programme,
+                        startMinutes = (clippedStart - dayStart) / 60_000f,
+                        durationMinutes = ((clippedStop - clippedStart) / 60_000f).coerceIn(5f, 24f * 60f),
+                        adjustedStartMillis = adjustedStart,
+                        adjustedStopMillis = adjustedStop,
+                        timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                    )
+                }
+            }
+            if (blocks.isEmpty()) null else channel to blocks
+        }.toMap()
+    }
+
+    var isDayLoading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(epgGuide, epgRepository, playlist, selectedDate, zone, shiftMillis) {
         if ((selectedDate == today && todayGuideReady) ||
             (selectedDate != today && guideDayIndex.containsKey(selectedDate))
         ) {
+            isDayLoading = false
             return@LaunchedEffect
         }
+        isDayLoading = true
         val date = selectedDate
-        val dayIndex = withContext(Dispatchers.Default) {
-            val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
-            val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            playlist.channels.mapNotNull { channel ->
-                val blocks = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty().mapNotNull { programme ->
-                    val adjustedStart = programme.startEpochMilli + shiftMillis
-                    val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
-                    val adjustedStop = rawStop + shiftMillis
-                    if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
-                        null
-                    } else {
-                        val clippedStart = maxOf(adjustedStart, dayStart)
-                        val clippedStop = minOf(adjustedStop, dayEnd)
-                        GuideProgrammeBlock(
-                            programme = programme,
-                            startMinutes = (clippedStart - dayStart) / 60_000f,
-                            durationMinutes = ((clippedStop - clippedStart) / 60_000f)
-                                .coerceIn(5f, 24f * 60f),
-                            adjustedStartMillis = adjustedStart,
-                            adjustedStopMillis = adjustedStop,
-                            timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
-                        )
+        val targetEpochDay = date.toEpochDay()
+        val loadedDay = if (date != today) epgRepository?.loadDay(targetEpochDay) else null
+        val dayData = if (date == today) epgGuide?.programmes else loadedDay?.programmes
+
+        val dayIndex = computeDayBlocks(date, dayData)
+
+        if (selectedDate == date) {
+            if (date == today) {
+                dayIndex.entries.chunked(GUIDE_CHANNEL_BATCH_SIZE).forEach { batch ->
+                    batch.forEach { (channel, blocks) -> todayGuideBlocks[channel] = blocks }
+                    withFrameNanos { }
+                }
+                todayGuideReady = true
+            } else {
+                guideDayIndex[date] = dayIndex
+            }
+            isDayLoading = false
+        }
+    }
+
+    // Eager background preloader for all days in the guide
+    LaunchedEffect(todayGuideReady, epgRepository, dates) {
+        if (!todayGuideReady) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            for (date in dates) {
+                if (date != today && !guideDayIndex.containsKey(date)) {
+                    val loaded = epgRepository?.loadDay(date.toEpochDay())
+                    if (loaded != null) {
+                        val blocks = computeDayBlocks(date, loaded.programmes)
+                        withContext(Dispatchers.Main) {
+                            if (!guideDayIndex.containsKey(date)) {
+                                guideDayIndex[date] = blocks
+                            }
+                        }
                     }
                 }
-                if (blocks.isEmpty()) null else channel to blocks
-            }.toMap()
-        }
-        if (date == today) {
-            dayIndex.entries.chunked(GUIDE_CHANNEL_BATCH_SIZE).forEach { batch ->
-                batch.forEach { (channel, blocks) -> todayGuideBlocks[channel] = blocks }
-                withFrameNanos { }
             }
-            todayGuideReady = true
-        } else {
-            guideDayIndex[date] = dayIndex
         }
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
@@ -2058,7 +2127,11 @@ private fun ProgrammeGuideScreen(
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
+            if (isDayLoading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = MaterialTheme.colorScheme.primary)
+            } else {
+                Spacer(Modifier.height(2.dp))
+            }
             HorizontalDivider()
 
             Row(Modifier.weight(1f).fillMaxWidth()) {
@@ -2404,6 +2477,7 @@ private fun FortressLibrary(
     epgSourceName: String?,
     epgTimeShiftHours: Int,
     epgLoadedDays: Int = 3,
+    epgRepository: EpgRepository? = null,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
     hideAdultContent: Boolean = false,
@@ -2493,6 +2567,7 @@ private fun FortressLibrary(
                     epgSourceName = epgSourceName,
                     epgTimeShiftHours = epgTimeShiftHours,
                     epgLoadedDays = epgLoadedDays,
+                    epgRepository = epgRepository,
                     playChannelsFullscreen = playChannelsFullscreen,
                     autoPictureInPicture = autoPictureInPicture,
                     loading = loading,
@@ -5694,6 +5769,7 @@ private fun ChannelBrowser(
     epgSourceName: String?,
     epgTimeShiftHours: Int = 0,
     epgLoadedDays: Int = 3,
+    epgRepository: EpgRepository? = null,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
     loading: Boolean,
@@ -5835,6 +5911,7 @@ private fun ChannelBrowser(
             epgGuide = epgGuide,
             epgTimeShiftHours = epgTimeShiftHours,
             epgLoadedDays = epgLoadedDays,
+            epgRepository = epgRepository,
             favoriteChannelIds = favoriteChannelIds,
             onToggleFavorite = onToggleFavorite,
             categoryOrder = categoryOrder,
