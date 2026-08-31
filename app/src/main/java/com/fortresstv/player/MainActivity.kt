@@ -7995,10 +7995,13 @@ private fun SettingsDialog(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val view = LocalView.current
+    val focusRequester = remember { FocusRequester() }
 
     fun hideKeyboard() {
+        runCatching { focusRequester.requestFocus() }
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        view.clearFocus()
         val dialogWin = (view.parent as? DialogWindowProvider)?.window
             ?: (view.context as? ComponentActivity)?.window
         if (dialogWin != null) {
@@ -8019,10 +8022,9 @@ private fun SettingsDialog(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.7f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { hideKeyboard() }
+            .focusRequester(focusRequester)
+            .focusable()
+            .imePadding()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { hideKeyboard() })
             },
@@ -9286,10 +9288,13 @@ private fun AddPlaylistDialog(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val view = LocalView.current
+    val focusRequester = remember { FocusRequester() }
 
     fun hideKeyboard() {
+        runCatching { focusRequester.requestFocus() }
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        view.clearFocus()
         val dialogWin = (view.parent as? DialogWindowProvider)?.window
             ?: (view.context as? ComponentActivity)?.window
         if (dialogWin != null) {
@@ -9310,10 +9315,9 @@ private fun AddPlaylistDialog(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.7f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { hideKeyboard() }
+            .focusRequester(focusRequester)
+            .focusable()
+            .imePadding()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { hideKeyboard() })
             },
@@ -9327,14 +9331,16 @@ private fun AddPlaylistDialog(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.92f)
                 .padding(16.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { hideKeyboard() }
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { hideKeyboard() })
+                }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { hideKeyboard() })
+                    }
                     .verticalScroll(rememberScrollState())
                     .padding(24.dp)
             ) {
@@ -9528,10 +9534,13 @@ private fun EditPlaylistDialog(
     }
 
     val view = LocalView.current
+    val focusRequester = remember { FocusRequester() }
 
     fun hideKeyboard() {
+        runCatching { focusRequester.requestFocus() }
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        view.clearFocus()
         val dialogWin = (view.parent as? DialogWindowProvider)?.window
             ?: (view.context as? ComponentActivity)?.window
         if (dialogWin != null) {
@@ -9552,10 +9561,9 @@ private fun EditPlaylistDialog(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.7f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { hideKeyboard() }
+            .focusRequester(focusRequester)
+            .focusable()
+            .imePadding()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { hideKeyboard() })
             },
@@ -9569,14 +9577,16 @@ private fun EditPlaylistDialog(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.92f)
                 .padding(16.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { hideKeyboard() }
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { hideKeyboard() })
+                }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { hideKeyboard() })
+                    }
                     .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -10675,6 +10685,7 @@ private fun CreateBackupDialog(
                 .background(Color.Black.copy(alpha = 0.65f))
                 .focusRequester(focusRequester)
                 .focusable()
+                .imePadding()
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = { hideKeyboard() })
                 },
@@ -10855,6 +10866,7 @@ private fun RestoreBackupPasswordDialog(
                 .background(Color.Black.copy(alpha = 0.65f))
                 .focusRequester(focusRequester)
                 .focusable()
+                .imePadding()
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = { hideKeyboard() })
                 },
