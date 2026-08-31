@@ -8,24 +8,31 @@ import java.time.ZoneId
 import javax.xml.parsers.SAXParserFactory
 
 object XmlTvParser {
-    private const val RETAINED_CALENDAR_DAYS = 3
+    const val DEFAULT_LOADED_DAYS = 3
 
-    fun parse(input: InputStream, referenceTimeMillis: Long = System.currentTimeMillis()): EpgGuide {
-        val handler = XmlTvHandler(referenceTimeMillis)
+    fun parse(
+        input: InputStream,
+        referenceTimeMillis: Long = System.currentTimeMillis(),
+        loadedDays: Int = DEFAULT_LOADED_DAYS
+    ): EpgGuide {
+        val handler = XmlTvHandler(referenceTimeMillis, loadedDays.coerceIn(1, 7))
         SAXParserFactory.newInstance().apply {
             isNamespaceAware = false
         }.newSAXParser().parse(input, handler)
         return handler.guide()
     }
 
-    private class XmlTvHandler(private val referenceTime: Long) : DefaultHandler() {
+    private class XmlTvHandler(
+        private val referenceTime: Long,
+        private val loadedDays: Int
+    ) : DefaultHandler() {
         private val pastCutoff = if (referenceTime > 0L) referenceTime - (6 * 3600_000L) else Long.MIN_VALUE
         private val futureCutoff = if (referenceTime > 0L) {
             val zone = ZoneId.systemDefault()
             Instant.ofEpochMilli(referenceTime)
                 .atZone(zone)
                 .toLocalDate()
-                .plusDays(RETAINED_CALENDAR_DAYS.toLong())
+                .plusDays(loadedDays.toLong())
                 .atStartOfDay(zone)
                 .toInstant()
                 .toEpochMilli()

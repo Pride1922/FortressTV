@@ -248,6 +248,9 @@ interface Strings {
     val removeEpg: String
     val timeShift: String
     val timeShiftDesc: String
+    val epgLoadedDays: String
+    val epgLoadedDaysDesc: String
+    fun epgDaysCount(days: Int): String
     val securityTitle: String
     val securityDesc: String
     val contentDisclaimerTitle: String
@@ -540,6 +543,9 @@ object EnglishStrings : Strings {
     override val removeEpg = "Remove EPG"
     override val timeShift = "Time Shift (Hours)"
     override val timeShiftDesc = "Adjust this if programme times are offset from your local timezone."
+    override val epgLoadedDays = "EPG Days to Load"
+    override val epgLoadedDaysDesc = "Number of calendar days of programme data to retain in memory and cache (1 to 7 days)."
+    override fun epgDaysCount(days: Int) = if (days == 1) "1 day" else "$days days"
     override val securityTitle = "FortressTV Security & Privacy"
     override val securityDesc = "Hardware-backed AES-256 encryption via Android KeyStore. All sources and cached stream tokens remain private on this device."
     override val contentDisclaimerTitle = "Content notice"
@@ -833,6 +839,9 @@ object PortugueseStrings : Strings {
     override val removeEpg = "Remover EPG"
     override val timeShift = "Ajuste de Fuso Horário (Horas)"
     override val timeShiftDesc = "Ajuste este valor se os horários dos programas não coincidirem com o seu fuso horário local."
+    override val epgLoadedDays = "Dias de EPG a Carregar"
+    override val epgLoadedDaysDesc = "Número de dias do guia de programação a reter na memória e cache (1 a 7 dias)."
+    override fun epgDaysCount(days: Int) = if (days == 1) "1 dia" else "$days dias"
     override val securityTitle = "Segurança e Privacidade FortressTV"
     override val securityDesc = "Encriptação AES-256 por hardware via Android KeyStore. Todas as origens e tokens de stream permanecem estritamente privados neste dispositivo."
     override val contentDisclaimerTitle = "Aviso sobre conteúdos"

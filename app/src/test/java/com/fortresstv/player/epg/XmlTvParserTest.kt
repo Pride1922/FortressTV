@@ -50,9 +50,33 @@ class XmlTvParserTest {
 
         val guide = XmlTvParser.parse(
             xml.byteInputStream(),
-            referenceTimeMillis = XmlTvTime.parseToEpoch("20260829120000 +0000")!!
+            referenceTimeMillis = XmlTvTime.parseToEpoch("20260829120000 +0000")!!,
+            loadedDays = 3
         )
 
         assertEquals(listOf("Third calendar day"), guide.programmes.getValue("RTP1.pt").map { it.title })
+    }
+
+    @Test
+    fun retainsUpToSevenCalendarDaysWhenConfigured() {
+        val xml = """
+            <tv>
+              <channel id="RTP1.pt"><display-name>RTP 1</display-name></channel>
+              <programme start="20260904120000 +0000" stop="20260904130000 +0000" channel="RTP1.pt">
+                <title>Seventh calendar day</title>
+              </programme>
+              <programme start="20260906120000 +0000" stop="20260906130000 +0000" channel="RTP1.pt">
+                <title>Ninth calendar day</title>
+              </programme>
+            </tv>
+        """.trimIndent()
+
+        val guide = XmlTvParser.parse(
+            xml.byteInputStream(),
+            referenceTimeMillis = XmlTvTime.parseToEpoch("20260829120000 +0000")!!,
+            loadedDays = 7
+        )
+
+        assertEquals(listOf("Seventh calendar day"), guide.programmes.getValue("RTP1.pt").map { it.title })
     }
 }

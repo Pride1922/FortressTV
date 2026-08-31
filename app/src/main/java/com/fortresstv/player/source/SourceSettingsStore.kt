@@ -167,6 +167,12 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putInt("epg_time_shift_hours", hours).apply()
     }
 
+    fun epgLoadedDays(): Int = preferences.getInt("epg_loaded_days", 3).coerceIn(1, 7)
+
+    fun saveEpgLoadedDays(days: Int) {
+        preferences.edit().putInt("epg_loaded_days", days.coerceIn(1, 7)).apply()
+    }
+
     fun getLanguage(): String {
         val saved = preferences.getString("app_language", null)
         if (saved != null) return saved

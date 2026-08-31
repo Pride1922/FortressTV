@@ -242,7 +242,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.content.ContentValues
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
 import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.util.zip.GZIPInputStream
 import java.time.LocalDateTime
 import java.time.Instant
@@ -457,6 +463,7 @@ private fun FortressTVApp() {
     var epgSourceName by remember { mutableStateOf<String?>(null) }
     var epgLastUpdate by remember { mutableLongStateOf(0L) }
     var epgTimeShiftHours by remember { mutableIntStateOf(0) }
+    var epgLoadedDays by remember { mutableIntStateOf(3) }
 
     var error by remember { mutableStateOf<String?>(null) }
     var retryLoad by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -526,7 +533,7 @@ private fun FortressTVApp() {
         parsed
     }
 
-    suspend fun parseEpg(stream: java.io.InputStream): EpgGuide = withContext(Dispatchers.Default) {
+    suspend fun parseEpg(stream: java.io.InputStream, loadedDays: Int = epgLoadedDays): EpgGuide = withContext(Dispatchers.Default) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         BufferedInputStream(stream).use { buffered ->
             buffered.mark(2)
@@ -534,23 +541,25 @@ private fun FortressTVApp() {
             val second = buffered.read()
             buffered.reset()
             val decompressed = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
-            XmlTvParser.parse(decompressed)
+            XmlTvParser.parse(decompressed, loadedDays = loadedDays)
         }
     }
 
     suspend fun parseEpgWithCache(
         source: ContentSource,
         stream: java.io.InputStream,
-        allowCachedResult: Boolean
+        allowCachedResult: Boolean,
+        loadedDays: Int = epgLoadedDays
     ): EpgGuide = withContext(Dispatchers.IO) {
-        val fingerprint = SourceReader.fingerprint(context, source, "epg")
+        val baseFingerprint = SourceReader.fingerprint(context, source, "epg")
+        val fingerprint = if (baseFingerprint != null) "$baseFingerprint#days=$loadedDays" else null
         if (allowCachedResult) {
             EpgDiskCache.load(context, fingerprint)?.let { cached ->
                 stream.close()
                 return@withContext cached
             }
         }
-        val parsed = parseEpg(stream)
+        val parsed = parseEpg(stream, loadedDays)
         EpgDiskCache.save(context, fingerprint, parsed)
         parsed
     }
@@ -693,11 +702,13 @@ private fun FortressTVApp() {
     LaunchedEffect(Unit) {
         val savedLangCode = withContext(Dispatchers.IO) { settings.getLanguage() }
         val shift = withContext(Dispatchers.IO) { settings.epgTimeShiftHours() }
+        val days = withContext(Dispatchers.IO) { settings.epgLoadedDays() }
         val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
         val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
         val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
         appLanguage = AppLanguage.fromCode(savedLangCode)
         epgTimeShiftHours = shift
+        epgLoadedDays = days
         epgLastUpdate = epgUpdate
         playChannelsFullscreen = savedFullscreenPreference
         autoPictureInPicture = savedPictureInPicturePreference
@@ -993,6 +1004,7 @@ private fun FortressTVApp() {
                             epgSource = settings.epgSource()
                             epgSourceName = epgSource?.displayName
                             epgTimeShiftHours = settings.epgTimeShiftHours()
+                            epgLoadedDays = settings.epgLoadedDays()
                             favoriteChannelIds = userLibrary.favoriteChannelIds()
                             recentChannelIds = userLibrary.recentChannelIds()
                             movieWatchlistIds = userLibrary.movieWatchlistIds()
@@ -1067,6 +1079,7 @@ private fun FortressTVApp() {
                     epgGuide = epgGuide,
                     epgSourceName = epgSourceName,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    epgLoadedDays = epgLoadedDays,
                     playChannelsFullscreen = playChannelsFullscreen,
                     autoPictureInPicture = autoPictureInPicture,
                     hideAdultContent = effectiveHideAdultContent,
@@ -1162,6 +1175,7 @@ private fun FortressTVApp() {
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
                 epgTimeShiftHours = epgTimeShiftHours,
+                epgLoadedDays = epgLoadedDays,
                 playlist = playlist,
                 epgGuide = epgGuide,
                 hiddenCategories = activeProfile?.id?.let { userLibrary.hiddenCategories(it) } ?: emptySet(),
@@ -1239,6 +1253,13 @@ private fun FortressTVApp() {
                 onEpgTimeShiftChanged = { shift ->
                     epgTimeShiftHours = shift
                     settings.saveEpgTimeShiftHours(shift)
+                },
+                onEpgLoadedDaysChanged = { days ->
+                    val clamped = days.coerceIn(1, 7)
+                    epgLoadedDays = clamped
+                    settings.saveEpgLoadedDays(clamped)
+                    val currentEpg = epgSource ?: settings.epgSource()
+                    currentEpg?.let { loadEpg(it, save = false, forceRefresh = false) }
                 },
                 onCreateBackup = {
                     showCreateBackupDialog = true
@@ -1600,6 +1621,7 @@ private fun ProgrammeGuideScreen(
     playlist: Playlist,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int,
+    epgLoadedDays: Int = 3,
     favoriteChannelIds: Set<String> = emptySet(),
     onToggleFavorite: (PlaylistChannel) -> Unit = {},
     categoryOrder: List<String> = emptyList(),
@@ -1614,7 +1636,7 @@ private fun ProgrammeGuideScreen(
     val coroutineScope = rememberCoroutineScope()
     val zone = remember { ZoneId.systemDefault() }
     val today = remember { LocalDate.now(zone) }
-    val dates = remember(today) { List(3) { today.plusDays(it.toLong()) } }
+    val dates = remember(today, epgLoadedDays) { List(epgLoadedDays.coerceIn(1, 7)) { today.plusDays(it.toLong()) } }
     var selectedDate by remember { mutableStateOf(today) }
     var selectedProgramme by remember { mutableStateOf<Pair<PlaylistChannel, EpgProgramme>?>(null) }
     var now by remember { mutableStateOf(Instant.now()) }
@@ -1648,6 +1670,8 @@ private fun ProgrammeGuideScreen(
         raw.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
     }
     var selectedGroup by remember { mutableStateOf(allGroup) }
+    var categoryMenuExpanded by remember { mutableStateOf(false) }
+    var categorySearchQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1879,55 +1903,158 @@ private fun ProgrammeGuideScreen(
                 )
             }
 
-            LazyRow(
+            Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                items(dates, key = { it.toString() }) { date ->
-                    FilterChip(
-                        selected = selectedDate == date,
-                        onClick = {
-                            selectedDate = date
-                            selectedProgramme = null
-                        },
-                        label = {
-                            Text(
-                                if (date == today) strings.todayDate(date.dayOfMonth)
-                                else "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, guideLocale)} ${date.dayOfMonth}"
-                            )
-                        }
-                    )
-                }
-
-                item {
-                    VerticalDivider(modifier = Modifier.height(24.dp).padding(horizontal = 4.dp))
-                }
-
-                item {
-                    FilterChip(
-                        selected = selectedGroup == allGroup,
-                        onClick = { selectedGroup = allGroup },
-                        label = { Text("${strings.allChannels} (${playlist.channels.size})") }
-                    )
-                }
-
-                if (favoriteChannels.isNotEmpty()) {
-                    item {
+                // Date Selector Chips
+                LazyRow(
+                    modifier = Modifier.weight(1f, fill = false),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(dates, key = { it.toString() }) { date ->
                         FilterChip(
-                            selected = selectedGroup == favoritesGroup,
-                            onClick = { selectedGroup = favoritesGroup },
-                            label = { Text("$favoritesGroup (${favoriteChannels.size})") }
+                            selected = selectedDate == date,
+                            onClick = {
+                                selectedDate = date
+                                selectedProgramme = null
+                            },
+                            label = {
+                                Text(
+                                    if (date == today) strings.todayDate(date.dayOfMonth)
+                                    else "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, guideLocale)} ${date.dayOfMonth}"
+                                )
+                            }
                         )
                     }
                 }
 
-                items(categories, key = { "guide-cat-$it" }) { category ->
-                    FilterChip(
-                        selected = selectedGroup == category,
-                        onClick = { selectedGroup = category },
-                        label = { Text(category) }
-                    )
+                Spacer(Modifier.width(10.dp))
+
+                // Clean Category Dropdown Button
+                Box {
+                    FilledTonalButton(
+                        onClick = { categoryMenuExpanded = true },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Icon(
+                            when (selectedGroup) {
+                                favoritesGroup -> Icons.Default.Star
+                                allGroup -> Icons.Default.Menu
+                                else -> Icons.Default.FolderOpen
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = if (selectedGroup == favoritesGroup) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        val displayCategoryName = when (selectedGroup) {
+                            allGroup -> "${strings.allChannels} (${playlist.channels.size})"
+                            favoritesGroup -> "$favoritesGroup (${favoriteChannels.size})"
+                            else -> "$selectedGroup (${channelsInGroup.size})"
+                        }
+                        Text(
+                            text = displayCategoryName,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 200.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
+
+                    DropdownMenu(
+                        expanded = categoryMenuExpanded,
+                        onDismissRequest = {
+                            categoryMenuExpanded = false
+                            categorySearchQuery = ""
+                        },
+                        modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 420.dp)
+                    ) {
+                        if (categories.size > 8) {
+                            OutlinedTextField(
+                                value = categorySearchQuery,
+                                onValueChange = { categorySearchQuery = it },
+                                placeholder = { Text(strings.search, fontSize = 12.sp) },
+                                singleLine = true,
+                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            HorizontalDivider()
+                        }
+
+                        DropdownMenuItem(
+                            text = { Text("${strings.allChannels} (${playlist.channels.size})", fontWeight = if (selectedGroup == allGroup) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                selectedGroup = allGroup
+                                categoryMenuExpanded = false
+                                categorySearchQuery = ""
+                            }
+                        )
+
+                        if (favoriteChannels.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("$favoritesGroup (${favoriteChannels.size})", fontWeight = if (selectedGroup == favoritesGroup) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp) },
+                                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    selectedGroup = favoritesGroup
+                                    categoryMenuExpanded = false
+                                    categorySearchQuery = ""
+                                }
+                            )
+                        }
+
+                        if (categories.isNotEmpty()) {
+                            HorizontalDivider()
+
+                            val filteredCategories = if (categorySearchQuery.isBlank()) categories
+                            else categories.filter { it.contains(categorySearchQuery.trim(), ignoreCase = true) }
+
+                            filteredCategories.forEach { category ->
+                                val count = playlist.channels.count { it.group == category }
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                category,
+                                                fontWeight = if (selectedGroup == category) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 13.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                "$count",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.FolderOpen,
+                                            contentDescription = null,
+                                            tint = if (selectedGroup == category) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                        )
+                                    },
+                                    onClick = {
+                                        selectedGroup = category
+                                        categoryMenuExpanded = false
+                                        categorySearchQuery = ""
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2276,6 +2403,7 @@ private fun FortressLibrary(
     epgGuide: EpgGuide?,
     epgSourceName: String?,
     epgTimeShiftHours: Int,
+    epgLoadedDays: Int = 3,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
     hideAdultContent: Boolean = false,
@@ -2364,6 +2492,7 @@ private fun FortressLibrary(
                     epgGuide = epgGuide,
                     epgSourceName = epgSourceName,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    epgLoadedDays = epgLoadedDays,
                     playChannelsFullscreen = playChannelsFullscreen,
                     autoPictureInPicture = autoPictureInPicture,
                     loading = loading,
@@ -5564,6 +5693,7 @@ private fun ChannelBrowser(
     epgGuide: EpgGuide?,
     epgSourceName: String?,
     epgTimeShiftHours: Int = 0,
+    epgLoadedDays: Int = 3,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
     loading: Boolean,
@@ -5704,6 +5834,7 @@ private fun ChannelBrowser(
             playlist = playlist,
             epgGuide = epgGuide,
             epgTimeShiftHours = epgTimeShiftHours,
+            epgLoadedDays = epgLoadedDays,
             favoriteChannelIds = favoriteChannelIds,
             onToggleFavorite = onToggleFavorite,
             categoryOrder = categoryOrder,
@@ -5724,7 +5855,7 @@ private fun ChannelBrowser(
     LaunchedEffect(allVisibleChannels, epgGuide) {
         if (epgGuide == null) {
             matchedCount = 0
-            unmatchedChannels = emptyList()
+            unmatchedChannels = allVisibleChannels
         } else {
             val summary = withContext(Dispatchers.Default) {
                 var matches = 0
@@ -8112,6 +8243,7 @@ private fun SettingsDialog(
     epgSourceName: String?,
     epgLastUpdate: Long,
     epgTimeShiftHours: Int,
+    epgLoadedDays: Int = 3,
     playlist: Playlist?,
     epgGuide: EpgGuide?,
     hiddenCategories: Set<String> = emptySet(),
@@ -8129,6 +8261,7 @@ private fun SettingsDialog(
     onRefreshEpg: () -> Unit,
     onRemoveEpg: () -> Unit,
     onEpgTimeShiftChanged: (Int) -> Unit,
+    onEpgLoadedDaysChanged: (Int) -> Unit,
     onCreateBackup: () -> Unit,
     onRestoreBackup: () -> Unit
 ) {
@@ -8289,6 +8422,7 @@ private fun SettingsDialog(
                                     epgSourceName = epgSourceName,
                                     epgLastUpdate = epgLastUpdate,
                                     epgTimeShiftHours = epgTimeShiftHours,
+                                    epgLoadedDays = epgLoadedDays,
                                     playlist = playlist,
                                     epgGuide = epgGuide,
                                     hideAdultContent = hideAdultContent,
@@ -8298,7 +8432,8 @@ private fun SettingsDialog(
                                     onEpgFile = onEpgFile,
                                     onRefreshEpg = onRefreshEpg,
                                     onRemoveEpg = onRemoveEpg,
-                                    onEpgTimeShiftChanged = onEpgTimeShiftChanged
+                                    onEpgTimeShiftChanged = onEpgTimeShiftChanged,
+                                    onEpgLoadedDaysChanged = onEpgLoadedDaysChanged
                                 )
                                 3 -> AboutTab()
                             }
@@ -8358,6 +8493,7 @@ private fun SettingsDialog(
                                 epgSourceName = epgSourceName,
                                 epgLastUpdate = epgLastUpdate,
                                 epgTimeShiftHours = epgTimeShiftHours,
+                                epgLoadedDays = epgLoadedDays,
                                 playlist = playlist,
                                 epgGuide = epgGuide,
                                 hideAdultContent = hideAdultContent,
@@ -8367,7 +8503,8 @@ private fun SettingsDialog(
                                 onEpgFile = onEpgFile,
                                 onRefreshEpg = onRefreshEpg,
                                 onRemoveEpg = onRemoveEpg,
-                                onEpgTimeShiftChanged = onEpgTimeShiftChanged
+                                onEpgTimeShiftChanged = onEpgTimeShiftChanged,
+                                onEpgLoadedDaysChanged = onEpgLoadedDaysChanged
                             )
                             3 -> AboutTab()
                         }
@@ -8919,6 +9056,7 @@ private fun EpgTab(
     epgSourceName: String?,
     epgLastUpdate: Long,
     epgTimeShiftHours: Int,
+    epgLoadedDays: Int = 3,
     playlist: Playlist?,
     epgGuide: EpgGuide?,
     hideAdultContent: Boolean = false,
@@ -8928,7 +9066,8 @@ private fun EpgTab(
     onEpgFile: () -> Unit,
     onRefreshEpg: () -> Unit,
     onRemoveEpg: () -> Unit,
-    onEpgTimeShiftChanged: (Int) -> Unit
+    onEpgTimeShiftChanged: (Int) -> Unit,
+    onEpgLoadedDaysChanged: (Int) -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -8950,22 +9089,32 @@ private fun EpgTab(
     }
     var showUnmatchedInSettings by remember { mutableStateOf(false) }
 
-    val exportText = remember(unmatchedChannels) { generateUnmatchedChannelsText(unmatchedChannels) }
+    val currentUnmatched by rememberUpdatedState(unmatchedChannels)
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
         if (uri != null) {
-            scope.launch(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openOutputStream(uri)?.use { os ->
-                        os.write(exportText.toByteArray(Charsets.UTF_8))
-                    }
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, strings.channelsListSaved, Toast.LENGTH_LONG).show()
-                    }
-                }
+            val channelsToExport = currentUnmatched
+            val text = generateUnmatchedChannelsText(channelsToExport)
+            val success = writeTextToUri(context, uri, text)
+            if (success) {
+                Toast.makeText(context, "${strings.channelsListSaved} (${channelsToExport.size})", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "Error: could not write to selected location", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    fun shareList() {
+        val text = generateUnmatchedChannelsText(currentUnmatched)
+        val sendIntent = Intent().apply {
+            action = Intent.ACTION_SEND
+            putExtra(Intent.EXTRA_TEXT, text)
+            putExtra(Intent.EXTRA_TITLE, strings.unmatchedEpgChannels)
+            type = "text/plain"
+        }
+        val shareIntent = Intent.createChooser(sendIntent, strings.shareChannelsList)
+        context.startActivity(shareIntent)
     }
 
     Column(
@@ -9076,6 +9225,9 @@ private fun EpgTab(
                     }
                     if (unmatchedChannels.isNotEmpty()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = ::shareList, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.Share, contentDescription = strings.shareChannelsList, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
                             OutlinedButton(
                                 onClick = { saveFileLauncher.launch("channels_without_epg.txt") },
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
@@ -9161,6 +9313,53 @@ private fun EpgTab(
                         ) {
                             Text(strings.retry, fontSize = 11.sp)
                         }
+                    }
+                }
+            }
+        }
+
+        // EPG Days to Load (1 to 7 days)
+        SettingsGroup(title = strings.epgLoadedDays) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.epgLoadedDays, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(strings.epgLoadedDaysDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    FilledTonalButton(
+                        onClick = { if (epgLoadedDays > 1) onEpgLoadedDaysChanged(epgLoadedDays - 1) },
+                        enabled = epgLoadedDays > 1 && !loading,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("-1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.widthIn(min = 70.dp).height(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                            Text(
+                                strings.epgDaysCount(epgLoadedDays),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = { if (epgLoadedDays < 7) onEpgLoadedDaysChanged(epgLoadedDays + 1) },
+                        enabled = epgLoadedDays < 7 && !loading,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("+1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
             }
@@ -10396,6 +10595,109 @@ private fun ManageCategoriesDialog(
     }
 }
 
+private fun copyToClipboard(context: Context, label: String, text: String) {
+    try {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val clip = android.content.ClipData.newPlainText(label, text)
+        clipboard?.setPrimaryClip(clip)
+    } catch (_: Throwable) {}
+}
+
+private fun saveToDownloadsFolder(context: Context, filename: String, text: String): Boolean {
+    val bytes = text.toByteArray(Charsets.UTF_8)
+    return try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    os.write(bytes)
+                    os.flush()
+                }
+                true
+            } else false
+        } else {
+            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), filename)
+            file.writeBytes(bytes)
+            true
+        }
+    } catch (e: Throwable) {
+        Log.e("FortressTV", "Failed to save to Downloads: ${e.message}", e)
+        false
+    }
+}
+
+private fun writeTextToUri(context: Context, uri: Uri, text: String): Boolean {
+    val bytes = text.toByteArray(Charsets.UTF_8)
+    Log.d("FortressTV", "Writing ${bytes.size} bytes (${text.lines().size} lines) to $uri")
+
+    var success = false
+
+    // Try ParcelFileDescriptor with truncate
+    try {
+        context.contentResolver.openFileDescriptor(uri, "rwt")?.use { pfd ->
+            FileOutputStream(pfd.fileDescriptor).use { fos ->
+                fos.channel.truncate(0)
+                fos.write(bytes)
+                fos.flush()
+                try { fos.fd.sync() } catch (_: Throwable) {}
+            }
+            Log.d("FortressTV", "Successfully wrote ${bytes.size} bytes via ParcelFileDescriptor rwt")
+            success = true
+        }
+    } catch (_: Throwable) {
+        try {
+            context.contentResolver.openFileDescriptor(uri, "w")?.use { pfd ->
+                FileOutputStream(pfd.fileDescriptor).use { fos ->
+                    fos.write(bytes)
+                    fos.flush()
+                    try { fos.fd.sync() } catch (_: Throwable) {}
+                }
+                Log.d("FortressTV", "Successfully wrote ${bytes.size} bytes via ParcelFileDescriptor w")
+                success = true
+            }
+        } catch (e: Throwable) {
+            Log.w("FortressTV", "ParcelFileDescriptor write failed: ${e.message}")
+        }
+    }
+
+    if (!success) {
+        try {
+            context.contentResolver.openOutputStream(uri, "wt")?.use { os ->
+                os.write(bytes)
+                os.flush()
+                Log.d("FortressTV", "Successfully wrote ${bytes.size} bytes via openOutputStream wt")
+                success = true
+            }
+        } catch (_: Throwable) {
+            try {
+                context.contentResolver.openOutputStream(uri, "w")?.use { os ->
+                    os.write(bytes)
+                    os.flush()
+                    Log.d("FortressTV", "Successfully wrote ${bytes.size} bytes via openOutputStream w")
+                    success = true
+                }
+            } catch (e: Throwable) {
+                Log.e("FortressTV", "openOutputStream write failed: ${e.message}", e)
+            }
+        }
+    }
+
+    try {
+        context.contentResolver.notifyChange(uri, null)
+    } catch (_: Throwable) {}
+
+    // Auto-save to tablet's local Downloads folder and clipboard
+    saveToDownloadsFolder(context, "channels_without_epg.txt", text)
+    copyToClipboard(context, "Unmatched EPG Channels", text)
+
+    return success
+}
+
 private fun generateUnmatchedChannelsText(channels: List<PlaylistChannel>): String {
     val sb = StringBuilder()
     sb.appendLine("================================================================================")
@@ -10425,28 +10727,27 @@ private fun UnmatchedEpgDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val exportText = remember(unmatchedChannels) { generateUnmatchedChannelsText(unmatchedChannels) }
+    val currentUnmatched by rememberUpdatedState(unmatchedChannels)
     val saveFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
         if (uri != null) {
-            scope.launch(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openOutputStream(uri)?.use { os ->
-                        os.write(exportText.toByteArray(Charsets.UTF_8))
-                    }
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, strings.channelsListSaved, Toast.LENGTH_LONG).show()
-                    }
-                }
+            val channelsToExport = currentUnmatched
+            val text = generateUnmatchedChannelsText(channelsToExport)
+            val success = writeTextToUri(context, uri, text)
+            if (success) {
+                Toast.makeText(context, "${strings.channelsListSaved} (${channelsToExport.size})", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "Error: could not write to selected location", Toast.LENGTH_LONG).show()
             }
         }
     }
 
     fun shareList() {
+        val text = generateUnmatchedChannelsText(currentUnmatched)
         val sendIntent = Intent().apply {
             action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TEXT, exportText)
+            putExtra(Intent.EXTRA_TEXT, text)
             putExtra(Intent.EXTRA_TITLE, strings.unmatchedEpgChannels)
             type = "text/plain"
         }
