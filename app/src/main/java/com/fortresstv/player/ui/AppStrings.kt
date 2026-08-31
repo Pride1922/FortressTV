@@ -177,6 +177,7 @@ interface Strings {
     val sleepTimer: String
     val sleepTimerOff: String
     val endOfEpisode: String
+    val endOfProgramme: String
     fun sleepTimerSet(minutes: Int): String
     fun nextEpisodeIn(seconds: Int): String
     val playNow: String
@@ -190,6 +191,19 @@ interface Strings {
     val episodesDrawer: String
     fun seasonNumber(season: Int): String
     val nowPlayingBadge: String
+
+    val audioAndSubtitlesDefaults: String
+    val preferredAudioLanguage: String
+    val preferredSubtitleLanguage: String
+    val subtitleFallbackEnglish: String
+    val subtitleFallbackEnglishDesc: String
+    val defaultMediaAudio: String
+    val langEnglish: String
+    val langPortuguese: String
+    val langSpanish: String
+    val langFrench: String
+    val langGerman: String
+    val langItalian: String
 
     val welcomeTitle: String
     val welcomeSubtitle: String
@@ -472,6 +486,7 @@ object EnglishStrings : Strings {
     override val sleepTimer = "Sleep Timer"
     override val sleepTimerOff = "Off"
     override val endOfEpisode = "End of video"
+    override val endOfProgramme = "End of current programme"
     override fun sleepTimerSet(minutes: Int) = "Sleep timer set for $minutes minutes"
     override fun nextEpisodeIn(seconds: Int) = "Next episode in ${seconds}s"
     override val playNow = "Play Now"
@@ -485,6 +500,19 @@ object EnglishStrings : Strings {
     override val episodesDrawer = "Episodes"
     override fun seasonNumber(season: Int) = "Season $season"
     override val nowPlayingBadge = "Now Playing"
+
+    override val audioAndSubtitlesDefaults = "Audio & Subtitles Defaults"
+    override val preferredAudioLanguage = "Preferred Audio"
+    override val preferredSubtitleLanguage = "Preferred Subtitles"
+    override val subtitleFallbackEnglish = "Fallback to English subtitles"
+    override val subtitleFallbackEnglishDesc = "If preferred subtitle is not available, use English when present"
+    override val defaultMediaAudio = "Media Default"
+    override val langEnglish = "English"
+    override val langPortuguese = "Portuguese"
+    override val langSpanish = "Spanish"
+    override val langFrench = "French"
+    override val langGerman = "German"
+    override val langItalian = "Italian"
 
     override val welcomeTitle = "Secure IPTV Player"
     override val welcomeSubtitle = "Private by default. Hardware-backed AES-256 encrypted storage."
@@ -768,6 +796,7 @@ object PortugueseStrings : Strings {
     override val sleepTimer = "Temporizador de suspensão"
     override val sleepTimerOff = "Desativado"
     override val endOfEpisode = "No final do vídeo"
+    override val endOfProgramme = "No final do programa atual"
     override fun sleepTimerSet(minutes: Int) = "Temporizador definido para $minutes minutos"
     override fun nextEpisodeIn(seconds: Int) = "Próximo episódio em ${seconds}s"
     override val playNow = "Reproduzir Agora"
@@ -781,6 +810,19 @@ object PortugueseStrings : Strings {
     override val episodesDrawer = "Episódios"
     override fun seasonNumber(season: Int) = "Temporada $season"
     override val nowPlayingBadge = "A reproduzir"
+
+    override val audioAndSubtitlesDefaults = "Predefinições de Áudio e Legendas"
+    override val preferredAudioLanguage = "Áudio preferido"
+    override val preferredSubtitleLanguage = "Legendas preferidas"
+    override val subtitleFallbackEnglish = "Recorrer a legendas em inglês"
+    override val subtitleFallbackEnglishDesc = "Se a legenda preferida não estiver disponível, usar inglês se existir"
+    override val defaultMediaAudio = "Predefinido do vídeo"
+    override val langEnglish = "Inglês"
+    override val langPortuguese = "Português"
+    override val langSpanish = "Espanhol"
+    override val langFrench = "Francês"
+    override val langGerman = "Alemão"
+    override val langItalian = "Italiano"
 
     override val welcomeTitle = "Reprodutor IPTV Seguro"
     override val welcomeSubtitle = "Privacidade por padrão. Armazenamento encriptado com AES-256."

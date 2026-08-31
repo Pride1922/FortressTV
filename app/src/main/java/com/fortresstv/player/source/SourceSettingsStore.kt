@@ -198,6 +198,27 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putBoolean("auto_picture_in_picture", enabled).apply()
     }
 
+    fun preferredAudioLanguage(): String =
+        preferences.getString("preferred_audio_language", "default") ?: "default"
+
+    fun setPreferredAudioLanguage(lang: String) {
+        preferences.edit().putString("preferred_audio_language", lang).apply()
+    }
+
+    fun preferredSubtitleLanguage(): String =
+        preferences.getString("preferred_subtitle_language", "off") ?: "off"
+
+    fun setPreferredSubtitleLanguage(lang: String) {
+        preferences.edit().putString("preferred_subtitle_language", lang).apply()
+    }
+
+    fun subtitleFallbackEnglish(): Boolean =
+        preferences.getBoolean("subtitle_fallback_english", true)
+
+    fun setSubtitleFallbackEnglish(enabled: Boolean) {
+        preferences.edit().putBoolean("subtitle_fallback_english", enabled).apply()
+    }
+
     fun hideAdultContent(): Boolean =
         preferences.getBoolean("hide_adult_content", false)
 

@@ -12,7 +12,10 @@ data class BackupSettings(
     val parentalPin: String?,
     val epgSource: ContentSource?,
     val epgTimeShiftHours: Int,
-    val activePlaylistId: String?
+    val activePlaylistId: String?,
+    val preferredAudioLanguage: String = "default",
+    val preferredSubtitleLanguage: String = "off",
+    val subtitleFallbackEnglish: Boolean = true
 )
 
 data class BackupLibrary(

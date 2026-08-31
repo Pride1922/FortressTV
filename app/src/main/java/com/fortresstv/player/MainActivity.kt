@@ -189,6 +189,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Key
@@ -213,6 +215,8 @@ import com.fortresstv.player.playlist.searchChannels
 import com.fortresstv.player.player.GestureControl
 import com.fortresstv.player.player.GestureLevel
 import com.fortresstv.player.player.GesturePlayerView
+import com.fortresstv.player.player.PlaybackTrackItem
+import com.fortresstv.player.player.TrackLanguageMatcher
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.EpgProgramme
 import com.fortresstv.player.epg.EpgDiskCache
@@ -440,6 +444,9 @@ private fun FortressTVApp() {
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
+    var preferredAudioLanguage by remember { mutableStateOf("default") }
+    var preferredSubtitleLanguage by remember { mutableStateOf("off") }
+    var subtitleFallbackEnglish by remember { mutableStateOf(true) }
     val strings = getStringsFor(appLanguage)
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
@@ -724,12 +731,18 @@ private fun FortressTVApp() {
         val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
         val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
         val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
+        val savedAudioLang = withContext(Dispatchers.IO) { settings.preferredAudioLanguage() }
+        val savedSubLang = withContext(Dispatchers.IO) { settings.preferredSubtitleLanguage() }
+        val savedSubFallback = withContext(Dispatchers.IO) { settings.subtitleFallbackEnglish() }
         appLanguage = AppLanguage.fromCode(savedLangCode)
         epgTimeShiftHours = shift
         epgLoadedDays = days
         epgLastUpdate = epgUpdate
         playChannelsFullscreen = savedFullscreenPreference
         autoPictureInPicture = savedPictureInPicturePreference
+        preferredAudioLanguage = savedAudioLang
+        preferredSubtitleLanguage = savedSubLang
+        subtitleFallbackEnglish = savedSubFallback
 
         val (savedPlaylists, enabledPlaylists) = withContext(Dispatchers.IO) {
             val all = settings.getPlaylists()
@@ -1016,6 +1029,9 @@ private fun FortressTVApp() {
                             appLanguage = newLang
                             playChannelsFullscreen = settings.playChannelsFullscreen()
                             autoPictureInPicture = settings.autoPictureInPicture()
+                            preferredAudioLanguage = settings.preferredAudioLanguage()
+                            preferredSubtitleLanguage = settings.preferredSubtitleLanguage()
+                            subtitleFallbackEnglish = settings.subtitleFallbackEnglish()
                             hideAdultContent = settings.hideAdultContent()
                             parentalControlEnabled = settings.parentalControlEnabled()
                             parentalPin = settings.getParentalPin()
@@ -1101,6 +1117,9 @@ private fun FortressTVApp() {
                     epgRepository = epgRepository,
                     playChannelsFullscreen = playChannelsFullscreen,
                     autoPictureInPicture = autoPictureInPicture,
+                    preferredAudioLanguage = preferredAudioLanguage,
+                    preferredSubtitleLanguage = preferredSubtitleLanguage,
+                    subtitleFallbackEnglish = subtitleFallbackEnglish,
                     hideAdultContent = effectiveHideAdultContent,
                     loading = loading,
                     error = error,
@@ -1164,6 +1183,21 @@ private fun FortressTVApp() {
                 onAutoPictureInPictureChanged = { enabled ->
                     autoPictureInPicture = enabled
                     scope.launch(Dispatchers.IO) { settings.setAutoPictureInPicture(enabled) }
+                },
+                preferredAudioLanguage = preferredAudioLanguage,
+                onPreferredAudioLanguageChanged = { lang ->
+                    preferredAudioLanguage = lang
+                    scope.launch(Dispatchers.IO) { settings.setPreferredAudioLanguage(lang) }
+                },
+                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                onPreferredSubtitleLanguageChanged = { lang ->
+                    preferredSubtitleLanguage = lang
+                    scope.launch(Dispatchers.IO) { settings.setPreferredSubtitleLanguage(lang) }
+                },
+                subtitleFallbackEnglish = subtitleFallbackEnglish,
+                onSubtitleFallbackEnglishChanged = { enabled ->
+                    subtitleFallbackEnglish = enabled
+                    scope.launch(Dispatchers.IO) { settings.setSubtitleFallbackEnglish(enabled) }
                 },
                 hideAdultContent = hideAdultContent,
                 onHideAdultContentChanged = { enabled ->
@@ -2478,6 +2512,9 @@ private fun FortressLibrary(
     epgRepository: EpgRepository? = null,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
+    preferredAudioLanguage: String = "default",
+    preferredSubtitleLanguage: String = "off",
+    subtitleFallbackEnglish: Boolean = true,
     hideAdultContent: Boolean = false,
     loading: Boolean,
     error: String?,
@@ -2738,6 +2775,9 @@ private fun FortressLibrary(
             VodPlayerDialog(
                 request = request,
                 initialPositionMs = previous?.positionMs ?: 0L,
+                preferredAudioLanguage = preferredAudioLanguage,
+                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                subtitleFallbackEnglish = subtitleFallbackEnglish,
                 loadNextEpisode = if (request.kind == VodProgressKind.EPISODE) {
                     suspend { resolveNextEpisodePlayback(request, xtreamProfiles, context) }
                 } else null,
@@ -4438,11 +4478,18 @@ private fun formatPlaybackTime(ms: Long): String {
     }
 }
 
+private const val LIVE_STALL_TIMEOUT_MILLIS = 12_000L
+private const val LIVE_STALL_MIN_PROGRESS_MILLIS = 1_000L
+private const val LIVE_STALL_MAX_RECOVERY_ATTEMPTS = 2
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun VodPlayerDialog(
     request: VodPlaybackRequest,
     initialPositionMs: Long,
+    preferredAudioLanguage: String = "default",
+    preferredSubtitleLanguage: String = "off",
+    subtitleFallbackEnglish: Boolean = true,
     loadNextEpisode: (suspend () -> VodPlaybackRequest?)?,
     loadAllEpisodes: (suspend () -> List<VodPlaybackRequest>)? = null,
     onPlayNext: (VodPlaybackRequest) -> Unit,
@@ -4479,6 +4526,7 @@ private fun VodPlayerDialog(
     var showSleepTimerDialog by remember { mutableStateOf(false) }
 
     var currentTracks by remember { mutableStateOf<Tracks?>(null) }
+    var userManuallySelectedTracks by remember(request.key) { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var selectedTrackTab by remember { mutableIntStateOf(0) }
 
@@ -4494,6 +4542,48 @@ private fun VodPlayerDialog(
                 isPlaying = player.isPlaying
             }
             delay(250)
+        }
+    }
+
+    LaunchedEffect(currentTracks, preferredAudioLanguage, preferredSubtitleLanguage, subtitleFallbackEnglish) {
+        if (!userManuallySelectedTracks && currentTracks != null) {
+            val audioList = TrackLanguageMatcher.extractAudioTracks(currentTracks)
+            val subtitleList = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
+
+            var builder = player.trackSelectionParameters.buildUpon()
+
+            // 1. Preferred Audio
+            if (preferredAudioLanguage != "default") {
+                val targetAudio = TrackLanguageMatcher.findBestAudioTrack(audioList, preferredAudioLanguage)
+                if (targetAudio != null && !targetAudio.isSelected) {
+                    builder = builder.setOverrideForType(
+                        TrackSelectionOverride(targetAudio.group.mediaTrackGroup, targetAudio.trackIndex)
+                    )
+                }
+            }
+
+            // 2. Preferred Subtitles
+            if (preferredSubtitleLanguage == "off") {
+                builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            } else {
+                val targetSub = TrackLanguageMatcher.findBestSubtitleTrack(
+                    subtitleList,
+                    preferredSubtitleLanguage,
+                    subtitleFallbackEnglish
+                )
+                if (targetSub != null) {
+                    builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .setOverrideForType(
+                            TrackSelectionOverride(targetSub.group.mediaTrackGroup, targetSub.trackIndex)
+                        )
+                } else {
+                    builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                }
+            }
+
+            player.trackSelectionParameters = builder.build()
         }
     }
 
@@ -5167,6 +5257,7 @@ private fun VodPlayerDialog(
                     player = player,
                     audioTracks = audioTracks,
                     subtitleTracks = subtitleTracks,
+                    onUserTrackSelected = { userManuallySelectedTracks = true },
                     onDismiss = { showTracksDialog = false }
                 )
             }
@@ -5249,71 +5340,12 @@ private fun VodPlayerDialog(
 }
 
 @UnstableApi
-private data class PlaybackTrackItem(
-    val id: String,
-    val type: Int,
-    val label: String,
-    val language: String?,
-    val isSelected: Boolean,
-    val group: Tracks.Group,
-    val trackIndex: Int
-)
+private fun extractAudioTracks(currentTracks: Tracks?): List<PlaybackTrackItem> =
+    TrackLanguageMatcher.extractAudioTracks(currentTracks)
 
 @UnstableApi
-private fun extractAudioTracks(currentTracks: Tracks?): List<PlaybackTrackItem> {
-    val list = mutableListOf<PlaybackTrackItem>()
-    currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_AUDIO }?.forEach { group ->
-        for (i in 0 until group.length) {
-            if (group.isTrackSupported(i)) {
-                val format = group.getTrackFormat(i)
-                val lang = format.language?.takeIf(String::isNotBlank)
-                val label = format.label?.takeIf(String::isNotBlank)
-                    ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
-                    ?: "Audio Track ${list.size + 1}"
-                list.add(
-                    PlaybackTrackItem(
-                        id = "audio_${group.mediaTrackGroup.id}_$i",
-                        type = C.TRACK_TYPE_AUDIO,
-                        label = label,
-                        language = lang,
-                        isSelected = group.isTrackSelected(i),
-                        group = group,
-                        trackIndex = i
-                    )
-                )
-            }
-        }
-    }
-    return list
-}
-
-@UnstableApi
-private fun extractSubtitleTracks(currentTracks: Tracks?): List<PlaybackTrackItem> {
-    val list = mutableListOf<PlaybackTrackItem>()
-    currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_TEXT }?.forEach { group ->
-        for (i in 0 until group.length) {
-            if (group.isTrackSupported(i)) {
-                val format = group.getTrackFormat(i)
-                val lang = format.language?.takeIf(String::isNotBlank)
-                val label = format.label?.takeIf(String::isNotBlank)
-                    ?: lang?.let { Locale.forLanguageTag(it).displayLanguage.takeIf(String::isNotBlank) }
-                    ?: "Subtitle ${list.size + 1}"
-                list.add(
-                    PlaybackTrackItem(
-                        id = "sub_${group.mediaTrackGroup.id}_$i",
-                        type = C.TRACK_TYPE_TEXT,
-                        label = label,
-                        language = lang,
-                        isSelected = group.isTrackSelected(i),
-                        group = group,
-                        trackIndex = i
-                    )
-                )
-            }
-        }
-    }
-    return list
-}
+private fun extractSubtitleTracks(currentTracks: Tracks?): List<PlaybackTrackItem> =
+    TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
 
 @UnstableApi
 @Composable
@@ -5321,6 +5353,7 @@ private fun PlaybackTracksDialog(
     player: Player,
     audioTracks: List<PlaybackTrackItem>,
     subtitleTracks: List<PlaybackTrackItem>,
+    onUserTrackSelected: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -5364,6 +5397,7 @@ private fun PlaybackTracksDialog(
                             items(audioTracks, key = { it.id }) { track ->
                                 Surface(
                                     onClick = {
+                                        onUserTrackSelected()
                                         player.trackSelectionParameters = player.trackSelectionParameters
                                             .buildUpon()
                                             .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
@@ -5407,6 +5441,7 @@ private fun PlaybackTracksDialog(
                         item {
                             Surface(
                                 onClick = {
+                                    onUserTrackSelected()
                                     player.trackSelectionParameters = player.trackSelectionParameters
                                         .buildUpon()
                                         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -5453,6 +5488,7 @@ private fun PlaybackTracksDialog(
                             items(subtitleTracks, key = { it.id }) { track ->
                                 Surface(
                                     onClick = {
+                                        onUserTrackSelected()
                                         player.trackSelectionParameters = player.trackSelectionParameters
                                             .buildUpon()
                                             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -6673,6 +6709,7 @@ private fun PlayerPanel(
     }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var consecutiveStallRecoveries by remember(channel.streamUrl) { mutableIntStateOf(0) }
     var fullscreen by remember { mutableStateOf(false) }
     val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
     var previousWatchedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
@@ -6702,6 +6739,10 @@ private fun PlayerPanel(
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) consecutiveStallRecoveries = 0
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -6749,6 +6790,34 @@ private fun PlayerPanel(
         player.prepare()
         player.play()
         if (autoEnterFullscreen) fullscreen = true
+    }
+
+    LaunchedEffect(player, channel.streamUrl, playbackState) {
+        if (playbackState != Player.STATE_BUFFERING || !player.playWhenReady || playbackError != null) {
+            return@LaunchedEffect
+        }
+        val positionBefore = player.currentPosition
+        val bufferedBefore = player.bufferedPosition
+        delay(LIVE_STALL_TIMEOUT_MILLIS)
+        if (player.playbackState != Player.STATE_BUFFERING || !player.playWhenReady || playbackError != null) {
+            return@LaunchedEffect
+        }
+        val positionProgress = player.currentPosition - positionBefore
+        val bufferProgress = player.bufferedPosition - bufferedBefore
+        if (positionProgress >= LIVE_STALL_MIN_PROGRESS_MILLIS || bufferProgress >= LIVE_STALL_MIN_PROGRESS_MILLIS) {
+            return@LaunchedEffect
+        }
+        if (consecutiveStallRecoveries >= LIVE_STALL_MAX_RECOVERY_ATTEMPTS) {
+            playbackError = strings.playbackError
+            return@LaunchedEffect
+        }
+
+        consecutiveStallRecoveries++
+        Log.w("FortressTV.Player", "Recovering stalled live playback; attempt=$consecutiveStallRecoveries")
+        player.stop()
+        player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+        player.prepare()
+        player.play()
     }
 
     Column(modifier) {
@@ -6895,9 +6964,7 @@ private fun VideoSurface(
         }
     }
     Box(
-        modifier
-            .background(Color.Black)
-            .clickable(enabled = !showTrackSettings) { onSurfaceClick() }
+        modifier.background(Color.Black)
     ) {
         AndroidView(
             factory = { viewContext ->
@@ -6958,6 +7025,7 @@ private fun VideoSurface(
                     it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility = android.view.View.GONE
                     it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_basic_controls)?.visibility = android.view.View.GONE
                 }
+                (it as? GesturePlayerView)?.onGestureLevelChanged = { gestureLevel = it }
                 (it as? GesturePlayerView)?.onSingleTap = { onSurfaceClick() }
                 it.setOnClickListener { onSurfaceClick() }
             },
@@ -7045,11 +7113,16 @@ private fun FullscreenPlayer(
     onRetry: () -> Unit,
     inPictureInPicture: Boolean
 ) {
+    val context = LocalContext.current
     val strings = LocalAppStrings.current
     var controlsVisible by remember { mutableStateOf(true) }
     var showChannels by remember { mutableStateOf(false) }
     var showGuide by remember { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
+    var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var sleepTimerMinutes by remember { mutableStateOf<Int?>(null) }
+    var sleepTimerEndEpochMs by remember { mutableStateOf<Long?>(null) }
+    var sleepTimerRemainingText by remember { mutableStateOf<String?>(null) }
     var locked by remember { mutableStateOf(false) }
     var lockPromptVisible by remember { mutableStateOf(false) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
@@ -7080,10 +7153,30 @@ private fun FullscreenPlayer(
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
 
-    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, locked) {
-        if (controlsVisible && !showChannels && !showGuide && !showTracksDialog && !locked) {
+    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, showSleepTimerDialog, locked) {
+        if (controlsVisible && !showChannels && !showGuide && !showTracksDialog && !showSleepTimerDialog && !locked) {
             delay(3_500)
             controlsVisible = false
+        }
+    }
+    LaunchedEffect(sleepTimerEndEpochMs, sleepTimerMinutes) {
+        val targetEpoch = sleepTimerEndEpochMs
+        if (targetEpoch != null) {
+            while (true) {
+                val remainingMs = targetEpoch - System.currentTimeMillis()
+                if (remainingMs <= 0L) {
+                    Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
+                    player.pause()
+                    onExit()
+                    break
+                } else {
+                    val mins = ((remainingMs / 1000L) / 60L).toInt() + 1
+                    sleepTimerRemainingText = "${mins}m"
+                }
+                delay(1000)
+            }
+        } else {
+            sleepTimerRemainingText = null
         }
     }
     LaunchedEffect(channel, epgGuide) {
@@ -7288,6 +7381,41 @@ private fun FullscreenPlayer(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Surface(
+                                onClick = { showSleepTimerDialog = true },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f))
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Bedtime,
+                                        contentDescription = strings.sleepTimer,
+                                        tint = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    if (sleepTimerRemainingText != null) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            sleepTimerRemainingText.orEmpty(),
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    } else if (sleepTimerMinutes == -1) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            strings.endOfProgramme,
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
                             Surface(
                                 onClick = {
                                     resizeMode = when (resizeMode) {
@@ -7553,6 +7681,81 @@ private fun FullscreenPlayer(
                     onDismiss = { showTracksDialog = false }
                 )
             }
+            if (showSleepTimerDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSleepTimerDialog = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Bedtime, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Text(strings.sleepTimer, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val options = buildList {
+                                add(null to strings.sleepTimerOff)
+                                add(15 to "15 min")
+                                add(30 to "30 min")
+                                add(45 to "45 min")
+                                add(60 to "60 min")
+                                add(90 to "90 min")
+                                add(120 to "120 min")
+                                if (currentStopEpoch != null && currentStopEpoch > System.currentTimeMillis()) {
+                                    add(-1 to strings.endOfProgramme)
+                                }
+                            }
+                            options.forEach { (mins, label) ->
+                                val isSelected = sleepTimerMinutes == mins
+                                Surface(
+                                    onClick = {
+                                        sleepTimerMinutes = mins
+                                        if (mins != null && mins > 0) {
+                                            sleepTimerEndEpochMs = System.currentTimeMillis() + mins * 60_000L
+                                            Toast.makeText(context, strings.sleepTimerSet(mins), Toast.LENGTH_SHORT).show()
+                                        } else if (mins == -1 && currentStopEpoch != null) {
+                                            sleepTimerEndEpochMs = currentStopEpoch
+                                            Toast.makeText(context, strings.endOfProgramme, Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            sleepTimerEndEpochMs = null
+                                        }
+                                        showSleepTimerDialog = false
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                                    border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            label,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (isSelected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showSleepTimerDialog = false }) {
+                            Text(strings.close)
+                        }
+                    }
+                )
+            }
             AnimatedVisibility(
                 visible = showChannels && !inPictureInPicture,
                 enter = slideInHorizontally { -it } + fadeIn(),
@@ -7646,6 +7849,7 @@ private fun FullscreenGuideDrawer(
     val programmes = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty()
         .filter { programme -> (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis > now.toEpochMilli() }
         .sortedBy { it.startEpochMilli }
+        .distinct()
     Surface(
         modifier = modifier.fillMaxHeight().widthIn(max = 560.dp).fillMaxWidth(if (isCompact) 0.88f else 0.5f),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .98f),
@@ -7666,7 +7870,12 @@ private fun FullscreenGuideDrawer(
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(programmes, key = { "${it.channelId}:${it.startEpochMilli}:${it.title}" }) { programme ->
+                    itemsIndexed(
+                        programmes,
+                        key = { index, programme ->
+                            "${programme.channelId}:${programme.startEpochMilli}:${programme.stopEpochMilli}:${programme.title}:$index"
+                        }
+                    ) { _, programme ->
                         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                             Column(Modifier.fillMaxWidth().padding(14.dp)) {
                                 Text(
@@ -8307,6 +8516,12 @@ private fun SettingsDialog(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    preferredAudioLanguage: String = "default",
+    onPreferredAudioLanguageChanged: (String) -> Unit = {},
+    preferredSubtitleLanguage: String = "off",
+    onPreferredSubtitleLanguageChanged: (String) -> Unit = {},
+    subtitleFallbackEnglish: Boolean = true,
+    onSubtitleFallbackEnglishChanged: (Boolean) -> Unit = {},
     hideAdultContent: Boolean,
     onHideAdultContentChanged: (Boolean) -> Unit,
     parentalControlEnabled: Boolean,
@@ -8357,111 +8572,79 @@ private fun SettingsDialog(
     val view = LocalView.current
     val focusRequester = remember { FocusRequester() }
 
-    fun hideKeyboard() {
-        runCatching { focusRequester.requestFocus() }
-        focusManager.clearFocus(force = true)
-        keyboardController?.hide()
-        view.clearFocus()
-        val dialogWin = (view.parent as? DialogWindowProvider)?.window
-            ?: (view.context as? ComponentActivity)?.window
-        if (dialogWin != null) {
-            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
-    }
-
-    BackHandler(onBack = {
-        hideKeyboard()
-        onDismiss()
-    })
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.7f))
-            .focusRequester(focusRequester)
-            .focusable()
-            .imePadding()
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { hideKeyboard() })
-            },
-        contentAlignment = Alignment.Center
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
-            shape = RoundedCornerShape(if (isTwoPane) 20.dp else 16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-            modifier = (if (isTwoPane) {
-                Modifier
-                    .fillMaxWidth(0.88f)
-                    .widthIn(max = 940.dp)
-                    .fillMaxHeight(0.85f)
-                    .heightIn(max = 640.dp)
-                    .padding(16.dp)
-            } else {
-                Modifier
-                    .fillMaxWidth(0.96f)
-                    .fillMaxHeight(0.94f)
-                    .padding(6.dp)
-            }).clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { hideKeyboard() }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(if (isTwoPane) 0.85f else 0.95f)
+                .fillMaxHeight(0.85f)
+                .focusRequester(focusRequester),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
-            Column(Modifier.fillMaxSize().padding(if (isTwoPane) 18.dp else 12.dp)) {
-                // Header
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                // Top Header Row
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(strings.settingsTitle, fontSize = if (isTwoPane) 20.sp else 18.sp, fontWeight = FontWeight.Bold)
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = strings.close, modifier = Modifier.size(20.dp))
+                    Text(
+                        strings.settingsTitle,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = strings.close)
                     }
                 }
 
+                Spacer(Modifier.height(8.dp))
+
                 if (isTwoPane) {
                     Row(Modifier.fillMaxSize()) {
-                        // Left Navigation Rail
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                            modifier = Modifier.width(180.dp).fillMaxHeight()
+                        // Left Tab Navigation Rail
+                        Column(
+                            Modifier
+                                .width(180.dp)
+                                .fillMaxHeight()
+                                .padding(end = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                tabItems.forEachIndexed { index, (title, icon) ->
-                                    val isSelected = selectedTab == index
-                                    Surface(
-                                        onClick = { selectedTab = index },
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
-                                        contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                            tabItems.forEachIndexed { index, (title, icon) ->
+                                val isSelected = selectedTab == index
+                                Surface(
+                                    onClick = { selectedTab = index },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+                                    contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.fillMaxWidth().height(42.dp)
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Row(
-                                            Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                icon,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(18.dp),
-                                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(Modifier.width(10.dp))
-                                            Text(title, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
-                                        }
+                                        Icon(
+                                            icon,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(title, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
                                     }
                                 }
                             }
                         }
 
                         // Right Content Pane
-                        Box(Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp)) {
+                        Box(Modifier.weight(1f).fillMaxHeight()) {
                             when (selectedTab) {
                                 0 -> GeneralTab(
                                     appLanguage = appLanguage,
@@ -8470,6 +8653,12 @@ private fun SettingsDialog(
                                     onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                     autoPictureInPicture = autoPictureInPicture,
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    preferredAudioLanguage = preferredAudioLanguage,
+                                    onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                                    preferredSubtitleLanguage = preferredSubtitleLanguage,
+                                    onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
+                                    subtitleFallbackEnglish = subtitleFallbackEnglish,
+                                    onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
                                     hideAdultContent = hideAdultContent,
                                     onHideAdultContentChanged = onHideAdultContentChanged,
                                     parentalControlEnabled = parentalControlEnabled,
@@ -8541,6 +8730,12 @@ private fun SettingsDialog(
                                 onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                 autoPictureInPicture = autoPictureInPicture,
                                 onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                preferredAudioLanguage = preferredAudioLanguage,
+                                onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
+                                subtitleFallbackEnglish = subtitleFallbackEnglish,
+                                onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
                                 hideAdultContent = hideAdultContent,
                                 onHideAdultContentChanged = onHideAdultContentChanged,
                                 parentalControlEnabled = parentalControlEnabled,
@@ -8674,6 +8869,98 @@ private fun SettingsToggleRow(
 }
 
 @Composable
+private fun SettingsDropdownPickerRow(
+    title: String,
+    subtitle: String,
+    icon: ImageVector? = null,
+    selectedValue: String,
+    options: List<Pair<String, String>>,
+    onValueSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentLabel = options.firstOrNull { it.first == selectedValue }?.second ?: selectedValue
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Box {
+            Surface(
+                onClick = { expanded = true },
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        currentLabel,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        Icons.Default.ArrowDropDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { (code, label) ->
+                    val isSelected = code == selectedValue
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                label,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            onValueSelected(code)
+                        },
+                        trailingIcon = if (isSelected) {
+                            { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
+                        } else null
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun GeneralTab(
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
@@ -8681,6 +8968,12 @@ private fun GeneralTab(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    preferredAudioLanguage: String = "default",
+    onPreferredAudioLanguageChanged: (String) -> Unit = {},
+    preferredSubtitleLanguage: String = "off",
+    onPreferredSubtitleLanguageChanged: (String) -> Unit = {},
+    subtitleFallbackEnglish: Boolean = true,
+    onSubtitleFallbackEnglishChanged: (Boolean) -> Unit = {},
     hideAdultContent: Boolean,
     onHideAdultContentChanged: (Boolean) -> Unit,
     parentalControlEnabled: Boolean,
@@ -8751,6 +9044,53 @@ private fun GeneralTab(
                 icon = Icons.Default.AspectRatio,
                 checked = autoPictureInPicture,
                 onCheckedChange = onAutoPictureInPictureChanged
+            )
+        }
+
+        // Audio & Subtitles Defaults Group
+        SettingsGroup(title = strings.audioAndSubtitlesDefaults) {
+            val audioOptions = listOf(
+                "default" to strings.defaultMediaAudio,
+                "pt" to strings.langPortuguese,
+                "en" to strings.langEnglish,
+                "es" to strings.langSpanish,
+                "fr" to strings.langFrench,
+                "de" to strings.langGerman,
+                "it" to strings.langItalian
+            )
+            val subOptions = listOf(
+                "off" to strings.subtitlesOff,
+                "pt" to strings.langPortuguese,
+                "en" to strings.langEnglish,
+                "es" to strings.langSpanish,
+                "fr" to strings.langFrench,
+                "de" to strings.langGerman,
+                "it" to strings.langItalian
+            )
+            SettingsDropdownPickerRow(
+                title = strings.preferredAudioLanguage,
+                subtitle = "",
+                icon = Icons.Default.VolumeUp,
+                selectedValue = preferredAudioLanguage,
+                options = audioOptions,
+                onValueSelected = onPreferredAudioLanguageChanged
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            SettingsDropdownPickerRow(
+                title = strings.preferredSubtitleLanguage,
+                subtitle = "",
+                icon = Icons.Default.Subtitles,
+                selectedValue = preferredSubtitleLanguage,
+                options = subOptions,
+                onValueSelected = onPreferredSubtitleLanguageChanged
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            SettingsToggleRow(
+                title = strings.subtitleFallbackEnglish,
+                subtitle = strings.subtitleFallbackEnglishDesc,
+                icon = Icons.Default.Translate,
+                checked = subtitleFallbackEnglish,
+                onCheckedChange = onSubtitleFallbackEnglishChanged
             )
         }
 

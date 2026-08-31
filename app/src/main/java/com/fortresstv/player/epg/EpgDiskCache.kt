@@ -139,13 +139,19 @@ object EpgDiskCache {
                     val finalFile = File(epgDir, partitionFilename)
 
                     // Write validated partition format from spool
-                    writeFinalPartition(spool.tempFile, finalFile, generationId, epochDay, spool.programmeCount)
+                    val storedProgrammeCount = writeFinalPartition(
+                        spool.tempFile,
+                        finalFile,
+                        generationId,
+                        epochDay,
+                        spool.programmeCount
+                    )
 
                     val checksum = computeChecksum(finalFile)
                     partitions[epochDay] = EpgPartitionMetadata(
                         epochDay = epochDay,
                         filename = partitionFilename,
-                        programmeCount = spool.programmeCount,
+                        programmeCount = storedProgrammeCount,
                         compressedSize = finalFile.length(),
                         checksum = checksum
                     )
@@ -206,7 +212,13 @@ object EpgDiskCache {
             stagingDir.deleteRecursively()
         }
 
-        private fun writeFinalPartition(spoolFile: File, targetFile: File, genId: String, epochDay: Long, count: Int) {
+        private fun writeFinalPartition(
+            spoolFile: File,
+            targetFile: File,
+            genId: String,
+            epochDay: Long,
+            count: Int
+        ): Int {
             val programmesByChannel = LinkedHashMap<String, MutableList<EpgProgramme>>()
             if (spoolFile.exists() && spoolFile.length() > 0L) {
                 DataInputStream(BufferedInputStream(FileInputStream(spoolFile))).use { input ->
@@ -224,12 +236,15 @@ object EpgDiskCache {
                 }
             }
 
-            val sortedMap = programmesByChannel.mapValues { (_, list) -> list.sortedBy { it.startEpochMilli } }
+            val sortedMap = programmesByChannel.mapValues { (_, list) ->
+                list.distinct().sortedBy { it.startEpochMilli }
+            }
             val day = EpgDay(epochDay, sortedMap)
 
             targetFile.outputStream().use { output ->
                 EpgCacheCodec.writeDayPartition(output, genId, day)
             }
+            return sortedMap.values.sumOf { it.size }
         }
 
         private fun computeChecksum(file: File): String {

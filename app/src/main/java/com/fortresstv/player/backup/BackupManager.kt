@@ -38,7 +38,10 @@ class BackupManager(
             parentalPin = sourceSettingsStore.getParentalPin(),
             epgSource = epgSource,
             epgTimeShiftHours = sourceSettingsStore.epgTimeShiftHours(),
-            activePlaylistId = sourceSettingsStore.getActivePlaylistId()
+            activePlaylistId = sourceSettingsStore.getActivePlaylistId(),
+            preferredAudioLanguage = sourceSettingsStore.preferredAudioLanguage(),
+            preferredSubtitleLanguage = sourceSettingsStore.preferredSubtitleLanguage(),
+            subtitleFallbackEnglish = sourceSettingsStore.subtitleFallbackEnglish()
         )
 
         val hiddenCategories = mutableMapOf<String, Set<String>>()
@@ -119,6 +122,9 @@ class BackupManager(
         sourceSettingsStore.setHideAdultContent(s.hideAdultContent)
         sourceSettingsStore.setParentalControlEnabled(s.parentalControlEnabled)
         sourceSettingsStore.setParentalPin(s.parentalPin)
+        sourceSettingsStore.setPreferredAudioLanguage(s.preferredAudioLanguage)
+        sourceSettingsStore.setPreferredSubtitleLanguage(s.preferredSubtitleLanguage)
+        sourceSettingsStore.setSubtitleFallbackEnglish(s.subtitleFallbackEnglish)
         if (s.epgSource != null) {
             sourceSettingsStore.saveEpg(s.epgSource)
         } else if (!merge) {
@@ -211,6 +217,9 @@ class BackupManager(
                 put("parentalPin", payload.settings.parentalPin ?: JSONObject.NULL)
                 put("epgTimeShiftHours", payload.settings.epgTimeShiftHours)
                 put("activePlaylistId", payload.settings.activePlaylistId ?: JSONObject.NULL)
+                put("preferredAudioLanguage", payload.settings.preferredAudioLanguage)
+                put("preferredSubtitleLanguage", payload.settings.preferredSubtitleLanguage)
+                put("subtitleFallbackEnglish", payload.settings.subtitleFallbackEnglish)
 
                 if (payload.settings.epgSource != null) {
                     val epgObj = JSONObject().apply {
@@ -323,7 +332,10 @@ class BackupManager(
                 parentalPin = if (settingsObj.isNull("parentalPin")) null else settingsObj.optString("parentalPin"),
                 epgSource = epgSource,
                 epgTimeShiftHours = settingsObj.optInt("epgTimeShiftHours", 0),
-                activePlaylistId = if (settingsObj.isNull("activePlaylistId")) null else settingsObj.optString("activePlaylistId")
+                activePlaylistId = if (settingsObj.isNull("activePlaylistId")) null else settingsObj.optString("activePlaylistId"),
+                preferredAudioLanguage = settingsObj.optString("preferredAudioLanguage", "default"),
+                preferredSubtitleLanguage = settingsObj.optString("preferredSubtitleLanguage", "off"),
+                subtitleFallbackEnglish = settingsObj.optBoolean("subtitleFallbackEnglish", true)
             )
 
             // Playlists

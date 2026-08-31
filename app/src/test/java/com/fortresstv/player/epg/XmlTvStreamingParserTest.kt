@@ -104,4 +104,37 @@ class XmlTvStreamingParserTest {
         assertTrue(!File(epgDir, "epg_manifest_gen2.bin").exists())
         assertTrue(!File(epgDir, "epg_day_gen2_20700.bin").exists())
     }
+
+    @Test
+    fun stagingSessionRemovesExactDuplicateProgrammes() {
+        val epgDir = tempFolder.newFolder("dedup")
+        val session = EpgDiskCache.StagingSession(
+            context = null,
+            epgDir = epgDir,
+            stagingDir = File(epgDir, "staging_gen_dedup"),
+            generationId = "gen-dedup",
+            fingerprint = "fp-dedup",
+            timezoneId = "UTC",
+            loadedDays = 1,
+            todayEpochDay = 20700L
+        )
+        val programme = EpgProgramme(
+            channelId = "sporttv1.pt",
+            title = "Repeated programme",
+            description = "Provider supplied this record twice.",
+            category = "Sports",
+            startEpochMilli = 1756470000000L,
+            stopEpochMilli = 1756473600000L
+        )
+
+        session.appendProgramme(20700L, programme)
+        session.appendProgramme(20700L, programme)
+        val manifest = session.commit(mapOf("sporttv1.pt" to EpgChannel("sporttv1.pt", "Sport TV 1")))
+        val restored = File(epgDir, manifest.partitions.getValue(20700L).filename).inputStream().use {
+            EpgCacheCodec.readDayPartition(it, manifest.generationId, 20700L)
+        }
+
+        assertEquals(1, restored.programmes.getValue("sporttv1.pt").size)
+        assertEquals(1, manifest.partitions.getValue(20700L).programmeCount)
+    }
 }

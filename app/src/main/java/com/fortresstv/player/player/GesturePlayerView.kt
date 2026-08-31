@@ -51,18 +51,22 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
                 val horizontalDistance = event.x - downX
                 if (!adjusting && abs(verticalDistance) > touchSlop && abs(verticalDistance) > abs(horizontalDistance)) {
                     adjusting = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
                 }
                 if (adjusting && height > 0) {
-                    val level = (initialLevel + verticalDistance / height.toFloat()).coerceIn(0f, 1f)
+                    val gestureRange = (height * 0.75f).coerceAtLeast(1f)
+                    val level = (initialLevel + verticalDistance / gestureRange).coerceIn(0f, 1f)
                     when (activeControl) {
                         GestureControl.BRIGHTNESS -> setBrightness(level)
                         GestureControl.VOLUME -> setVolume(level)
                     }
                     onGestureLevelChanged?.invoke(GestureLevel(activeControl, level))
+                    return true
                 }
             }
 
             MotionEvent.ACTION_UP -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
                 if (!adjusting) {
                     val dx = abs(event.x - downX)
                     val dy = abs(event.y - downY)
@@ -71,10 +75,15 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
                         performClick()
                     }
                 }
+                val wasAdjusting = adjusting
                 adjusting = false
+                if (wasAdjusting) return true
             }
 
-            MotionEvent.ACTION_CANCEL -> adjusting = false
+            MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                adjusting = false
+            }
         }
         return super.dispatchTouchEvent(event)
     }
