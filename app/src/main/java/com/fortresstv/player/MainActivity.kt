@@ -190,6 +190,7 @@ import androidx.media3.ui.PlayerView
 import com.fortresstv.player.playlist.M3uParser
 import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
+import com.fortresstv.player.playlist.PlaylistDiskCache
 import com.fortresstv.player.playlist.mergeLivePlaylists
 import com.fortresstv.player.playlist.SourceRole
 import com.fortresstv.player.playlist.searchChannels
@@ -204,6 +205,7 @@ import com.fortresstv.player.epg.snapshot
 import com.fortresstv.player.epg.XmlTvTime
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceReader
+import com.fortresstv.player.source.isTransientNetworkFailure
 import com.fortresstv.player.source.SourceSettingsStore
 import com.fortresstv.player.library.VodProgressEntry
 import com.fortresstv.player.library.VodProgressKind
@@ -220,6 +222,7 @@ import com.fortresstv.player.xtream.XtreamSeriesDetails
 import com.fortresstv.player.xtream.XtreamEpisode
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -410,6 +413,7 @@ private fun FortressTVApp() {
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var playlist by remember { mutableStateOf<Playlist?>(null) }
     val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
+    val playlistRetryJobs = remember { mutableMapOf<String, Job>() }
     val xtreamCatalogs = remember { mutableStateMapOf<String, XtreamCatalog>() }
     var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
     var recentChannelIds by remember { mutableStateOf(userLibrary.recentChannelIds()) }
@@ -473,6 +477,24 @@ private fun FortressTVApp() {
         stream.bufferedReader().use { M3uParser.parse(it.readText()) }
     }
 
+    suspend fun parsePlaylistWithCache(
+        profile: PlaylistProfile,
+        cacheType: String,
+        stream: java.io.InputStream,
+        allowCachedResult: Boolean
+    ): Playlist = withContext(Dispatchers.IO) {
+        val fingerprint = SourceReader.fingerprint(context, profile.source, cacheType)
+        if (allowCachedResult) {
+            PlaylistDiskCache.load(context, profile.id, fingerprint)?.let { cached ->
+                stream.close()
+                return@withContext cached
+            }
+        }
+        val parsed = parsePlaylist(stream)
+        PlaylistDiskCache.save(context, profile.id, fingerprint, parsed)
+        parsed
+    }
+
     suspend fun parseEpg(stream: java.io.InputStream): EpgGuide = withContext(Dispatchers.Default) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         BufferedInputStream(stream).use { buffered ->
@@ -517,7 +539,12 @@ private fun FortressTVApp() {
                 } else {
                     SourceReader.openCached(context, "playlist")
                 }
-                val parsed = parsePlaylist(stream)
+                val parsed = parsePlaylistWithCache(
+                    profile = profile,
+                    cacheType = cacheKey,
+                    stream = stream,
+                    allowCachedResult = !forceRefresh
+                )
                 val now = if (forceRefresh || !hasCache) System.currentTimeMillis() else profile.lastUpdated
                 val updatedProfile = profile.copy(lastUpdated = now, channelCount = parsed.channels.size)
                 settings.savePlaylistProfile(updatedProfile)
@@ -532,7 +559,20 @@ private fun FortressTVApp() {
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
                     error = err.message ?: "Could not load playlist."
-                    retryLoad = { loadPlaylistProfile(profile, forceRefresh = true) }
+                    retryLoad = {
+                        playlistRetryJobs.remove(profile.id)?.cancel()
+                        loadPlaylistProfile(profile, forceRefresh = true)
+                    }
+                    if (err.isTransientNetworkFailure() && playlistRetryJobs[profile.id]?.isActive != true) {
+                        playlistRetryJobs[profile.id] = scope.launch {
+                            delay(15_000)
+                            playlistRetryJobs.remove(profile.id)
+                            val current = withContext(Dispatchers.IO) {
+                                settings.getPlaylists().firstOrNull { it.id == profile.id && it.enabled }
+                            }
+                            if (current != null) loadPlaylistProfile(current, forceRefresh = true)
+                        }
+                    }
                 }
             }
             withContext(Dispatchers.Main) {
@@ -647,7 +687,12 @@ private fun FortressTVApp() {
                 val cacheKey = "playlist_${profile.id}"
                 if (profile.source is ContentSource.LocalFile) {
                     runCatching {
-                        parsePlaylist(SourceReader.open(context, profile.source))
+                        parsePlaylistWithCache(
+                            profile,
+                            cacheKey,
+                            SourceReader.open(context, profile.source),
+                            allowCachedResult = true
+                        )
                     }.onSuccess { parsed ->
                         if (parsed.channels.isNotEmpty()) {
                             withContext(Dispatchers.Main) {
@@ -660,7 +705,12 @@ private fun FortressTVApp() {
                     }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
                 } else if (SourceReader.hasCache(context, cacheKey)) {
                     runCatching {
-                        parsePlaylist(SourceReader.openCached(context, cacheKey))
+                        parsePlaylistWithCache(
+                            profile,
+                            cacheKey,
+                            SourceReader.openCached(context, cacheKey),
+                            allowCachedResult = true
+                        )
                     }.onSuccess { parsed ->
                         if (parsed.channels.isNotEmpty()) {
                             withContext(Dispatchers.Main) {
@@ -673,7 +723,12 @@ private fun FortressTVApp() {
                     }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
                 } else if (profile.id == settings.getActivePlaylistId() && SourceReader.hasCache(context, "playlist")) {
                     runCatching {
-                        parsePlaylist(SourceReader.openCached(context, "playlist"))
+                        parsePlaylistWithCache(
+                            profile,
+                            "playlist",
+                            SourceReader.openCached(context, "playlist"),
+                            allowCachedResult = true
+                        )
                     }.onSuccess { parsed ->
                         if (parsed.channels.isNotEmpty()) {
                             withContext(Dispatchers.Main) {
@@ -736,7 +791,12 @@ private fun FortressTVApp() {
                     runCatching {
                         val stream = SourceReader.fetchAndCache(context, profile.source, cacheKey)
                         val now = System.currentTimeMillis()
-                        val parsed = parsePlaylist(stream)
+                        val parsed = parsePlaylistWithCache(
+                            profile,
+                            cacheKey,
+                            stream,
+                            allowCachedResult = false
+                        )
                         val updated = profile.copy(lastUpdated = now, channelCount = parsed.channels.size)
                         settings.savePlaylistProfile(updated)
                         val all = settings.getPlaylists()
@@ -750,7 +810,20 @@ private fun FortressTVApp() {
                         withContext(Dispatchers.Main) {
                             if (!hasFastLoadedPlaylist) {
                                 error = "${profile.name}: ${err.message ?: "could not be loaded"}"
-                                retryLoad = { loadPlaylistProfile(profile, forceRefresh = true) }
+                                retryLoad = {
+                                    playlistRetryJobs.remove(profile.id)?.cancel()
+                                    loadPlaylistProfile(profile, forceRefresh = true)
+                                }
+                            }
+                            if (err.isTransientNetworkFailure() && playlistRetryJobs[profile.id]?.isActive != true) {
+                                playlistRetryJobs[profile.id] = scope.launch {
+                                    delay(15_000)
+                                    playlistRetryJobs.remove(profile.id)
+                                    val current = withContext(Dispatchers.IO) {
+                                        settings.getPlaylists().firstOrNull { it.id == profile.id && it.enabled }
+                                    }
+                                    if (current != null) loadPlaylistProfile(current, forceRefresh = true)
+                                }
                             }
                         }
                     }
@@ -1025,6 +1098,7 @@ private fun FortressTVApp() {
                     deletingProfile = null
                     settings.deletePlaylistProfile(profile.id)
                     SourceReader.deleteCache(context, "playlist_${profile.id}")
+                    PlaylistDiskCache.clear(context, profile.id)
                     loadedPlaylists.remove(profile.id)
                     xtreamCatalogs.remove(profile.id)
                     val remaining = settings.getPlaylists()
@@ -1426,44 +1500,48 @@ private fun ProgrammeGuideScreen(
             today to todayGuideBlocks
         )
     }
-    LaunchedEffect(epgGuide, playlist, dates, zone, shiftMillis) {
-        dates.forEachIndexed { dayOffset, date ->
-            val dayIndex = withContext(Dispatchers.Default) {
-                val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
-                val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                playlist.channels.mapNotNull { channel ->
-                    val blocks = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty().mapNotNull { programme ->
-                        val adjustedStart = programme.startEpochMilli + shiftMillis
-                        val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
-                        val adjustedStop = rawStop + shiftMillis
-                        if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
-                            null
-                        } else {
-                            val clippedStart = maxOf(adjustedStart, dayStart)
-                            val clippedStop = minOf(adjustedStop, dayEnd)
-                            GuideProgrammeBlock(
-                                programme = programme,
-                                startMinutes = (clippedStart - dayStart) / 60_000f,
-                                durationMinutes = ((clippedStop - clippedStart) / 60_000f)
-                                    .coerceIn(5f, 24f * 60f),
-                                adjustedStartMillis = adjustedStart,
-                                adjustedStopMillis = adjustedStop,
-                                timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
-                            )
-                        }
+    LaunchedEffect(epgGuide, playlist, selectedDate, zone, shiftMillis) {
+        if ((selectedDate == today && todayGuideReady) ||
+            (selectedDate != today && guideDayIndex.containsKey(selectedDate))
+        ) {
+            return@LaunchedEffect
+        }
+        val date = selectedDate
+        val dayIndex = withContext(Dispatchers.Default) {
+            val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
+            val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            playlist.channels.mapNotNull { channel ->
+                val blocks = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty().mapNotNull { programme ->
+                    val adjustedStart = programme.startEpochMilli + shiftMillis
+                    val rawStop = programme.stopEpochMilli ?: (programme.startEpochMilli + 30 * 60_000L)
+                    val adjustedStop = rawStop + shiftMillis
+                    if (adjustedStart <= 0L || adjustedStop <= adjustedStart || adjustedStart >= dayEnd || adjustedStop <= dayStart) {
+                        null
+                    } else {
+                        val clippedStart = maxOf(adjustedStart, dayStart)
+                        val clippedStop = minOf(adjustedStop, dayEnd)
+                        GuideProgrammeBlock(
+                            programme = programme,
+                            startMinutes = (clippedStart - dayStart) / 60_000f,
+                            durationMinutes = ((clippedStop - clippedStart) / 60_000f)
+                                .coerceIn(5f, 24f * 60f),
+                            adjustedStartMillis = adjustedStart,
+                            adjustedStopMillis = adjustedStop,
+                            timeLabel = "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                        )
                     }
-                    if (blocks.isEmpty()) null else channel to blocks
-                }.toMap()
-            }
-            if (dayOffset == 0) {
-                dayIndex.entries.chunked(GUIDE_CHANNEL_BATCH_SIZE).forEach { batch ->
-                    batch.forEach { (channel, blocks) -> todayGuideBlocks[channel] = blocks }
-                    withFrameNanos { }
                 }
-                todayGuideReady = true
-            } else {
-                guideDayIndex[date] = dayIndex
+                if (blocks.isEmpty()) null else channel to blocks
+            }.toMap()
+        }
+        if (date == today) {
+            dayIndex.entries.chunked(GUIDE_CHANNEL_BATCH_SIZE).forEach { batch ->
+                batch.forEach { (channel, blocks) -> todayGuideBlocks[channel] = blocks }
+                withFrameNanos { }
             }
+            todayGuideReady = true
+        } else {
+            guideDayIndex[date] = dayIndex
         }
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
@@ -2324,6 +2402,7 @@ private fun GlobalLibrarySidebar(
                     icon = icon,
                     expanded = expanded,
                     selected = selectedDestination == item,
+                    testTag = "library_destination_${item.name.lowercase()}",
                     onClick = { onDestinationSelected(item) }
                 )
                 Spacer(Modifier.height(8.dp))
@@ -2348,6 +2427,7 @@ private fun LibraryNavigationItem(
     icon: ImageVector,
     expanded: Boolean,
     selected: Boolean,
+    testTag: String? = null,
     onClick: () -> Unit
 ) {
     Surface(
@@ -2357,7 +2437,10 @@ private fun LibraryNavigationItem(
         else Color.Transparent,
         border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
         contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().height(52.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
     ) {
         Row(
             Modifier.fillMaxSize().padding(horizontal = if (expanded) 12.dp else 0.dp),
@@ -2642,7 +2725,8 @@ private fun XtreamMoviesScreen(
     var sortOption by remember { mutableStateOf(VodSortOption.DEFAULT) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
-    var movies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    var visibleMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    val progressByKey = remember(progressEntries) { progressEntries.associateBy(VodProgressEntry::key) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
         catalogs.flatMap { catalog ->
@@ -2655,9 +2739,9 @@ private fun XtreamMoviesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent) {
-        movies = withContext(Dispatchers.Default) {
-            catalogs.flatMap { catalog ->
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, sortOption) {
+        visibleMovies = withContext(Dispatchers.Default) {
+            val filtered = catalogs.flatMap { catalog ->
                 val categoryNames = catalog.movieCategories.associate { it.id to it.name }
                 catalog.movies.asSequence()
                     .filter {
@@ -2669,14 +2753,12 @@ private fun XtreamMoviesScreen(
                     .map { CatalogMovie(catalog, it) }
                     .toList()
             }
-        }
-    }
-    val sortedMovies = remember(movies, sortOption) {
-        when (sortOption) {
-            VodSortOption.DEFAULT -> movies
-            VodSortOption.RATING -> movies.sortedByDescending { it.movie.rating?.toDoubleOrNull() ?: 0.0 }
-            VodSortOption.YEAR -> movies.sortedByDescending { it.movie.year?.toIntOrNull() ?: 0 }
-            VodSortOption.ALPHABETICAL -> movies.sortedBy { it.movie.name.lowercase() }
+            when (sortOption) {
+                VodSortOption.DEFAULT -> filtered
+                VodSortOption.RATING -> filtered.sortedByDescending { it.movie.rating?.toDoubleOrNull() ?: 0.0 }
+                VodSortOption.YEAR -> filtered.sortedByDescending { it.movie.year?.toIntOrNull() ?: 0 }
+                VodSortOption.ALPHABETICAL -> filtered.sortedBy { it.movie.name.lowercase() }
+            }
         }
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
@@ -2694,14 +2776,15 @@ private fun XtreamMoviesScreen(
         sortOption = sortOption,
         onSelectSortOption = { sortOption = it },
         emptyMessage = strings.noMoviesAvailable,
-        itemCount = sortedMovies.size,
+        itemCount = visibleMovies.size,
         gridState = gridState,
+        gridTestTag = "movies_grid",
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
     ) {
         gridItems(
-            sortedMovies,
+            visibleMovies,
             key = { "${it.catalog.sourceId}:${it.movie.id}" },
             contentType = { "movie_poster" }
         ) { entry ->
@@ -2711,7 +2794,7 @@ private fun XtreamMoviesScreen(
                 posterUrl = entry.movie.posterUrl,
                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
                 isWatched = libraryId in watchedItemIds,
-                progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
+                progressFraction = progressByKey[libraryId]?.progressFraction,
                 onClick = { selectedMovie = entry }
             )
         }
@@ -2764,7 +2847,7 @@ private fun XtreamSeriesScreen(
     var sortOption by remember { mutableStateOf(VodSortOption.DEFAULT) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
-    var series by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
+    var visibleSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
         catalogs.flatMap { catalog ->
@@ -2777,9 +2860,9 @@ private fun XtreamSeriesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent) {
-        series = withContext(Dispatchers.Default) {
-            catalogs.flatMap { catalog ->
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, sortOption) {
+        visibleSeries = withContext(Dispatchers.Default) {
+            val filtered = catalogs.flatMap { catalog ->
                 val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
                 catalog.series.asSequence()
                     .filter {
@@ -2791,14 +2874,12 @@ private fun XtreamSeriesScreen(
                     .map { CatalogSeries(catalog, it) }
                     .toList()
             }
-        }
-    }
-    val sortedSeries = remember(series, sortOption) {
-        when (sortOption) {
-            VodSortOption.DEFAULT -> series
-            VodSortOption.RATING -> series.sortedByDescending { it.series.rating?.toDoubleOrNull() ?: 0.0 }
-            VodSortOption.YEAR -> series.sortedByDescending { it.series.year?.toIntOrNull() ?: 0 }
-            VodSortOption.ALPHABETICAL -> series.sortedBy { it.series.name.lowercase() }
+            when (sortOption) {
+                VodSortOption.DEFAULT -> filtered
+                VodSortOption.RATING -> filtered.sortedByDescending { it.series.rating?.toDoubleOrNull() ?: 0.0 }
+                VodSortOption.YEAR -> filtered.sortedByDescending { it.series.year?.toIntOrNull() ?: 0 }
+                VodSortOption.ALPHABETICAL -> filtered.sortedBy { it.series.name.lowercase() }
+            }
         }
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
@@ -2816,14 +2897,15 @@ private fun XtreamSeriesScreen(
         sortOption = sortOption,
         onSelectSortOption = { sortOption = it },
         emptyMessage = strings.noSeriesAvailable,
-        itemCount = sortedSeries.size,
+        itemCount = visibleSeries.size,
         gridState = gridState,
+        gridTestTag = "series_grid",
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
     ) {
         gridItems(
-            sortedSeries,
+            visibleSeries,
             key = { "${it.catalog.sourceId}:${it.series.id}" },
             contentType = { "series_poster" }
         ) { entry ->
@@ -2873,6 +2955,7 @@ private fun LibraryCatalogScaffold(
     emptyMessage: String,
     itemCount: Int,
     gridState: LazyGridState,
+    gridTestTag: String,
     header: @Composable () -> Unit = {},
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
@@ -3216,7 +3299,7 @@ private fun LibraryCatalogScaffold(
                         state = gridState,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().testTag(gridTestTag),
                         content = content
                     )
                 }
@@ -5282,12 +5365,30 @@ private fun ChannelBrowser(
         return
     }
 
-    val matchedCount = remember(allVisibleChannels, epgGuide) {
-        if (epgGuide == null) 0 else allVisibleChannels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
+    var matchedCount by remember(allVisibleChannels, epgGuide) { mutableIntStateOf(0) }
+    var unmatchedChannels by remember(allVisibleChannels, epgGuide) {
+        mutableStateOf<List<PlaylistChannel>>(emptyList())
     }
-    val unmatchedChannels = remember(allVisibleChannels, epgGuide) {
-        if (epgGuide == null) emptyList()
-        else allVisibleChannels.filter { epgGuide.resolveChannelId(it.tvgId, it.name) == null }
+    LaunchedEffect(allVisibleChannels, epgGuide) {
+        if (epgGuide == null) {
+            matchedCount = 0
+            unmatchedChannels = emptyList()
+        } else {
+            val summary = withContext(Dispatchers.Default) {
+                var matches = 0
+                val unmatched = ArrayList<PlaylistChannel>()
+                allVisibleChannels.forEach { channel ->
+                    if (epgGuide.resolveChannelId(channel.tvgId, channel.name) != null) {
+                        matches++
+                    } else {
+                        unmatched += channel
+                    }
+                }
+                matches to unmatched
+            }
+            matchedCount = summary.first
+            unmatchedChannels = summary.second
+        }
     }
     var showUnmatchedDialog by remember { mutableStateOf(false) }
 

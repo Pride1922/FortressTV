@@ -22,7 +22,7 @@ object M3uParser {
 
                 line.isNotEmpty() && !line.startsWith('#') -> {
                     val info = pendingInfo ?: ChannelInfo(name = line)
-                    channels += PlaylistChannel(
+                    val channel = PlaylistChannel(
                         position = channels.size,
                         name = info.name.ifBlank { info.tvgName ?: "Channel ${channels.size + 1}" },
                         streamUrl = line,
@@ -31,6 +31,7 @@ object M3uParser {
                         logoUrl = info.logoUrl,
                         group = pendingGroup ?: info.group
                     )
+                    channels += channel.copy(sourceItemId = channel.stableSourceItemId())
                     pendingInfo = null
                     pendingGroup = null
                 }

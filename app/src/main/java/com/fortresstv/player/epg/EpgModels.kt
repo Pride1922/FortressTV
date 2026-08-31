@@ -1,5 +1,7 @@
 package com.fortresstv.player.epg
 
+import java.util.concurrent.ConcurrentHashMap
+
 data class EpgChannel(
     val id: String,
     val displayName: String?,
@@ -20,6 +22,8 @@ data class EpgGuide(
     val channels: Map<String, EpgChannel>,
     val programmes: Map<String, List<EpgProgramme>>
 ) {
+    private val resolutionCache = ConcurrentHashMap<String, String>()
+
     val normalizedChannelMap: Map<String, String> by lazy {
         val map = mutableMapOf<String, String>()
         for ((id, channel) in channels) {
@@ -43,6 +47,16 @@ data class EpgGuide(
     }
 
     fun resolveChannelId(tvgId: String?, name: String?): String? {
+        val cacheKey = "${tvgId.orEmpty()}\u0000${name.orEmpty()}"
+        val cached = resolutionCache[cacheKey]
+        if (cached != null) return cached.takeUnless { it == NO_CHANNEL_MATCH }
+
+        val resolved = resolveChannelIdUncached(tvgId, name)
+        resolutionCache.putIfAbsent(cacheKey, resolved ?: NO_CHANNEL_MATCH)
+        return resolved
+    }
+
+    private fun resolveChannelIdUncached(tvgId: String?, name: String?): String? {
         val nameDigits = EpgMatcher.extractDigits(name)
 
         // 1. Try matching by channel name first (most specific, avoids provider TVG-ID collisions across numbered channels like DAZN 1/2/4)
@@ -87,5 +101,9 @@ data class EpgGuide(
     fun findProgrammes(tvgId: String?, name: String?): List<EpgProgramme> {
         val id = resolveChannelId(tvgId, name) ?: return emptyList()
         return programmes[id].orEmpty()
+    }
+
+    private companion object {
+        const val NO_CHANNEL_MATCH = "\u0000"
     }
 }

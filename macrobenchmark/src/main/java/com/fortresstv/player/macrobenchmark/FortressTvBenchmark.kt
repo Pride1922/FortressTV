@@ -10,6 +10,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.Until
 import org.junit.Assert.assertNotNull
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,6 +64,62 @@ class FortressTvBenchmark {
         list.setGestureMargin(device.displayWidth / 5)
         list.fling(Direction.DOWN)
         device.waitForIdle()
+    }
+
+    @Test
+    fun moviesOpen() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = { startLibraryForCatalogBenchmark("library_destination_movies") }
+    ) {
+        openCatalogDestination("library_destination_movies", "movies_grid")
+    }
+
+    @Test
+    fun moviesGridFling() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = {
+            startLibraryForCatalogBenchmark("library_destination_movies")
+            openCatalogDestination("library_destination_movies", "movies_grid")
+            assumeScrollableCatalogGrid("movies_grid")
+        }
+    ) {
+        flingCatalogGrid("movies_grid")
+    }
+
+    @Test
+    fun seriesOpen() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = { startLibraryForCatalogBenchmark("library_destination_series") }
+    ) {
+        openCatalogDestination("library_destination_series", "series_grid")
+    }
+
+    @Test
+    fun seriesGridFling() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = {
+            startLibraryForCatalogBenchmark("library_destination_series")
+            openCatalogDestination("library_destination_series", "series_grid")
+            assumeScrollableCatalogGrid("series_grid")
+        }
+    ) {
+        flingCatalogGrid("series_grid")
     }
 
     @Test
@@ -177,10 +234,59 @@ class FortressTvBenchmark {
             device.pressBack()
             device.wait(Until.findObject(By.res("programme_guide_button")), UI_TIMEOUT)
         }
+        if (device.findObject(By.res("programme_guide_button")) == null) {
+            val liveTvDestination = device.wait(
+                Until.findObject(By.res("library_destination_live_tv")),
+                UI_TIMEOUT
+            )
+            assertNotNull("The Live TV destination was not available", liveTvDestination)
+            liveTvDestination.click()
+            device.wait(Until.findObject(By.res("programme_guide_button")), UI_TIMEOUT)
+        }
+    }
+
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.startLibraryForCatalogBenchmark(
+        destinationTag: String
+    ) {
+        pressHome()
+        startActivityAndWait()
+        assertNotNull(
+            "Configure an enabled Xtream source before running catalogue benchmarks",
+            device.wait(Until.findObject(By.res(destinationTag)), UI_TIMEOUT)
+        )
+    }
+
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.openCatalogDestination(
+        destinationTag: String,
+        gridTag: String
+    ) {
+        device.findObject(By.res(destinationTag)).click()
+        assertNotNull(
+            "The configured Xtream catalogue did not produce a $gridTag",
+            device.wait(Until.findObject(By.res(gridTag)), UI_TIMEOUT)
+        )
+        device.waitForIdle()
+    }
+
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.flingCatalogGrid(gridTag: String) {
+        val grid = device.findObject(By.res(gridTag))
+        grid.setGestureMargin(device.displayWidth / 5)
+        repeat(2) {
+            grid.fling(Direction.DOWN)
+            grid.fling(Direction.UP)
+        }
+        device.waitForIdle()
+    }
+
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.assumeScrollableCatalogGrid(gridTag: String) {
+        assumeTrue(
+            "$gridTag needs enough catalogue items to scroll",
+            device.findObject(By.res(gridTag)).isScrollable
+        )
     }
 
     private companion object {
         const val PACKAGE_NAME = "com.fortresstv.player"
-        const val UI_TIMEOUT = 30_000L
+        const val UI_TIMEOUT = 120_000L
     }
 }

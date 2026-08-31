@@ -26,7 +26,7 @@ internal suspend fun <T> retryTransientNetwork(
     throw lastFailure ?: IllegalStateException("Network request failed")
 }
 
-private fun Throwable.isTransientNetworkFailure(): Boolean = when (this) {
+internal fun Throwable.isTransientNetworkFailure(): Boolean = when (this) {
     is HttpStatusException -> statusCode == 408 || statusCode == 425 || statusCode == 429 || statusCode in 500..599
     is IOException -> true
     else -> false

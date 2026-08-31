@@ -27,6 +27,22 @@ a real multi-day EPG before release.
   the source fingerprint is unchanged. Missing, stale, or corrupt caches fall back to XML.
 - Resident programme entries keep parsed epoch timestamps only; duplicate raw XML date
   strings are discarded after parsing to reduce guide memory use.
+- Movies and Series filtering and sorting run together on a background dispatcher; only the
+  latest query, category, and sort result is published to the UI.
+- Movie progress is indexed once per progress update instead of scanning the full progress
+  history while composing each visible poster card.
+- Macrobenchmarks cover Movies and Series opening and repeated grid flinging with real catalogues.
+- Live TV computes EPG match counts and unmatched-channel diagnostics together on a background
+  dispatcher instead of resolving every channel twice on the main thread.
+- EPG channel resolution is cached per `tvg-id` and channel name, so a 14,400-channel playlist
+  is normalized once per loaded guide rather than again in each screen and diagnostic pass.
+- Programme Guide opening prepares only the selected day. Tomorrow and the following day are
+  indexed on demand when selected instead of scanning the full playlist three times up front.
+- Parsed M3U playlists are stored in a versioned, compressed, atomic per-source cache and reused
+  while the raw source fingerprint is unchanged. Missing, stale, or corrupt caches fall back to
+  the M3U parser.
+- Stable M3U item identifiers are computed during the initial parse and persisted, avoiding a
+  SHA-256 identity calculation for every channel during each subsequent source merge.
 
 ## Next profiling targets
 
@@ -73,6 +89,37 @@ Opening and horizontal P95 costs are substantially lower. Vertical performance r
 within measurement variance, and its P99 slightly improved. The horizontal P99 CPU value
 is 1.8 ms higher, while its P99 deadline overrun remains effectively unchanged; stable
 keys prevent the larger boundary spikes observed during intermediate experiments.
+
+### VOD catalogue baseline (2026-08-31)
+
+Measured on the same POCO with the configured real Xtream catalogue, five iterations, and
+the profileable benchmark build:
+
+| Scenario | CPU P50 | CPU P95 | CPU P99 | P95 overrun |
+| --- | ---: | ---: | ---: | ---: |
+| Movies grid repeated fling | 4.5 ms | 7.1 ms | 9.1 ms | 1.4 ms |
+| Opening Movies | 3.4 ms | 17.3 ms | 21.3 ms | 11.1 ms |
+| Opening Series | 3.6 ms | 20.3 ms | 21.8 ms | 16.4 ms |
+
+Movies scrolling is healthy; opening Movies and Series is the next VOD optimization target.
+The configured Series catalogue did not produce a scrollable grid, so Series fling timing was
+not valid. Catalogue fling benchmarks now skip non-scrollable grids instead of reporting a
+missing-frame failure.
+
+A focused five-iteration run with the newly configured partial Portuguese EPG measured opening
+at 52.4 ms CPU P95, 55.6 ms P99, and 43.5 ms P95 deadline overrun. Only four frames were rendered
+per opening because relatively few channels had matched programme data. The opening cost is
+repeatable, but this different dataset is not a clean regression comparison with the 2026-08-30
+baseline. The five Perfetto traces are stored under
+`macrobenchmark/build/outputs/manual/programmeGuideOpen-2026-08-31/`.
+
+### Large playlist result (2026-08-31)
+
+Measured on the POCO with approximately 14,400 channels and the partial Portuguese EPG. The
+optimized EPG frame timing was 48.1 ms CPU P95 and 54.5 ms P99. An earlier 211.6-second end-to-end
+run included a transient server failure and manual Retry, so it is not a valid parsed-cache
+baseline and must not be used for a before/after claim. A controlled online/offline startup test
+is still required to quantify parsed-cache restoration independently from network availability.
 
 ## Release check
 

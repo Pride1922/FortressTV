@@ -69,7 +69,7 @@ fun mergeLivePlaylists(
 
 private fun Playlist?.orEmpty(): List<PlaylistChannel> = this?.channels.orEmpty()
 
-private fun PlaylistChannel.stableSourceItemId(): String {
+internal fun PlaylistChannel.stableSourceItemId(): String {
     tvgId?.trim()?.takeIf { it.isNotEmpty() }?.let { return "tvg:$it" }
     val identity = listOf(tvgName.orEmpty(), name, streamUrl).joinToString("\u0000")
     val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
