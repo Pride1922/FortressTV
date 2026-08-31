@@ -163,8 +163,10 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -3166,7 +3168,19 @@ private fun LibraryCatalogScaffold(
     val keyboardController = LocalSoftwareKeyboardController.current
     var isSidebarExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var isSearchExpanded by remember { mutableStateOf(query.isNotEmpty()) }
     var categorySearchQuery by remember { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(isSearchExpanded) {
+        if (isSearchExpanded) {
+            searchFocusRequester.requestFocus()
+        }
+    }
+
+    BackHandler(isSearchExpanded && query.isEmpty()) {
+        isSearchExpanded = false
+    }
 
     BackHandler(isSidebarExpanded) {
         isSidebarExpanded = false
@@ -3277,7 +3291,7 @@ private fun LibraryCatalogScaffold(
                         items(filteredCategories, key = { "${it.sourceId}:${it.category.id}" }) { cat ->
                             GroupItem(
                                 name = if (showCategorySourceNames) "${cat.sourceName} · ${cat.category.name}" else cat.category.name,
-                                count = 0,
+                                count = null,
                                 selected = selectedCategory == cat,
                                 onClick = {
                                     onSelectCategory(cat)
@@ -3300,192 +3314,328 @@ private fun LibraryCatalogScaffold(
             ) {
                 // Compact Top Bar
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (categories.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                                isSidebarExpanded = !isSidebarExpanded
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                if (isSidebarExpanded) Icons.AutoMirrored.Filled.MenuOpen else Icons.Default.FilterList,
-                                contentDescription = strings.categories,
-                                tint = if (selectedCategory != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Spacer(Modifier.width(6.dp))
-                    }
-
-                    Text(
-                        title,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
-                    ) {
-                        Text(
-                            text = itemCount.toString(),
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
-
-                    if (selectedCategory != null) {
-                        Spacer(Modifier.width(8.dp))
+                    if (isSearchExpanded || query.isNotEmpty()) {
+                        // Expandable Search Bar taking the available width with close button
                         Surface(
-                            onClick = { onSelectCategory(null) },
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    selectedCategory.category.name,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                                Spacer(Modifier.width(4.dp))
                                 Icon(
-                                    Icons.Default.Clear,
-                                    contentDescription = strings.allCategories,
+                                    Icons.Default.Search,
+                                    contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(14.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.weight(1f))
-
-                    // Sort Button + Dropdown Menu
-                    Box {
-                        OutlinedButton(
-                            onClick = { sortMenuExpanded = true },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(40.dp)
-                        ) {
-                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                when (sortOption) {
-                                    VodSortOption.DEFAULT -> strings.sortDefault
-                                    VodSortOption.RATING -> strings.sortByRating
-                                    VodSortOption.YEAR -> strings.sortByYear
-                                    VodSortOption.ALPHABETICAL -> strings.sortAlphabetical
-                                },
-                                fontSize = 12.sp
-                            )
-                            Spacer(Modifier.width(2.dp))
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
-                        }
-                        DropdownMenu(
-                            expanded = sortMenuExpanded,
-                            onDismissRequest = { sortMenuExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(strings.sortDefault, fontSize = 12.sp) },
-                                onClick = {
-                                    onSelectSortOption(VodSortOption.DEFAULT)
-                                    sortMenuExpanded = false
-                                },
-                                trailingIcon = if (sortOption == VodSortOption.DEFAULT) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null
-                            )
-                            DropdownMenuItem(
-                                text = { Text(strings.sortByRating, fontSize = 12.sp) },
-                                onClick = {
-                                    onSelectSortOption(VodSortOption.RATING)
-                                    sortMenuExpanded = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                                trailingIcon = if (sortOption == VodSortOption.RATING) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null
-                            )
-                            DropdownMenuItem(
-                                text = { Text(strings.sortByYear, fontSize = 12.sp) },
-                                onClick = {
-                                    onSelectSortOption(VodSortOption.YEAR)
-                                    sortMenuExpanded = false
-                                },
-                                trailingIcon = if (sortOption == VodSortOption.YEAR) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null
-                            )
-                            DropdownMenuItem(
-                                text = { Text(strings.sortAlphabetical, fontSize = 12.sp) },
-                                onClick = {
-                                    onSelectSortOption(VodSortOption.ALPHABETICAL)
-                                    sortMenuExpanded = false
-                                },
-                                trailingIcon = if (sortOption == VodSortOption.ALPHABETICAL) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.width(8.dp))
-
-                    // Compact Search Field
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = onQueryChanged,
-                        placeholder = { Text(searchPlaceholder, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        singleLine = true,
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        trailingIcon = if (query.isNotEmpty()) {
-                            {
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier.weight(1f),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (query.isEmpty()) {
+                                        Text(
+                                            searchPlaceholder,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    BasicTextField(
+                                        value = query,
+                                        onValueChange = onQueryChanged,
+                                        singleLine = true,
+                                        textStyle = LocalTextStyle.current.copy(
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        ),
+                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                        keyboardActions = KeyboardActions(
+                                            onSearch = {
+                                                focusManager.clearFocus()
+                                                keyboardController?.hide()
+                                            }
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .focusRequester(searchFocusRequester)
+                                    )
+                                }
+                                if (query.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { onQueryChanged("") },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                    Spacer(Modifier.width(4.dp))
+                                }
                                 IconButton(
                                     onClick = {
                                         onQueryChanged("")
+                                        isSearchExpanded = false
                                         focusManager.clearFocus()
                                         keyboardController?.hide()
                                     },
                                     modifier = Modifier.size(24.dp)
                                 ) {
-                                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.Close, contentDescription = strings.cancel, modifier = Modifier.size(16.dp))
                                 }
                             }
-                        } else null,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(
-                            onSearch = {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        // Sort Icon Button (accessible next to search)
+                        Box {
+                            Surface(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                    sortMenuExpanded = true
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = BorderStroke(1.dp, if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.Tune,
+                                        contentDescription = strings.sortDefault,
+                                        tint = if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
-                        modifier = Modifier.widthIn(min = 180.dp, max = 320.dp)
-                    )
+                            DropdownMenu(
+                                expanded = sortMenuExpanded,
+                                onDismissRequest = { sortMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortDefault, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.DEFAULT)
+                                        sortMenuExpanded = false
+                                    },
+                                    trailingIcon = if (sortOption == VodSortOption.DEFAULT) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortByRating, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.RATING)
+                                        sortMenuExpanded = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                                    trailingIcon = if (sortOption == VodSortOption.RATING) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortByYear, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.YEAR)
+                                        sortMenuExpanded = false
+                                    },
+                                    trailingIcon = if (sortOption == VodSortOption.YEAR) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortAlphabetical, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.ALPHABETICAL)
+                                        sortMenuExpanded = false
+                                    },
+                                    trailingIcon = if (sortOption == VodSortOption.ALPHABETICAL) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                            }
+                        }
+                    } else {
+                        // Collapsed Header: Category filter + Title + Count + Category chip + (Sort Icon & Search Icon on right)
+                        if (categories.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                    isSidebarExpanded = !isSidebarExpanded
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    if (isSidebarExpanded) Icons.AutoMirrored.Filled.MenuOpen else Icons.Default.FilterList,
+                                    contentDescription = strings.categories,
+                                    tint = if (selectedCategory != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
+                        }
+
+                        Text(
+                            title,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                        ) {
+                            Text(
+                                text = itemCount.toString(),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+
+                        if (selectedCategory != null) {
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                onClick = { onSelectCategory(null) },
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        selectedCategory.category.name,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(
+                                        Icons.Default.Clear,
+                                        contentDescription = strings.allCategories,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.weight(1f))
+
+                        // Sort Icon Button
+                        Box {
+                            Surface(
+                                onClick = {
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                    sortMenuExpanded = true
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = BorderStroke(1.dp, if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.Tune,
+                                        contentDescription = strings.sortDefault,
+                                        tint = if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = sortMenuExpanded,
+                                onDismissRequest = { sortMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortDefault, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.DEFAULT)
+                                        sortMenuExpanded = false
+                                    },
+                                    trailingIcon = if (sortOption == VodSortOption.DEFAULT) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortByRating, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.RATING)
+                                        sortMenuExpanded = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                                    trailingIcon = if (sortOption == VodSortOption.RATING) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortByYear, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.YEAR)
+                                        sortMenuExpanded = false
+                                    },
+                                    trailingIcon = if (sortOption == VodSortOption.YEAR) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.sortAlphabetical, fontSize = 12.sp) },
+                                    onClick = {
+                                        onSelectSortOption(VodSortOption.ALPHABETICAL)
+                                        sortMenuExpanded = false
+                                    },
+                                    trailingIcon = if (sortOption == VodSortOption.ALPHABETICAL) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    } else null
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        // Search Icon Button
+                        Surface(
+                            onClick = {
+                                isSearchExpanded = true
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = searchPlaceholder,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -6109,7 +6259,7 @@ private fun SidebarSectionLabel(label: String) {
 }
 
 @Composable
-private fun GroupItem(name: String, count: Int, selected: Boolean, onClick: () -> Unit) {
+private fun GroupItem(name: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
@@ -6129,13 +6279,15 @@ private fun GroupItem(name: String, count: Int, selected: Boolean, onClick: () -
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = count.toString(),
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-            )
+            if (count != null) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = count.toString(),
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                )
+            }
         }
     }
 }
