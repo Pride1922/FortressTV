@@ -116,6 +116,7 @@ interface Strings {
     val hideCategory: String
     val showCategory: String
     val showAllCategories: String
+    val hideAllCategories: String
     val resetCategoryOrder: String
     val search: String
     val watchedProgress: String
@@ -382,6 +383,7 @@ object EnglishStrings : Strings {
     override val hideCategory = "Hide category"
     override val showCategory = "Show category"
     override val showAllCategories = "Show all"
+    override val hideAllCategories = "Hide all"
     override val resetCategoryOrder = "Reset order"
     override val search = "Search"
     override val watchedProgress = "watched"
@@ -649,6 +651,7 @@ object PortugueseStrings : Strings {
     override val hideCategory = "Ocultar categoria"
     override val showCategory = "Mostrar categoria"
     override val showAllCategories = "Mostrar todas"
+    override val hideAllCategories = "Ocultar todas"
     override val resetCategoryOrder = "Repor ordem"
     override val search = "Pesquisar"
     override val watchedProgress = "visto"

@@ -97,6 +97,12 @@ class UserLibraryStore(context: Context) {
         return emptySet()
     }
 
+    fun hideAllCategories(profileId: String, allCategories: Collection<String>): Set<String> {
+        val updated = allCategories.toSet()
+        preferences.edit().putStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$profileId", updated).apply()
+        return updated
+    }
+
     fun categoryOrder(profileId: String): List<String> {
         val raw = preferences.getString("${KEY_CATEGORY_ORDER_PREFIX}_$profileId", null) ?: return emptyList()
         return raw.split("|").filter { it.isNotBlank() }

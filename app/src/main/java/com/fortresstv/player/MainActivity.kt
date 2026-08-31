@@ -2058,6 +2058,9 @@ private fun FortressLibrary(
                     onUnhideAllCategories = {
                         hiddenCategories = userLibrary.unhideAllCategories(activeProfile.id)
                     },
+                    onHideAllCategories = { cats ->
+                        hiddenCategories = userLibrary.hideAllCategories(activeProfile.id, cats)
+                    },
                     onResetCategoryOrder = {
                         categoryOrder = userLibrary.resetCategoryOrder(activeProfile.id)
                     },
@@ -4831,6 +4834,7 @@ private fun ChannelBrowser(
     onToggleCategoryHidden: (String) -> Unit = {},
     onMoveCategory: (String, Boolean) -> Unit = { _, _ -> },
     onUnhideAllCategories: () -> Unit = {},
+    onHideAllCategories: (List<String>) -> Unit = {},
     onResetCategoryOrder: () -> Unit = {},
     onToggleFavorite: (PlaylistChannel) -> Unit,
     requestedChannel: PlaylistChannel?,
@@ -5394,6 +5398,7 @@ private fun ChannelBrowser(
             onToggleCategoryHidden = onToggleCategoryHidden,
             onMoveCategory = onMoveCategory,
             onUnhideAll = onUnhideAllCategories,
+            onHideAll = { onHideAllCategories(rawCategories) },
             onResetOrder = onResetCategoryOrder,
             onDismiss = { showManageCategories = false }
         )
@@ -8446,6 +8451,7 @@ private fun AddPlaylistDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(strings.addPlaylist) },
         text = {
             Column(Modifier.fillMaxWidth()) {
@@ -8580,6 +8586,7 @@ private fun EditPlaylistDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(strings.editPlaylist) },
         text = {
             Column(
@@ -8735,6 +8742,7 @@ private fun SourceUrlDialog(
     var value by remember(initialValue) { mutableStateOf(initialValue) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(title) },
         text = {
             Column {
@@ -8907,6 +8915,7 @@ private fun ManageCategoriesDialog(
     onToggleCategoryHidden: (String) -> Unit,
     onMoveCategory: (String, Boolean) -> Unit,
     onUnhideAll: () -> Unit,
+    onHideAll: () -> Unit,
     onResetOrder: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -8923,7 +8932,10 @@ private fun ManageCategoriesDialog(
         else orderedCategories.filter { it.contains(searchQuery.trim(), ignoreCase = true) }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false)
+    ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -8976,27 +8988,37 @@ private fun ManageCategoriesDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedButton(
                         onClick = onUnhideAll,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                     ) {
-                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.showAllCategories, fontSize = 12.sp)
+                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.showAllCategories, fontSize = 11.sp, maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = onHideAll,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.VisibilityOff, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.hideAllCategories, fontSize = 11.sp, maxLines = 1)
                     }
                     OutlinedButton(
                         onClick = onResetOrder,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
                     ) {
-                        Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.resetCategoryOrder, fontSize = 12.sp)
+                        Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.resetCategoryOrder, fontSize = 11.sp, maxLines = 1)
                     }
                 }
 
@@ -9352,6 +9374,7 @@ private fun PinEntryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false),
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Icon(
