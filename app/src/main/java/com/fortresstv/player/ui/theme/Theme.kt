@@ -8,6 +8,8 @@ import androidx.compose.runtime.Composable
 private val DarkColorScheme = darkColorScheme(
     primary = FortressGreen,
     secondary = FortressGreen,
+    primaryContainer = FortressGreenDark,
+    onPrimaryContainer = FortressText,
     background = FortressNavy,
     surface = FortressNavy,
     surfaceVariant = FortressCard,

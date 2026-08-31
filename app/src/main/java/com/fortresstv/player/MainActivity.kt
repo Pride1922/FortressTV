@@ -29,6 +29,9 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
@@ -133,6 +136,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -330,16 +338,48 @@ class MainActivity : ComponentActivity() {
         Coil.setImageLoader(imageLoader)
 
         setContent {
+            val focusManager = LocalFocusManager.current
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val view = LocalView.current
             FortressTVTheme {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .semantics { testTagsAsResourceId = true }
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.type == PointerEventType.Press) {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+                                        view.findFocus()?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+                                    }
+                                }
+                            }
+                        }
                 ) {
                     FortressTVApp()
                 }
             }
         }
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            currentFocus?.let { focusView ->
+                val outRect = android.graphics.Rect()
+                focusView.getGlobalVisibleRect(outRect)
+                if (!outRect.contains(ev.rawX.toInt(), ev.rawY.toInt())) {
+                    focusView.clearFocus()
+                    imm?.hideSoftInputFromWindow(focusView.windowToken, 0)
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 }
 
@@ -767,122 +807,77 @@ private fun FortressTVApp() {
     }
 
     CompositionLocalProvider(LocalAppStrings provides strings) {
-        if (showAddPlaylistDialog) {
-            AddPlaylistDialog(
-                onDismiss = { showAddPlaylistDialog = false },
-                onAddUrl = { name, url ->
-                    showAddPlaylistDialog = false
-                    val displayName = name.ifBlank { url.substringAfterLast('/').ifBlank { "Remote Playlist" } }
-                    val profile = PlaylistProfile(
-                        id = UUID.randomUUID().toString(),
-                        name = displayName,
-                        source = ContentSource.RemoteUrl(url.trim(), displayName),
-                        order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
-                    )
-                    loadPlaylistProfile(profile, forceRefresh = true)
-                },
-                onAddXtream = { name, server, username, password ->
-                    showAddPlaylistDialog = false
-                    val displayName = name.ifBlank { "Xtream" }
-                    val profile = PlaylistProfile(
-                        id = UUID.randomUUID().toString(),
-                        name = displayName,
-                        source = ContentSource.Xtream(server.trim(), displayName, username, password),
-                        enabled = true,
-                        role = SourceRole.EVERYTHING,
-                        order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
-                    )
-                    loadXtreamProfile(profile, forceRefresh = true)
-                },
-                onPickFile = {
-                    showAddPlaylistDialog = false
-                    addPlaylistFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*"))
-                }
-            )
-        }
-
-        editingProfile?.let { profile ->
-            EditPlaylistDialog(
-                profile = profile,
-                onDismiss = { editingProfile = null },
-                onConfirm = { newName, newSource, newRole ->
-                    editingProfile = null
-                    val sourceChanged = profile.source != newSource
-                    val updated = profile.copy(name = newName, source = newSource, role = newRole)
-                    settings.savePlaylistProfile(updated)
-                    val all = settings.getPlaylists()
-                    playlists = all
-                    if (activeProfile?.id == profile.id) {
-                        activeProfile = updated
+        Box(Modifier.fillMaxSize()) {
+            if (restoring) {
+                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onOpenFile = {}, onOpenUrl = {})
+            } else if (playlist == null || activeProfile == null) {
+                WelcomeScreen(
+                    loading = loading,
+                    showActions = !loading && (activeProfile == null || error != null),
+                    error = error,
+                    onRetry = retryLoad,
+                    onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
+                    onOpenUrl = { showAddPlaylistDialog = true }
+                )
+            } else {
+                FortressLibrary(
+                    playlist = playlist!!,
+                    activeProfile = activeProfile!!,
+                    enabledSourceCount = playlists.count { it.enabled && it.role.contributesLiveTv() },
+                    enabledSources = playlists
+                        .filter { it.enabled && it.role.contributesLiveTv() }
+                        .sortedBy { it.order },
+                    epgGuide = epgGuide,
+                    epgSourceName = epgSourceName,
+                    epgTimeShiftHours = epgTimeShiftHours,
+                    playChannelsFullscreen = playChannelsFullscreen,
+                    autoPictureInPicture = autoPictureInPicture,
+                    hideAdultContent = effectiveHideAdultContent,
+                    loading = loading,
+                    error = error,
+                    onRetryLoad = retryLoad,
+                    userLibrary = userLibrary,
+                    favoriteChannelIds = favoriteChannelIds,
+                    recentChannelIds = recentChannelIds,
+                    onRecordChannelWatched = { channel ->
+                        recentChannelIds = userLibrary.recordChannelWatched(channel)
+                    },
+                    movieWatchlistIds = movieWatchlistIds,
+                    followedSeriesIds = followedSeriesIds,
+                    watchedItemIds = watchedItemIds,
+                    xtreamCatalogs = xtreamCatalogs.values.toList(),
+                    xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
+                    onToggleFavorite = { channel ->
+                        val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true
+                        favoriteChannelIds = userLibrary.setChannelFavorite(channel, !isFavorite)
+                    },
+                    onToggleMovieWatchlist = { sourceId, movie ->
+                        val isWatchlisted = movie.libraryId(sourceId) in movieWatchlistIds
+                        movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, !isWatchlisted)
+                    },
+                    onToggleMovieWatched = { sourceId, movie ->
+                        val key = movie.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                    },
+                    onToggleSeriesFollow = { sourceId, series ->
+                        val isFollowed = series.libraryId(sourceId) in followedSeriesIds
+                        followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, !isFollowed)
+                    },
+                    onToggleEpisodeWatched = { sourceId, episode ->
+                        val key = episode.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                    },
+                    onMarkItemWatched = { key, watched ->
+                        watchedItemIds = userLibrary.setItemWatched(key, watched)
+                    },
+                    onOpenSettings = { tab ->
+                        settingsInitialTab = tab
+                        showSettings = true
                     }
-                    if (updated.source is ContentSource.Xtream) {
-                        if (sourceChanged || loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv()) {
-                            loadXtreamProfile(updated, forceRefresh = sourceChanged)
-                        } else {
-                            playlist = mergeLivePlaylists(all, loadedPlaylists)
-                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
-                        }
-                    } else if (updated.source is ContentSource.RemoteUrl && sourceChanged) {
-                        loadPlaylistProfile(updated, forceRefresh = true)
-                    } else {
-                        playlist = mergeLivePlaylists(all, loadedPlaylists)
-                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
-                    }
-                }
-            )
-        }
-
-        deletingProfile?.let { profile ->
-            ConfirmDeletePlaylistDialog(
-                playlistName = profile.name,
-                onDismiss = { deletingProfile = null },
-                onConfirm = {
-                    deletingProfile = null
-                    settings.deletePlaylistProfile(profile.id)
-                    SourceReader.deleteCache(context, "playlist_${profile.id}")
-                    loadedPlaylists.remove(profile.id)
-                    xtreamCatalogs.remove(profile.id)
-                    val remaining = settings.getPlaylists()
-                    playlists = remaining
-                    playlist = mergeLivePlaylists(remaining, loadedPlaylists)
-                    activeProfile = remaining.filter { it.enabled }.minByOrNull { it.order }
-                }
-            )
-        }
-
-        if (showEpgUrlDialog) {
-            SourceUrlDialog(
-                title = "XMLTV EPG URL",
-                initialValue = (epgSource as? ContentSource.RemoteUrl)?.value.orEmpty(),
-                onDismiss = { showEpgUrlDialog = false },
-                onConfirm = { value ->
-                    showEpgUrlDialog = false
-                    val source = ContentSource.RemoteUrl(value.trim(), value.substringAfterLast('/').ifBlank { value })
-                    loadEpg(source, save = true, forceRefresh = true)
-                }
-            )
-        }
-
-        if (showRemoveEpgConfirm) {
-            AlertDialog(
-                onDismissRequest = { showRemoveEpgConfirm = false },
-                title = { Text(strings.removeEpg) },
-                text = { Text("FortressTV will forget this EPG source and clear its local schedule cache. Playlists will not be affected.") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showRemoveEpgConfirm = false
-                        settings.clearEpg()
-                        SourceReader.deleteCache(context, "epg")
-                        EpgDiskCache.clear(context)
-                        epgGuide = null
-                        epgSource = null
-                        epgSourceName = null
-                        epgLastUpdate = 0L
-                    }) { Text(strings.delete, color = MaterialTheme.colorScheme.error) }
-                },
-                dismissButton = { TextButton(onClick = { showRemoveEpgConfirm = false }) { Text(strings.cancel) } }
-            )
-        }
+                )
+            }
 
         if (showSettings) {
             SettingsDialog(
@@ -932,6 +927,7 @@ private fun FortressTVApp() {
                 epgTimeShiftHours = epgTimeShiftHours,
                 playlist = playlist,
                 epgGuide = epgGuide,
+                hiddenCategories = activeProfile?.id?.let { userLibrary.hiddenCategories(it) } ?: emptySet(),
                 loading = loading,
                 onDismiss = { showSettings = false },
                 onPlaylistEnabledChanged = { profile, enabled ->
@@ -1010,6 +1006,123 @@ private fun FortressTVApp() {
             )
         }
 
+        deletingProfile?.let { profile ->
+            ConfirmDeletePlaylistDialog(
+                playlistName = profile.name,
+                onDismiss = { deletingProfile = null },
+                onConfirm = {
+                    deletingProfile = null
+                    settings.deletePlaylistProfile(profile.id)
+                    SourceReader.deleteCache(context, "playlist_${profile.id}")
+                    loadedPlaylists.remove(profile.id)
+                    xtreamCatalogs.remove(profile.id)
+                    val remaining = settings.getPlaylists()
+                    playlists = remaining
+                    playlist = mergeLivePlaylists(remaining, loadedPlaylists)
+                    activeProfile = remaining.filter { it.enabled }.minByOrNull { it.order }
+                }
+            )
+        }
+
+        if (showEpgUrlDialog) {
+            SourceUrlDialog(
+                title = "XMLTV EPG URL",
+                initialValue = (epgSource as? ContentSource.RemoteUrl)?.value.orEmpty(),
+                onDismiss = { showEpgUrlDialog = false },
+                onConfirm = { value ->
+                    showEpgUrlDialog = false
+                    val source = ContentSource.RemoteUrl(value.trim(), value.substringAfterLast('/').ifBlank { value })
+                    loadEpg(source, save = true, forceRefresh = true)
+                }
+            )
+        }
+
+        if (showRemoveEpgConfirm) {
+            AlertDialog(
+                onDismissRequest = { showRemoveEpgConfirm = false },
+                title = { Text(strings.removeEpg) },
+                text = { Text("FortressTV will forget this EPG source and clear its local schedule cache. Playlists will not be affected.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showRemoveEpgConfirm = false
+                        settings.clearEpg()
+                        SourceReader.deleteCache(context, "epg")
+                        EpgDiskCache.clear(context)
+                        epgGuide = null
+                        epgSource = null
+                        epgSourceName = null
+                        epgLastUpdate = 0L
+                    }) { Text(strings.delete, color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = { TextButton(onClick = { showRemoveEpgConfirm = false }) { Text(strings.cancel) } }
+            )
+        }
+
+        if (showAddPlaylistDialog) {
+            AddPlaylistDialog(
+                onDismiss = { showAddPlaylistDialog = false },
+                onAddUrl = { name, url ->
+                    showAddPlaylistDialog = false
+                    val displayName = name.ifBlank { url.substringAfterLast('/').ifBlank { "Remote Playlist" } }
+                    val profile = PlaylistProfile(
+                        id = UUID.randomUUID().toString(),
+                        name = displayName,
+                        source = ContentSource.RemoteUrl(url.trim(), displayName),
+                        order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
+                    )
+                    loadPlaylistProfile(profile, forceRefresh = true)
+                },
+                onAddXtream = { name, server, username, password ->
+                    showAddPlaylistDialog = false
+                    val displayName = name.ifBlank { "Xtream" }
+                    val profile = PlaylistProfile(
+                        id = UUID.randomUUID().toString(),
+                        name = displayName,
+                        source = ContentSource.Xtream(server.trim(), displayName, username, password),
+                        enabled = true,
+                        role = SourceRole.EVERYTHING,
+                        order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
+                    )
+                    loadXtreamProfile(profile, forceRefresh = true)
+                },
+                onPickFile = {
+                    showAddPlaylistDialog = false
+                    addPlaylistFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*"))
+                }
+            )
+        }
+
+        editingProfile?.let { profile ->
+            EditPlaylistDialog(
+                profile = profile,
+                onDismiss = { editingProfile = null },
+                onConfirm = { newName, newSource, newRole ->
+                    editingProfile = null
+                    val sourceChanged = profile.source != newSource
+                    val updated = profile.copy(name = newName, source = newSource, role = newRole)
+                    settings.savePlaylistProfile(updated)
+                    val all = settings.getPlaylists()
+                    playlists = all
+                    if (activeProfile?.id == profile.id) {
+                        activeProfile = updated
+                    }
+                    if (updated.source is ContentSource.Xtream) {
+                        if (sourceChanged || loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv()) {
+                            loadXtreamProfile(updated, forceRefresh = sourceChanged)
+                        } else {
+                            playlist = mergeLivePlaylists(all, loadedPlaylists)
+                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                        }
+                    } else if (updated.source is ContentSource.RemoteUrl && sourceChanged) {
+                        loadPlaylistProfile(updated, forceRefresh = true)
+                    } else {
+                        playlist = mergeLivePlaylists(all, loadedPlaylists)
+                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                    }
+                }
+            )
+        }
+
         startupUpdateInfo?.let { updateInfo ->
             StartupUpdateDialog(
                 updateInfo = updateInfo,
@@ -1045,77 +1158,6 @@ private fun FortressTVApp() {
                         startupUpdateProgress = -1f
                         startupUpdateError = result.exceptionOrNull()?.localizedMessage ?: "Installation failed"
                     }
-                }
-            )
-        }
-
-        if (restoring) {
-            WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onOpenFile = {}, onOpenUrl = {})
-        } else if (playlist == null || activeProfile == null) {
-            WelcomeScreen(
-                loading = loading,
-                showActions = !loading && (activeProfile == null || error != null),
-                error = error,
-                onRetry = retryLoad,
-                onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
-                onOpenUrl = { showAddPlaylistDialog = true }
-            )
-        } else {
-            FortressLibrary(
-                playlist = playlist!!,
-                activeProfile = activeProfile!!,
-                enabledSourceCount = playlists.count { it.enabled && it.role.contributesLiveTv() },
-                enabledSources = playlists
-                    .filter { it.enabled && it.role.contributesLiveTv() }
-                    .sortedBy { it.order },
-                epgGuide = epgGuide,
-                epgSourceName = epgSourceName,
-                epgTimeShiftHours = epgTimeShiftHours,
-                playChannelsFullscreen = playChannelsFullscreen,
-                autoPictureInPicture = autoPictureInPicture,
-                hideAdultContent = effectiveHideAdultContent,
-                loading = loading,
-                error = error,
-                onRetryLoad = retryLoad,
-                userLibrary = userLibrary,
-                favoriteChannelIds = favoriteChannelIds,
-                recentChannelIds = recentChannelIds,
-                onRecordChannelWatched = { channel ->
-                    recentChannelIds = userLibrary.recordChannelWatched(channel)
-                },
-                movieWatchlistIds = movieWatchlistIds,
-                followedSeriesIds = followedSeriesIds,
-                watchedItemIds = watchedItemIds,
-                xtreamCatalogs = xtreamCatalogs.values.toList(),
-                xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
-                onToggleFavorite = { channel ->
-                    val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true
-                    favoriteChannelIds = userLibrary.setChannelFavorite(channel, !isFavorite)
-                },
-                onToggleMovieWatchlist = { sourceId, movie ->
-                    val isWatchlisted = movie.libraryId(sourceId) in movieWatchlistIds
-                    movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, !isWatchlisted)
-                },
-                onToggleMovieWatched = { sourceId, movie ->
-                    val key = movie.libraryId(sourceId)
-                    val willBeWatched = key !in watchedItemIds
-                    watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
-                },
-                onToggleSeriesFollow = { sourceId, series ->
-                    val isFollowed = series.libraryId(sourceId) in followedSeriesIds
-                    followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, !isFollowed)
-                },
-                onToggleEpisodeWatched = { sourceId, episode ->
-                    val key = episode.libraryId(sourceId)
-                    val willBeWatched = key !in watchedItemIds
-                    watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
-                },
-                onMarkItemWatched = { key, watched ->
-                    watchedItemIds = userLibrary.setItemWatched(key, watched)
-                },
-                onOpenSettings = { tab ->
-                    settingsInitialTab = tab
-                    showSettings = true
                 }
             )
         }
@@ -1159,6 +1201,7 @@ private fun FortressTVApp() {
             )
         }
     }
+}
 }
 
 private enum class UrlTarget { PLAYLIST, EPG }
@@ -1414,9 +1457,9 @@ private fun ProgrammeGuideScreen(
     }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
 
-    val channelsInGroup = remember(playlist.channels, selectedGroup, allGroup, favoritesGroup, favoriteChannels) {
+    val channelsInGroup = remember(playlist.channels, selectedGroup, allGroup, favoritesGroup, favoriteChannels, hiddenCategories) {
         when (selectedGroup) {
-            allGroup -> playlist.channels
+            allGroup -> if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
             favoritesGroup -> favoriteChannels
             else -> playlist.channels.filter { it.group == selectedGroup }
         }
@@ -4861,11 +4904,46 @@ private fun ChannelBrowser(
         }
     }
 
-    var selectedFilter by remember(playlist) { mutableStateOf(allFilter) }
+    val groupCounts = remember(playlist) {
+        playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
+    }
+    val rawCategories = remember(playlist) {
+        groupCounts.keys.filter { it.isNotBlank() }
+    }
+    val orderedCategories = remember(rawCategories, categoryOrder, hiddenCategories) {
+        val nonHidden = rawCategories.filter { it !in hiddenCategories }
+        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
+        nonHidden.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
+    }
+    val allVisibleChannels = remember(playlist.channels, hiddenCategories) {
+        if (hiddenCategories.isEmpty()) playlist.channels
+        else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+    }
+
+    var selectedFilter by remember(playlist, orderedCategories, hiddenCategories) {
+        mutableStateOf(
+            if (hiddenCategories.isNotEmpty() && orderedCategories.isNotEmpty()) {
+                "group:${orderedCategories.first()}"
+            } else {
+                allFilter
+            }
+        )
+    }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
+    fun hideKeyboard() {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        (view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
     var showProgrammeGuide by remember(playlist) { mutableStateOf(false) }
     fun selectChannel(channel: PlaylistChannel) {
+        hideKeyboard()
         selectedChannel = channel
         isSidebarExpanded = false
         onRecordChannelWatched(channel)
@@ -4883,22 +4961,11 @@ private fun ChannelBrowser(
             delay(60_000)
         }
     }
-    val groupCounts = remember(playlist) {
-        playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
+    val sourceCounts = remember(allVisibleChannels) {
+        allVisibleChannels.groupingBy { it.sourceId }.eachCount()
     }
-    val rawCategories = remember(playlist) {
-        groupCounts.keys.filter { it.isNotBlank() }
-    }
-    val orderedCategories = remember(rawCategories, categoryOrder, hiddenCategories) {
-        val nonHidden = rawCategories.filter { it !in hiddenCategories }
-        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
-        nonHidden.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
-    }
-    val sourceCounts = remember(playlist) {
-        playlist.channels.groupingBy { it.sourceId }.eachCount()
-    }
-    val recentChannels = remember(playlist, recentChannelIds) {
-        val channelMap = playlist.channels.associateBy { it.libraryId() }
+    val recentChannels = remember(allVisibleChannels, recentChannelIds) {
+        val channelMap = allVisibleChannels.associateBy { it.libraryId() }
         recentChannelIds.mapNotNull { channelMap[it] }
     }
     val selectedFilterLabel = when {
@@ -4911,20 +4978,20 @@ private fun ChannelBrowser(
         selectedFilter.startsWith("group:") -> selectedFilter.removePrefix("group:")
         else -> strings.allChannels
     }
-    val channelsInGroup = remember(playlist, selectedFilter, recentChannels) {
+    val channelsInGroup = remember(playlist, allVisibleChannels, selectedFilter, recentChannels) {
         when {
-            selectedFilter == allFilter -> playlist.channels
+            selectedFilter == allFilter -> allVisibleChannels
             selectedFilter == recentFilter -> recentChannels
             selectedFilter.startsWith("source:") -> {
                 val sourceId = selectedFilter.removePrefix("source:")
-                playlist.channels.filter { it.sourceId == sourceId }
+                allVisibleChannels.filter { it.sourceId == sourceId }
             }
-            selectedFilter == uncategorizedFilter -> playlist.channels.filter { it.group.isNullOrBlank() }
+            selectedFilter == uncategorizedFilter -> allVisibleChannels.filter { it.group.isNullOrBlank() }
             selectedFilter.startsWith("group:") -> {
                 val group = selectedFilter.removePrefix("group:")
                 playlist.channels.filter { it.group == group }
             }
-            else -> playlist.channels
+            else -> allVisibleChannels
         }
     }
     val visibleChannels = remember(channelsInGroup, searchQuery) {
@@ -4950,12 +5017,12 @@ private fun ChannelBrowser(
         return
     }
 
-    val matchedCount = remember(playlist, epgGuide) {
-        if (epgGuide == null) 0 else playlist.channels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
+    val matchedCount = remember(allVisibleChannels, epgGuide) {
+        if (epgGuide == null) 0 else allVisibleChannels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
     }
-    val unmatchedChannels = remember(playlist, epgGuide) {
+    val unmatchedChannels = remember(allVisibleChannels, epgGuide) {
         if (epgGuide == null) emptyList()
-        else playlist.channels.filter { epgGuide.resolveChannelId(it.tvgId, it.name) == null }
+        else allVisibleChannels.filter { epgGuide.resolveChannelId(it.tvgId, it.name) == null }
     }
     var showUnmatchedDialog by remember { mutableStateOf(false) }
 
@@ -4963,14 +5030,33 @@ private fun ChannelBrowser(
         channelListState.scrollToItem(0)
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-    Row(Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = isSidebarExpanded,
-            enter = expandHorizontally() + fadeIn(),
-            exit = shrinkHorizontally() + fadeOut()
-        ) {
-            Column(
+    LaunchedEffect(channelListState.isScrollInProgress) {
+        if (channelListState.isScrollInProgress) {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        }
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                focusManager.clearFocus()
+                keyboardController?.hide()
+            },
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxSize()) {
+                AnimatedVisibility(
+                    visible = isSidebarExpanded,
+                    enter = expandHorizontally() + fadeIn(),
+                    exit = shrinkHorizontally() + fadeOut()
+                ) {
+                    Column(
                 modifier = Modifier
                     .width(if (isCompact) 280.dp else 260.dp)
                     .fillMaxHeight()
@@ -5044,7 +5130,10 @@ private fun ChannelBrowser(
                 ) {
                     Text(strings.categories, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     IconButton(
-                        onClick = { showManageCategories = true },
+                        onClick = {
+                            hideKeyboard()
+                            showManageCategories = true
+                        },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(Icons.Default.Tune, contentDescription = strings.manageCategories, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
@@ -5059,9 +5148,12 @@ private fun ChannelBrowser(
                     item {
                         GroupItem(
                             name = strings.allChannels,
-                            count = playlist.channels.size,
+                            count = allVisibleChannels.size,
                             selected = selectedFilter == allFilter,
-                            onClick = { selectedFilter = allFilter }
+                            onClick = {
+                                selectedFilter = allFilter
+                                hideKeyboard()
+                            }
                         )
                     }
                     if (recentChannels.isNotEmpty()) {
@@ -5070,7 +5162,10 @@ private fun ChannelBrowser(
                                 name = strings.recentlyWatched,
                                 count = recentChannels.size,
                                 selected = selectedFilter == recentFilter,
-                                onClick = { selectedFilter = recentFilter }
+                                onClick = {
+                                    selectedFilter = recentFilter
+                                    hideKeyboard()
+                                }
                             )
                         }
                     }
@@ -5085,7 +5180,10 @@ private fun ChannelBrowser(
                                 name = profile.name,
                                 count = sourceCounts[profile.id] ?: 0,
                                 selected = selectedFilter == "source:${profile.id}",
-                                onClick = { selectedFilter = "source:${profile.id}" }
+                                onClick = {
+                                    selectedFilter = "source:${profile.id}"
+                                    hideKeyboard()
+                                }
                             )
                         }
                     }
@@ -5096,7 +5194,10 @@ private fun ChannelBrowser(
                                 name = strings.uncategorized,
                                 count = uncategorizedCount,
                                 selected = selectedFilter == uncategorizedFilter,
-                                onClick = { selectedFilter = uncategorizedFilter }
+                                onClick = {
+                                    selectedFilter = uncategorizedFilter
+                                    hideKeyboard()
+                                }
                             )
                         }
                     }
@@ -5108,7 +5209,10 @@ private fun ChannelBrowser(
                             name = group,
                             count = groupCounts[group] ?: 0,
                             selected = selectedFilter == "group:$group",
-                            onClick = { selectedFilter = "group:$group" }
+                            onClick = {
+                                selectedFilter = "group:$group"
+                                hideKeyboard()
+                            }
                         )
                     }
                 }
@@ -5134,7 +5238,7 @@ private fun ChannelBrowser(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        strings.epgMatched(matchedCount, playlist.channels.size),
+                                        strings.epgMatched(matchedCount, allVisibleChannels.size),
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.error
@@ -5176,7 +5280,22 @@ private fun ChannelBrowser(
                 Spacer(Modifier.height(8.dp))
             }
         }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 16.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 16.dp)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press) {
+                                hideKeyboard()
+                            }
+                        }
+                    }
+                }
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -5208,9 +5327,20 @@ private fun ChannelBrowser(
                         onValueChange = { searchQuery = it },
                         placeholder = { Text(strings.searchInGroup(selectedFilterLabel), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            }
+                        ),
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
+                                IconButton(onClick = {
+                                    searchQuery = ""
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                }) {
                                     Text("×", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
@@ -5374,35 +5504,36 @@ private fun ChannelBrowser(
                 }
             }
         }
+
+        if (showUnmatchedDialog) {
+            UnmatchedEpgDialog(
+                unmatchedChannels = unmatchedChannels,
+                onDismiss = { showUnmatchedDialog = false },
+                onSelectChannel = { channel ->
+                    selectChannel(channel)
+                    searchQuery = ""
+                    selectedFilter = allFilter
+                }
+            )
+        }
+
+        if (showManageCategories) {
+            ManageCategoriesDialog(
+                categories = rawCategories,
+                groupCounts = groupCounts,
+                hiddenCategories = hiddenCategories,
+                categoryOrder = categoryOrder,
+                onToggleCategoryHidden = onToggleCategoryHidden,
+                onMoveCategory = onMoveCategory,
+                onUnhideAll = onUnhideAllCategories,
+                onHideAll = { onHideAllCategories(rawCategories) },
+                onResetOrder = onResetCategoryOrder,
+                onDismiss = { showManageCategories = false }
+            )
+        }
     }
 }
-
-    if (showUnmatchedDialog) {
-        UnmatchedEpgDialog(
-            unmatchedChannels = unmatchedChannels,
-            onDismiss = { showUnmatchedDialog = false },
-            onSelectChannel = { channel ->
-                selectChannel(channel)
-                searchQuery = ""
-                selectedFilter = allFilter
-            }
-        )
-    }
-
-    if (showManageCategories) {
-        ManageCategoriesDialog(
-            categories = rawCategories,
-            groupCounts = groupCounts,
-            hiddenCategories = hiddenCategories,
-            categoryOrder = categoryOrder,
-            onToggleCategoryHidden = onToggleCategoryHidden,
-            onMoveCategory = onMoveCategory,
-            onUnhideAll = onUnhideAllCategories,
-            onHideAll = { onHideAllCategories(rawCategories) },
-            onResetOrder = onResetCategoryOrder,
-            onDismiss = { showManageCategories = false }
-        )
-    }
+}
 }
 
 @Composable
@@ -7270,6 +7401,7 @@ private fun SettingsDialog(
     epgTimeShiftHours: Int,
     playlist: Playlist?,
     epgGuide: EpgGuide?,
+    hiddenCategories: Set<String> = emptySet(),
     loading: Boolean,
     onDismiss: () -> Unit,
     onPlaylistEnabledChanged: (PlaylistProfile, Boolean) -> Unit,
@@ -7297,15 +7429,44 @@ private fun SettingsDialog(
         Pair(strings.tabAbout, Icons.Default.Info)
     )
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    fun hideKeyboard() {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+    }
+
+    BackHandler(onBack = {
+        hideKeyboard()
+        onDismiss()
+    })
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.7f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { hideKeyboard() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) {
+                            hideKeyboard()
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
     ) {
         Surface(
             shape = RoundedCornerShape(if (isTwoPane) 20.dp else 16.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
-            modifier = if (isTwoPane) {
+            modifier = (if (isTwoPane) {
                 Modifier
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 940.dp)
@@ -7317,7 +7478,10 @@ private fun SettingsDialog(
                     .fillMaxWidth(0.96f)
                     .fillMaxHeight(0.94f)
                     .padding(6.dp)
-            }
+            }).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { hideKeyboard() }
         ) {
             Column(Modifier.fillMaxSize().padding(if (isTwoPane) 18.dp else 12.dp)) {
                 // Header
@@ -7406,6 +7570,7 @@ private fun SettingsDialog(
                                     playlist = playlist,
                                     epgGuide = epgGuide,
                                     hideAdultContent = hideAdultContent,
+                                    hiddenCategories = hiddenCategories,
                                     loading = loading,
                                     onEpgUrl = onEpgUrl,
                                     onEpgFile = onEpgFile,
@@ -7472,6 +7637,7 @@ private fun SettingsDialog(
                                 playlist = playlist,
                                 epgGuide = epgGuide,
                                 hideAdultContent = hideAdultContent,
+                                hiddenCategories = hiddenCategories,
                                 loading = loading,
                                 onEpgUrl = onEpgUrl,
                                 onEpgFile = onEpgFile,
@@ -7552,6 +7718,20 @@ private fun SettingsToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = Color(0xFF94A3B8),
+                uncheckedTrackColor = Color(0xFF1E293B),
+                uncheckedBorderColor = Color(0xFF475569),
+                disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
+                disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
+                disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
+            ),
             modifier = Modifier.scale(0.8f)
         )
     }
@@ -7757,7 +7937,7 @@ private fun PlaylistsTab(
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                        color = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                         border = if (isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
                         else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
@@ -7801,6 +7981,7 @@ private fun PlaylistsTab(
                                         item.name,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -7832,6 +8013,20 @@ private fun PlaylistsTab(
                                     checked = item.enabled,
                                     onCheckedChange = { onPlaylistEnabledChanged(item, it) },
                                     enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedThumbColor = Color(0xFF94A3B8),
+                                        uncheckedTrackColor = Color(0xFF1E293B),
+                                        uncheckedBorderColor = Color(0xFF475569),
+                                        disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                                        disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                        disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                        disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
+                                        disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
+                                        disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
+                                    ),
                                     modifier = Modifier.scale(0.75f)
                                 )
                                 if (item.source !is ContentSource.LocalFile) {
@@ -7936,6 +8131,7 @@ private fun EpgTab(
     playlist: Playlist?,
     epgGuide: EpgGuide?,
     hideAdultContent: Boolean = false,
+    hiddenCategories: Set<String> = emptySet(),
     loading: Boolean,
     onEpgUrl: () -> Unit,
     onEpgFile: () -> Unit,
@@ -7947,10 +8143,12 @@ private fun EpgTab(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val effectiveChannels = remember(playlist, hideAdultContent) {
+    val effectiveChannels = remember(playlist, hideAdultContent, hiddenCategories) {
         if (playlist == null) emptyList()
-        else if (hideAdultContent) playlist.channels.filterNot { isAdultContent(it.name, it.group) }
-        else playlist.channels
+        else {
+            val base = if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+            if (hideAdultContent) base.filterNot { isAdultContent(it.name, it.group) } else base
+        }
     }
     val matchedCount = remember(effectiveChannels, epgGuide) {
         if (epgGuide == null) 0 else effectiveChannels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
@@ -8448,21 +8646,95 @@ private fun AddPlaylistDialog(
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var mode by remember { mutableIntStateOf(0) }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = false),
-        title = { Text(strings.addPlaylist) },
-        text = {
-            Column(Modifier.fillMaxWidth()) {
+    fun hideKeyboard() {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+    }
+
+    BackHandler(onBack = {
+        hideKeyboard()
+        onDismiss()
+    })
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.7f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { hideKeyboard() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) {
+                            hideKeyboard()
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            modifier = Modifier
+                .widthIn(max = 520.dp)
+                .fillMaxWidth(0.92f)
+                .padding(16.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { hideKeyboard() }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp)
+            ) {
+                Text(
+                    strings.addPlaylist,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(16.dp))
+
                 PrimaryTabRow(
                     selectedTabIndex = mode,
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
                 ) {
-                    Tab(selected = mode == 0, onClick = { mode = 0 }, text = { Text(strings.remoteUrl) })
-                    Tab(selected = mode == 1, onClick = { mode = 1 }, text = { Text(strings.localFile) })
-                    Tab(selected = mode == 2, onClick = { mode = 2 }, text = { Text(strings.xtreamCodes) })
+                    Tab(
+                        selected = mode == 0,
+                        onClick = {
+                            hideKeyboard()
+                            mode = 0
+                        },
+                        text = { Text(strings.remoteUrl) }
+                    )
+                    Tab(
+                        selected = mode == 1,
+                        onClick = {
+                            hideKeyboard()
+                            mode = 1
+                        },
+                        text = { Text(strings.localFile) }
+                    )
+                    Tab(
+                        selected = mode == 2,
+                        onClick = {
+                            hideKeyboard()
+                            mode = 2
+                        },
+                        text = { Text(strings.xtreamCodes) }
+                    )
                 }
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
@@ -8471,6 +8743,7 @@ private fun AddPlaylistDialog(
                     label = { Text(strings.playlistName) },
                     placeholder = { Text(strings.playlistNamePlaceholder) },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
@@ -8481,6 +8754,8 @@ private fun AddPlaylistDialog(
                         label = { Text(strings.playlistM3u) },
                         placeholder = { Text(strings.enterM3uUrl) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else if (mode == 1) {
@@ -8496,6 +8771,7 @@ private fun AddPlaylistDialog(
                         label = { Text(strings.xtreamServer) },
                         placeholder = { Text("http://server.example:port") },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(10.dp))
@@ -8504,6 +8780,7 @@ private fun AddPlaylistDialog(
                         onValueChange = { username = it },
                         label = { Text(strings.username) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(10.dp))
@@ -8513,6 +8790,8 @@ private fun AddPlaylistDialog(
                         label = { Text(strings.password) },
                         singleLine = true,
                         visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
                         trailingIcon = {
                             IconButton(onClick = { showPassword = !showPassword }) {
                                 Icon(
@@ -8524,26 +8803,48 @@ private fun AddPlaylistDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        hideKeyboard()
+                        onDismiss()
+                    }) {
+                        Text(strings.cancel)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    if (mode == 0) {
+                        Button(
+                            onClick = {
+                                hideKeyboard()
+                                onAddUrl(name.trim(), url.trim())
+                            },
+                            enabled = url.startsWith("http://", true) || url.startsWith("https://", true)
+                        ) { Text(strings.addPlaylist) }
+                    } else if (mode == 1) {
+                        Button(onClick = {
+                            hideKeyboard()
+                            onPickFile()
+                        }) { Text(strings.selectFile) }
+                    } else {
+                        Button(
+                            onClick = {
+                                hideKeyboard()
+                                onAddXtream(name.trim(), url.trim(), username.trim(), password)
+                            },
+                            enabled = (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
+                                    username.isNotBlank() && password.isNotBlank()
+                        ) { Text(strings.connect) }
+                    }
+                }
             }
-        },
-        confirmButton = {
-            if (mode == 0) {
-                Button(
-                    onClick = { onAddUrl(name.trim(), url.trim()) },
-                    enabled = url.startsWith("http://", true) || url.startsWith("https://", true)
-                ) { Text(strings.addPlaylist) }
-            } else if (mode == 1) {
-                Button(onClick = onPickFile) { Text(strings.selectFile) }
-            } else {
-                Button(
-                    onClick = { onAddXtream(name.trim(), url.trim(), username.trim(), password) },
-                    enabled = (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
-                            username.isNotBlank() && password.isNotBlank()
-                ) { Text(strings.connect) }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }
-    )
+        }
+    }
 }
 
 @Composable
@@ -8553,6 +8854,8 @@ private fun EditPlaylistDialog(
     onConfirm: (String, ContentSource, SourceRole) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     var name by remember(profile.id) { mutableStateOf(profile.name) }
     var role by remember(profile.id) { mutableStateOf(profile.role) }
     var roleDropdownExpanded by remember { mutableStateOf(false) }
@@ -8584,22 +8887,70 @@ private fun EditPlaylistDialog(
         is ContentSource.LocalFile -> name.isNotBlank()
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = false),
-        title = { Text(strings.editPlaylist) },
-        text = {
+    fun hideKeyboard() {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+    }
+
+    BackHandler(onBack = {
+        hideKeyboard()
+        onDismiss()
+    })
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.7f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { hideKeyboard() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) {
+                            hideKeyboard()
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            modifier = Modifier
+                .widthIn(max = 520.dp)
+                .fillMaxWidth(0.92f)
+                .padding(16.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { hideKeyboard() }
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Text(
+                    strings.editPlaylist,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(strings.playlistName) },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -8610,6 +8961,7 @@ private fun EditPlaylistDialog(
                         label = { Text(strings.xtreamServer) },
                         placeholder = { Text("https://server.example:port") },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -8617,6 +8969,7 @@ private fun EditPlaylistDialog(
                         onValueChange = { username = it },
                         label = { Text(strings.username) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -8625,6 +8978,8 @@ private fun EditPlaylistDialog(
                         label = { Text(strings.password) },
                         singleLine = true,
                         visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
                         trailingIcon = {
                             IconButton(onClick = { showPassword = !showPassword }) {
                                 Icon(
@@ -8641,6 +8996,8 @@ private fun EditPlaylistDialog(
                         onValueChange = { serverUrl = it },
                         label = { Text(strings.playlistM3u) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -8653,13 +9010,19 @@ private fun EditPlaylistDialog(
                         readOnly = true,
                         label = { Text(strings.sourceRole) },
                         trailingIcon = {
-                            IconButton(onClick = { roleDropdownExpanded = !roleDropdownExpanded }) {
+                            IconButton(onClick = {
+                                hideKeyboard()
+                                roleDropdownExpanded = !roleDropdownExpanded
+                            }) {
                                 Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                             }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { roleDropdownExpanded = true }
+                            .clickable {
+                                hideKeyboard()
+                                roleDropdownExpanded = true
+                            }
                     )
                     DropdownMenu(
                         expanded = roleDropdownExpanded,
@@ -8679,34 +9042,48 @@ private fun EditPlaylistDialog(
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val updatedSource = when (initialSource) {
-                        is ContentSource.Xtream -> ContentSource.Xtream(
-                            value = serverUrl.trim(),
-                            displayName = name.trim(),
-                            username = username.trim(),
-                            password = password
-                        )
-                        is ContentSource.RemoteUrl -> ContentSource.RemoteUrl(
-                            value = serverUrl.trim(),
-                            displayName = name.trim()
-                        )
-                        is ContentSource.LocalFile -> ContentSource.LocalFile(
-                            value = initialSource.value,
-                            displayName = name.trim()
-                        )
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        hideKeyboard()
+                        onDismiss()
+                    }) {
+                        Text(strings.cancel)
                     }
-                    onConfirm(name.trim(), updatedSource, role)
-                },
-                enabled = canSave
-            ) { Text(strings.save) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }
-    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            hideKeyboard()
+                            val updatedSource = when (initialSource) {
+                                is ContentSource.Xtream -> ContentSource.Xtream(
+                                    value = serverUrl.trim(),
+                                    displayName = name.trim(),
+                                    username = username.trim(),
+                                    password = password
+                                )
+                                is ContentSource.RemoteUrl -> ContentSource.RemoteUrl(
+                                    value = serverUrl.trim(),
+                                    displayName = name.trim()
+                                )
+                                is ContentSource.LocalFile -> ContentSource.LocalFile(
+                                    value = initialSource.value,
+                                    displayName = name.trim()
+                                )
+                            }
+                            onConfirm(name.trim(), updatedSource, role)
+                        },
+                        enabled = canSave
+                    ) { Text(strings.save) }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -8739,13 +9116,35 @@ private fun SourceUrlDialog(
     onConfirm: (String) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
     var value by remember(initialValue) { mutableStateOf(initialValue) }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+            onDismiss()
+        },
         properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(title) },
         text = {
-            Column {
+            Column(
+                Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press) {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                imm?.hideSoftInputFromWindow(view.windowToken, 0)
+                                view.findFocus()?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+                            }
+                        }
+                    }
+                }
+            ) {
                 Text("Enter a direct HTTP or HTTPS URL. It will be encrypted on this device.")
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
@@ -8920,7 +9319,31 @@ private fun ManageCategoriesDialog(
     onDismiss: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val view = LocalView.current
+    val listState = rememberLazyListState()
     var searchQuery by remember { mutableStateOf("") }
+
+    fun hideKeyboard() {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        view.rootView?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+        view.findFocus()?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView).hide(WindowInsetsCompat.Type.ime())
+            dialogWin.currentFocus?.clearFocus()
+        }
+    }
+
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            hideKeyboard()
+        }
+    }
 
     val orderedCategories = remember(categories, categoryOrder) {
         val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
@@ -8932,23 +9355,61 @@ private fun ManageCategoriesDialog(
         else orderedCategories.filter { it.contains(searchQuery.trim(), ignoreCase = true) }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = false)
+    BackHandler(onBack = {
+        hideKeyboard()
+        onDismiss()
+    })
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.7f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { hideKeyboard() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) {
+                            hideKeyboard()
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
+            tonalElevation = 8.dp,
             modifier = Modifier
                 .widthIn(max = 560.dp)
-                .fillMaxWidth(0.95f)
+                .fillMaxWidth(0.92f)
                 .fillMaxHeight(0.85f)
                 .padding(8.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { hideKeyboard() }
         ) {
-            Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { hideKeyboard() }
+                    .padding(20.dp)
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { hideKeyboard() },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -8976,8 +9437,23 @@ private fun ManageCategoriesDialog(
                     onValueChange = { searchQuery = it },
                     placeholder = { Text(strings.search) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                        }
+                    ),
                     trailingIcon = if (searchQuery.isNotBlank()) {
-                        { IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, contentDescription = null) } }
+                        {
+                            IconButton(onClick = {
+                                searchQuery = ""
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            }) {
+                                Icon(Icons.Default.Clear, contentDescription = null)
+                            }
+                        }
                     } else null,
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
@@ -8991,7 +9467,10 @@ private fun ManageCategoriesDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onUnhideAll,
+                        onClick = {
+                            hideKeyboard()
+                            onUnhideAll()
+                        },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
@@ -9001,7 +9480,10 @@ private fun ManageCategoriesDialog(
                         Text(strings.showAllCategories, fontSize = 11.sp, maxLines = 1)
                     }
                     OutlinedButton(
-                        onClick = onHideAll,
+                        onClick = {
+                            hideKeyboard()
+                            onHideAll()
+                        },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
@@ -9011,7 +9493,10 @@ private fun ManageCategoriesDialog(
                         Text(strings.hideAllCategories, fontSize = 11.sp, maxLines = 1)
                     }
                     OutlinedButton(
-                        onClick = onResetOrder,
+                        onClick = {
+                            hideKeyboard()
+                            onResetOrder()
+                        },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
@@ -9027,6 +9512,7 @@ private fun ManageCategoriesDialog(
                 Spacer(Modifier.height(6.dp))
 
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -9034,6 +9520,10 @@ private fun ManageCategoriesDialog(
                         val isHidden = category in hiddenCategories
                         val count = groupCounts[category] ?: 0
                         Surface(
+                            onClick = {
+                                hideKeyboard()
+                                onToggleCategoryHidden(category)
+                            },
                             shape = RoundedCornerShape(10.dp),
                             color = if (isHidden) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
@@ -9044,7 +9534,10 @@ private fun ManageCategoriesDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 IconButton(
-                                    onClick = { onToggleCategoryHidden(category) },
+                                    onClick = {
+                                        hideKeyboard()
+                                        onToggleCategoryHidden(category)
+                                    },
                                     modifier = Modifier.size(36.dp)
                                 ) {
                                     Icon(
@@ -9072,14 +9565,20 @@ private fun ManageCategoriesDialog(
                                 }
                                 if (searchQuery.isBlank()) {
                                     IconButton(
-                                        onClick = { onMoveCategory(category, true) },
+                                        onClick = {
+                                            hideKeyboard()
+                                            onMoveCategory(category, true)
+                                        },
                                         enabled = index > 0,
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(16.dp))
                                     }
                                     IconButton(
-                                        onClick = { onMoveCategory(category, false) },
+                                        onClick = {
+                                            hideKeyboard()
+                                            onMoveCategory(category, false)
+                                        },
                                         enabled = index < filteredCategories.size - 1,
                                         modifier = Modifier.size(32.dp)
                                     ) {
