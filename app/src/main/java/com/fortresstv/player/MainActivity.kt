@@ -22,7 +22,6 @@ import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.clipToBounds
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,8 +29,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -60,7 +57,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -1734,6 +1730,7 @@ private fun ProgrammeGuideScreen(
     val horizontalState = rememberScrollState()
     var useWideTimelineWindow by remember { mutableStateOf(false) }
     var initialTimelinePositioned by remember { mutableStateOf(false) }
+    val channelState = rememberLazyListState()
     val programmeState = rememberLazyListState()
     var timelineViewportPx by remember { mutableIntStateOf(0) }
     val configuration = LocalConfiguration.current
@@ -1794,6 +1791,24 @@ private fun ProgrammeGuideScreen(
             now = Instant.now()
             delay(60_000)
         }
+    }
+    LaunchedEffect(programmeState) {
+        snapshotFlow { programmeState.firstVisibleItemIndex to programmeState.firstVisibleItemScrollOffset }
+            .distinctUntilChanged()
+            .collect { (index, offset) ->
+                if (channelState.firstVisibleItemIndex != index || channelState.firstVisibleItemScrollOffset != offset) {
+                    channelState.scrollToItem(index, offset)
+                }
+            }
+    }
+    LaunchedEffect(channelState) {
+        snapshotFlow { channelState.firstVisibleItemIndex to channelState.firstVisibleItemScrollOffset }
+            .distinctUntilChanged()
+            .collect { (index, offset) ->
+                if (programmeState.firstVisibleItemIndex != index || programmeState.firstVisibleItemScrollOffset != offset) {
+                    programmeState.scrollToItem(index, offset)
+                }
+            }
     }
     LaunchedEffect(timelineViewportPx, hourWidth) {
         if (!initialTimelinePositioned && timelineViewportPx > 0 && horizontalState.maxValue > 0) {
@@ -2291,73 +2306,60 @@ private fun ProgrammeGuideScreen(
                         )
                     }
                     HorizontalDivider()
-                    val visibleProgrammeRows by remember(programmeState) {
-                        derivedStateOf { programmeState.layoutInfo.visibleItemsInfo }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clipToBounds()
-                            .scrollable(programmeState, Orientation.Vertical)
+                    LazyColumn(
+                        state = channelState,
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        visibleProgrammeRows.forEach { rowInfo ->
-                            val channel = visibleChannels.getOrNull(rowInfo.index) ?: return@forEach
+                        items(visibleChannels, key = { "epg-channel-${it.position}:${it.streamUrl}" }) { channel ->
                             val isFav = channel.libraryId()?.let(favoriteChannelIds::contains) == true
-                            key("epg-channel-${channel.position}:${channel.streamUrl}") {
-                                Surface(
-                                    onClick = { onWatchChannel(channel) },
-                                    color = MaterialTheme.colorScheme.surface,
-                                    modifier = Modifier
-                                        .offset { IntOffset(0, rowInfo.offset) }
-                                        .fillMaxWidth()
-                                        .height(rowHeight)
+                            Surface(
+                                onClick = { onWatchChannel(channel) },
+                                color = MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.fillMaxWidth().height(rowHeight)
+                            ) {
+                                Row(
+                                    Modifier.fillMaxSize().padding(horizontal = if (isCompact && isPortrait) 6.dp else 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        Modifier.fillMaxSize().padding(horizontal = if (isCompact && isPortrait) 6.dp else 10.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        ChannelLogo(
-                                            channel = channel,
-                                            epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
-                                            modifier = Modifier.size(if (isCompact && isPortrait) 28.dp else 38.dp)
-                                        )
-                                        Spacer(Modifier.width(if (isCompact && isPortrait) 6.dp else 8.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            if (channel.position > 0) {
-                                                Text(
-                                                    "${channel.position}.",
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = if (isCompact && isPortrait) 9.sp else 11.sp
-                                                )
-                                            }
+                                    ChannelLogo(
+                                        channel = channel,
+                                        epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
+                                        modifier = Modifier.size(if (isCompact && isPortrait) 28.dp else 38.dp)
+                                    )
+                                    Spacer(Modifier.width(if (isCompact && isPortrait) 6.dp else 8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        if (channel.position > 0) {
                                             Text(
-                                                channel.name,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = if (isCompact && isPortrait) 11.sp else 13.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                "${channel.position}.",
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = if (isCompact && isPortrait) 9.sp else 11.sp
                                             )
                                         }
-                                        if (!isCompact || !isPortrait) {
-                                            IconButton(
-                                                onClick = { onToggleFavorite(channel) },
-                                                modifier = Modifier.size(30.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Star,
-                                                    contentDescription = null,
-                                                    tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
-                                                    modifier = Modifier.size(17.dp)
-                                                )
-                                            }
+                                        Text(
+                                            channel.name,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = if (isCompact && isPortrait) 11.sp else 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (!isCompact || !isPortrait) {
+                                        IconButton(
+                                            onClick = { onToggleFavorite(channel) },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Star,
+                                                contentDescription = null,
+                                                tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                                                modifier = Modifier.size(17.dp)
+                                            )
                                         }
                                     }
                                 }
-                                HorizontalDivider(
-                                    modifier = Modifier.offset { IntOffset(0, rowInfo.offset + rowInfo.size - 1) }
-                                )
                             }
+                            HorizontalDivider()
                         }
                     }
                 }

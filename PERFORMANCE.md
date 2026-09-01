@@ -128,14 +128,14 @@ is still required to quantify parsed-cache restoration independently from networ
 Tested on the connected tablet with approximately 14,447 live entries and a three-day XMLTV
 guide. Only 23 playlist channels matched the supplied guide. Day partitions are now retained
 and pre-indexed for the configured guide window, channel matching runs off the main thread, and
-the programme guide uses one vertical `LazyColumn`; the fixed channel pane mirrors only its
-visible rows instead of synchronizing a second 14,447-item list.
+the horizontal timeline position is preserved while changing days.
 
 After the change, the logged current-day partition load was 0.0 ms and programme-block indexing
-was 5.3 ms for 2,198 programmes. A short interactive `gfxinfo` sample reported 0.60% janky frames
-(20 of 3,348), compared with 1.38% (54 of 3,920) immediately before the single-scroller change.
-These are field samples rather than controlled macrobenchmark runs; P95/P99 frame times remained
-73 ms/150 ms, so further guide rendering work may still be useful for very large channel lists.
+was 5.3 ms for 2,198 programmes. A single-scroller experiment reduced one short `gfxinfo` sample's
+janky-frame percentage, but caused transient channel/programme row misalignment and incorrect
+touch scrolling in the fixed channel pane, so it was rejected. The guide retains the paired lazy
+lists used by RC1.5 for row alignment and correct interaction. Further guide rendering work should
+be validated without compromising those behaviours.
 
 Before publishing, test fast vertical flings with EPG and logos loaded, open and scroll the
 programme guide, change guide days, open the fullscreen channel drawer, and confirm that
