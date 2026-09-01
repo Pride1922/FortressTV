@@ -283,7 +283,7 @@ class MainActivity : ComponentActivity() {
     private val pictureInPictureHandler = Handler(Looper.getMainLooper())
     private var onPictureInPictureDismissed: (() -> Unit)? = null
     private val confirmPictureInPictureDismissed = Runnable {
-        if (!isInPictureInPictureMode && !hasWindowFocus()) {
+        if (!isInPictureInPictureMode && lifecycle.currentState != androidx.lifecycle.Lifecycle.State.RESUMED) {
             onPictureInPictureDismissed?.invoke()
         }
     }
@@ -335,7 +335,7 @@ class MainActivity : ComponentActivity() {
             // Android can delay onStop for several seconds after the PiP close button
             // is pressed. Give an expanded PiP a moment to regain window focus; if it
             // does not, stop playback without waiting for that delayed lifecycle event.
-            pictureInPictureHandler.postDelayed(confirmPictureInPictureDismissed, 350L)
+            pictureInPictureHandler.postDelayed(confirmPictureInPictureDismissed, 200L)
         }
     }
 
@@ -346,14 +346,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        if (!isInPictureInPictureMode) {
+            pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
+            onPictureInPictureDismissed?.invoke()
+        }
+    }
+
     override fun onDestroy() {
         pictureInPictureHandler.removeCallbacksAndMessages(null)
+        onPictureInPictureDismissed?.invoke()
         onPictureInPictureDismissed = null
         super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
+        pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
         UpdateManager.resumePendingInstall(this)
     }
 
@@ -4912,7 +4922,17 @@ private fun VodPlayerDialog(
         }
     }
 
+    val mainActivity = context as? MainActivity
     DisposableEffect(player) {
+        val pictureInPictureDismissedListener = {
+            player.stop()
+            onDismiss()
+        }
+        mainActivity?.setOnPictureInPictureDismissedListener(pictureInPictureDismissedListener)
+        mainActivity?.updatePictureInPictureState(
+            enabled = true,
+            fullscreenPlaying = true
+        )
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
@@ -4944,6 +4964,8 @@ private fun VodPlayerDialog(
         }
         player.addListener(listener)
         onDispose {
+            mainActivity?.updatePictureInPictureState(enabled = false, fullscreenPlaying = false)
+            mainActivity?.setOnPictureInPictureDismissedListener(null)
             onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
             player.removeListener(listener)
             player.release()
@@ -6597,7 +6619,6 @@ private fun ChannelBrowser(
                 }
             }
             val movablePlayerPanel = remember(
-                selectedChannel?.libraryId() ?: selectedChannel?.streamUrl,
                 epgGuide,
                 epgTimeShiftHours,
                 playlist.channels,
@@ -6607,10 +6628,9 @@ private fun ChannelBrowser(
                 playChannelsFullscreen,
                 autoPictureInPicture
             ) {
-                if (selectedChannel == null) null
-                else movableContentOf { playerModifier: Modifier ->
+                movableContentOf { currentChannel: PlaylistChannel, playerModifier: Modifier ->
                     PlayerPanel(
-                        channel = selectedChannel!!,
+                        channel = currentChannel,
                         epgGuide = epgGuide,
                         epgTimeShiftHours = epgTimeShiftHours,
                         channels = playlist.channels,
@@ -6628,9 +6648,9 @@ private fun ChannelBrowser(
 
             Spacer(Modifier.height(10.dp))
             if (isCompact && isPortrait) {
-                if (selectedChannel != null && movablePlayerPanel != null) {
+                if (selectedChannel != null) {
                     Column(Modifier.weight(1f).fillMaxWidth()) {
-                        movablePlayerPanel(Modifier.fillMaxWidth().wrapContentHeight())
+                        movablePlayerPanel(selectedChannel!!, Modifier.fillMaxWidth().wrapContentHeight())
                         Spacer(Modifier.height(10.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(6.dp))
@@ -6735,9 +6755,9 @@ private fun ChannelBrowser(
                             }
                         }
                     }
-                    if (selectedChannel != null && movablePlayerPanel != null) {
+                    if (selectedChannel != null) {
                         Spacer(Modifier.width(16.dp))
-                        movablePlayerPanel(Modifier.weight(1f).fillMaxHeight())
+                        movablePlayerPanel(selectedChannel!!, Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -7027,8 +7047,8 @@ private fun PlayerPanel(
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var consecutiveStallRecoveries by remember(channel.streamUrl) { mutableIntStateOf(0) }
-    var manualFullscreen by rememberSaveable(channel.streamUrl) { mutableStateOf(autoEnterFullscreen) }
-    var landscapeFullscreenDismissed by rememberSaveable(channel.streamUrl, isPortrait) { mutableStateOf(false) }
+    var manualFullscreen by rememberSaveable { mutableStateOf(autoEnterFullscreen) }
+    var landscapeFullscreenDismissed by rememberSaveable(isPortrait) { mutableStateOf(false) }
     val fullscreen = manualFullscreen || (isCompact && !isPortrait && !landscapeFullscreenDismissed)
     val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
     var previousWatchedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
@@ -7053,7 +7073,8 @@ private fun PlayerPanel(
         var resumePlaybackOnStart = false
         val pictureInPictureDismissedListener = {
             resumePlaybackOnStart = false
-            player.pause()
+            manualFullscreen = false
+            player.stop()
         }
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
