@@ -22,6 +22,7 @@ import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.clipToBounds
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +30,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -57,6 +60,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -1730,7 +1734,6 @@ private fun ProgrammeGuideScreen(
     val horizontalState = rememberScrollState()
     var useWideTimelineWindow by remember { mutableStateOf(false) }
     var initialTimelinePositioned by remember { mutableStateOf(false) }
-    val channelState = rememberLazyListState()
     val programmeState = rememberLazyListState()
     var timelineViewportPx by remember { mutableIntStateOf(0) }
     val configuration = LocalConfiguration.current
@@ -1792,30 +1795,14 @@ private fun ProgrammeGuideScreen(
             delay(60_000)
         }
     }
-    LaunchedEffect(programmeState) {
-        snapshotFlow { programmeState.firstVisibleItemIndex to programmeState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                if (channelState.firstVisibleItemIndex != index || channelState.firstVisibleItemScrollOffset != offset) {
-                    channelState.scrollToItem(index, offset)
-                }
-            }
-    }
-    LaunchedEffect(channelState) {
-        snapshotFlow { channelState.firstVisibleItemIndex to channelState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                if (programmeState.firstVisibleItemIndex != index || programmeState.firstVisibleItemScrollOffset != offset) {
-                    programmeState.scrollToItem(index, offset)
-                }
-            }
-    }
-    LaunchedEffect(selectedDate, timelineViewportPx, hourWidth) {
-        val targetMinutes = if (selectedDate == today) {
+    LaunchedEffect(timelineViewportPx, hourWidth) {
+        if (!initialTimelinePositioned && timelineViewportPx > 0 && horizontalState.maxValue > 0) {
             val localNow = now.atZone(zone)
-            localNow.hour * 60 + localNow.minute
-        } else 8 * 60
-        val targetPx = with(density) { (hourWidth * (targetMinutes / 60f)).roundToPx() }
-        horizontalState.scrollTo((targetPx - timelineViewportPx / 2).coerceIn(0, horizontalState.maxValue))
-        initialTimelinePositioned = true
+            val targetMinutes = localNow.hour * 60 + localNow.minute
+            val targetPx = with(density) { (hourWidth * (targetMinutes / 60f)).roundToPx() }
+            horizontalState.scrollTo((targetPx - timelineViewportPx / 2).coerceIn(0, horizontalState.maxValue))
+            initialTimelinePositioned = true
+        }
     }
     LaunchedEffect(horizontalState) {
         snapshotFlow { horizontalState.isScrollInProgress }.collect { isScrolling ->
@@ -1842,10 +1829,24 @@ private fun ProgrammeGuideScreen(
         )
     }
 
-    val resolvedChannelMap = remember(playlist.channels, epgGuide) {
-        val guide = epgGuide ?: return@remember emptyMap<PlaylistChannel, String?>()
-        playlist.channels.associateWith { channel ->
-            guide.resolveChannelId(channel.tvgId, channel.name)
+    var resolvedChannelMap by remember(playlist.channels, epgGuide) {
+        mutableStateOf<Map<PlaylistChannel, String?>>(emptyMap())
+    }
+    var channelResolutionReady by remember(playlist.channels, epgGuide) { mutableStateOf(epgGuide == null) }
+
+    LaunchedEffect(playlist.channels, epgGuide) {
+        val guide = epgGuide
+        if (guide == null) {
+            resolvedChannelMap = emptyMap()
+            channelResolutionReady = true
+        } else {
+            channelResolutionReady = false
+            resolvedChannelMap = withContext(Dispatchers.Default) {
+                playlist.channels.associateWith { channel ->
+                    guide.resolveChannelId(channel.tvgId, channel.name)
+                }
+            }
+            channelResolutionReady = true
         }
     }
 
@@ -1889,7 +1890,11 @@ private fun ProgrammeGuideScreen(
 
     var isDayLoading by remember { mutableStateOf(false) }
 
-    LaunchedEffect(epgGuide, epgRepository, playlist, selectedDate, zone, shiftMillis, selectedGroup) {
+    LaunchedEffect(epgGuide, epgRepository, playlist, selectedDate, zone, shiftMillis, selectedGroup, resolvedChannelMap, channelResolutionReady) {
+        if (!channelResolutionReady) {
+            isDayLoading = true
+            return@LaunchedEffect
+        }
         if ((selectedDate == today && todayGuideReady) ||
             (selectedDate != today && guideDayIndex.containsKey(selectedDate))
         ) {
@@ -1925,20 +1930,33 @@ private fun ProgrammeGuideScreen(
                 }
                 todayGuideReady = true
             } else {
-                // Keep UI-derived data bounded to today plus the active day, matching the
-                // repository's raw-partition cache instead of retaining all seven days.
-                guideDayIndex.keys.filter { it != today && it != date }.forEach(guideDayIndex::remove)
                 guideDayIndex[date] = dayIndex
             }
             isDayLoading = false
         }
     }
+
+    LaunchedEffect(epgGuide, epgRepository, playlist, dates, zone, shiftMillis, selectedGroup, resolvedChannelMap, channelResolutionReady) {
+        if (!channelResolutionReady) return@LaunchedEffect
+        val repository = epgRepository ?: return@LaunchedEffect
+        dates.asSequence()
+            .filter { it != today }
+            .forEach { date ->
+                if (!guideDayIndex.containsKey(date)) {
+                    val loadedDay = repository.loadDay(date.toEpochDay()) ?: return@forEach
+                    val dayIndex = computeDayBlocks(date, loadedDay.programmes)
+                    if (!guideDayIndex.containsKey(date)) {
+                        guideDayIndex[date] = dayIndex
+                    }
+                }
+            }
+    }
     val guideBlocksByChannel = guideDayIndex[selectedDate].orEmpty()
 
-    val visibleChannels = remember(channelsInGroup, searchQuery, guideBlocksByChannel) {
-        if (searchQuery.isBlank()) {
-            channelsInGroup
-        } else {
+    val visibleChannels = if (searchQuery.isBlank()) {
+        channelsInGroup
+    } else {
+        remember(channelsInGroup, searchQuery, guideBlocksByChannel) {
             val q = searchQuery.trim().lowercase()
             channelsInGroup.filter { channel ->
                 channel.name.lowercase().contains(q) ||
@@ -2273,60 +2291,73 @@ private fun ProgrammeGuideScreen(
                         )
                     }
                     HorizontalDivider()
-                    LazyColumn(
-                        state = channelState,
-                        modifier = Modifier.fillMaxSize()
+                    val visibleProgrammeRows by remember(programmeState) {
+                        derivedStateOf { programmeState.layoutInfo.visibleItemsInfo }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                            .scrollable(programmeState, Orientation.Vertical)
                     ) {
-                        items(visibleChannels, key = { "epg-channel-${it.position}:${it.streamUrl}" }) { channel ->
+                        visibleProgrammeRows.forEach { rowInfo ->
+                            val channel = visibleChannels.getOrNull(rowInfo.index) ?: return@forEach
                             val isFav = channel.libraryId()?.let(favoriteChannelIds::contains) == true
-                            Surface(
-                                onClick = { onWatchChannel(channel) },
-                                color = MaterialTheme.colorScheme.surface,
-                                modifier = Modifier.fillMaxWidth().height(rowHeight)
-                            ) {
-                                Row(
-                                    Modifier.fillMaxSize().padding(horizontal = if (isCompact && isPortrait) 6.dp else 10.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                            key("epg-channel-${channel.position}:${channel.streamUrl}") {
+                                Surface(
+                                    onClick = { onWatchChannel(channel) },
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier
+                                        .offset { IntOffset(0, rowInfo.offset) }
+                                        .fillMaxWidth()
+                                        .height(rowHeight)
                                 ) {
-                                    ChannelLogo(
-                                        channel = channel,
-                                        epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
-                                        modifier = Modifier.size(if (isCompact && isPortrait) 28.dp else 38.dp)
-                                    )
-                                    Spacer(Modifier.width(if (isCompact && isPortrait) 6.dp else 8.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        if (channel.position > 0) {
+                                    Row(
+                                        Modifier.fillMaxSize().padding(horizontal = if (isCompact && isPortrait) 6.dp else 10.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        ChannelLogo(
+                                            channel = channel,
+                                            epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
+                                            modifier = Modifier.size(if (isCompact && isPortrait) 28.dp else 38.dp)
+                                        )
+                                        Spacer(Modifier.width(if (isCompact && isPortrait) 6.dp else 8.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            if (channel.position > 0) {
+                                                Text(
+                                                    "${channel.position}.",
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = if (isCompact && isPortrait) 9.sp else 11.sp
+                                                )
+                                            }
                                             Text(
-                                                "${channel.position}.",
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = if (isCompact && isPortrait) 9.sp else 11.sp
+                                                channel.name,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = if (isCompact && isPortrait) 11.sp else 13.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                        Text(
-                                            channel.name,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = if (isCompact && isPortrait) 11.sp else 13.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    if (!isCompact || !isPortrait) {
-                                        IconButton(
-                                            onClick = { onToggleFavorite(channel) },
-                                            modifier = Modifier.size(30.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Star,
-                                                contentDescription = null,
-                                                tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
-                                                modifier = Modifier.size(17.dp)
-                                            )
+                                        if (!isCompact || !isPortrait) {
+                                            IconButton(
+                                                onClick = { onToggleFavorite(channel) },
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Star,
+                                                    contentDescription = null,
+                                                    tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                                HorizontalDivider(
+                                    modifier = Modifier.offset { IntOffset(0, rowInfo.offset + rowInfo.size - 1) }
+                                )
                             }
-                            HorizontalDivider()
                         }
                     }
                 }

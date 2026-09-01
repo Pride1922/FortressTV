@@ -123,6 +123,20 @@ is still required to quantify parsed-cache restoration independently from networ
 
 ## Release check
 
+### Three-day EPG interaction follow-up (2026-09-01)
+
+Tested on the connected tablet with approximately 14,447 live entries and a three-day XMLTV
+guide. Only 23 playlist channels matched the supplied guide. Day partitions are now retained
+and pre-indexed for the configured guide window, channel matching runs off the main thread, and
+the programme guide uses one vertical `LazyColumn`; the fixed channel pane mirrors only its
+visible rows instead of synchronizing a second 14,447-item list.
+
+After the change, the logged current-day partition load was 0.0 ms and programme-block indexing
+was 5.3 ms for 2,198 programmes. A short interactive `gfxinfo` sample reported 0.60% janky frames
+(20 of 3,348), compared with 1.38% (54 of 3,920) immediately before the single-scroller change.
+These are field samples rather than controlled macrobenchmark runs; P95/P99 frame times remained
+73 ms/150 ms, so further guide rendering work may still be useful for very large channel lists.
+
 Before publishing, test fast vertical flings with EPG and logos loaded, open and scroll the
 programme guide, change guide days, open the fullscreen channel drawer, and confirm that
 playback is not interrupted while browsing.

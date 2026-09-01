@@ -36,15 +36,22 @@ class DefaultEpgRepository(
     private val _today = MutableStateFlow<EpgDay?>(null)
     override val today: StateFlow<EpgDay?> = _today.asStateFlow()
 
-    // Pinned today partition + 1-entry LRU for active past/future day
-    private val lruMutex = Mutex()
+    // Today stays pinned and the remaining configured guide window is cached. XMLTV
+    // ingestion is already bounded to seven days, so retaining those partitions avoids
+    // decoding the same small files every time the user changes guide days.
+    private val cacheMutex = Mutex()
     private var pinnedTodayDay: EpgDay? = null
-    private var activeLruDay: EpgDay? = null
+    private val cachedDays = ConcurrentHashMap<Long, EpgDay>()
 
     // In-flight load deduplication
     private val inFlightLoads = ConcurrentHashMap<DayLoadKey, Deferred<EpgDay?>>()
 
     override fun setGuide(guide: EpgGuide?) {
+        val generationChanged = _manifest.value?.generationId != guide?.manifest?.generationId
+        if (generationChanged) {
+            pinnedTodayDay = null
+            cachedDays.clear()
+        }
         _guide.value = guide
         _manifest.value = guide?.manifest
         val todayEpoch = guide?.manifest?.todayEpochDay
@@ -58,9 +65,7 @@ class DefaultEpgRepository(
     override fun cachedDay(epochDay: Long): EpgDay? {
         val currentPinned = pinnedTodayDay
         if (currentPinned?.epochDay == epochDay) return currentPinned
-        val currentLru = activeLruDay
-        if (currentLru?.epochDay == epochDay) return currentLru
-        return null
+        return cachedDays[epochDay]
     }
 
     override suspend fun loadDay(epochDay: Long): EpgDay? {
@@ -92,14 +97,14 @@ class DefaultEpgRepository(
             }
 
             if (loaded != null) {
-                lruMutex.withLock {
+                cacheMutex.withLock {
                     // Do not publish a stale partition if the guide changed while it was loading.
                     if (_manifest.value?.generationId == currentManifest.generationId) {
                         if (epochDay == currentManifest.todayEpochDay) {
                             pinnedTodayDay = loaded
                             _today.value = loaded
                         } else {
-                            activeLruDay = loaded
+                            cachedDays[epochDay] = loaded
                         }
                     }
                 }

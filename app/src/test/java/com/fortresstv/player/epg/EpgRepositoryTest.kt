@@ -66,7 +66,7 @@ class EpgRepositoryTest {
     }
 
     @Test
-    fun loadsDayPartitionAndMaintainsLruForActiveDay() = runBlocking {
+    fun loadsAndRetainsConfiguredDayPartitions() = runBlocking {
         val epgDir = tempFolder.root
         // Write day 20701 partition file
         val day20701 = EpgDay(20701L, mapOf("RTP1.pt" to listOf(programme2)))
@@ -99,11 +99,11 @@ class EpgRepositoryTest {
         // Today remains pinned
         assertEquals(20700L, repo.cachedDay(20700L)?.epochDay)
 
-        // Load day 20702 -> replaces active day 20701 in LRU
+        // Load day 20702; both configured future days remain available for instant switching.
         val loaded20702 = repo.loadDay(20702L)
         assertNotNull(loaded20702)
         assertEquals(20702L, repo.cachedDay(20702L)?.epochDay)
-        assertNull(repo.cachedDay(20701L))
+        assertEquals(20701L, repo.cachedDay(20701L)?.epochDay)
         // Today is STILL pinned
         assertEquals(20700L, repo.cachedDay(20700L)?.epochDay)
     }
