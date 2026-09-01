@@ -530,7 +530,7 @@ object EnglishStrings : Strings {
 
     override val settingsTitle = "Settings"
     override val tabPlaylists = "Playlists"
-    override val tabEpg = "Programme Guide (EPG)"
+    override val tabEpg = "EPG Guide"
     override val tabGeneral = "General"
     override val tabAbout = "About"
     override val language = "Language"
@@ -839,8 +839,8 @@ object PortugueseStrings : Strings {
     override val selectM3uError = "Por favor insira um URL M3U ou selecione um ficheiro local."
 
     override val settingsTitle = "Definições"
-    override val tabPlaylists = "Listas de Canais"
-    override val tabEpg = "Guia de Programação (EPG)"
+    override val tabPlaylists = "Listas"
+    override val tabEpg = "Guia EPG"
     override val tabGeneral = "Geral"
     override val tabAbout = "Sobre"
     override val language = "Idioma"

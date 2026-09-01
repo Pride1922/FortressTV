@@ -18,6 +18,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.scale
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1690,6 +1692,7 @@ private fun ProgrammeGuideScreen(
     onToggleFavorite: (PlaylistChannel) -> Unit = {},
     categoryOrder: List<String> = emptyList(),
     hiddenCategories: Set<String> = emptySet(),
+    initialCategory: String? = null,
     onBack: () -> Unit,
     onWatchChannel: (PlaylistChannel) -> Unit
 ) {
@@ -1710,37 +1713,56 @@ private fun ProgrammeGuideScreen(
     val channelState = rememberLazyListState()
     val programmeState = rememberLazyListState()
     var timelineViewportPx by remember { mutableIntStateOf(0) }
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
     val timelineZoomLevels = remember { listOf(180.dp, 270.dp, 360.dp, 540.dp, 720.dp, 1080.dp, 1440.dp) }
     var timelineZoomIndex by remember { mutableIntStateOf(1) }
     val hourWidth = timelineZoomLevels[timelineZoomIndex]
     val halfHourWidth = hourWidth / 2
     val timelineWidth = hourWidth * 24
-    val rowHeight = 72.dp
-    val channelWidth = 240.dp
+    val rowHeight = if (isCompact && isPortrait) 64.dp else 72.dp
+    val channelWidth = when {
+        isCompact && isPortrait -> 96.dp
+        isCompact -> 130.dp
+        else -> 220.dp
+    }
     val shiftMillis = epgTimeShiftHours * 3_600_000L
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchExpanded by remember { mutableStateOf(false) }
 
+    val allVisibleChannels = remember(playlist.channels, hiddenCategories) {
+        if (hiddenCategories.isEmpty()) playlist.channels
+        else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+    }
     val allGroup = strings.allChannels
     val favoritesGroup = "⭐ ${strings.navFavorites}"
-    val favoriteChannels = remember(playlist.channels, favoriteChannelIds) {
-        val channelMap = playlist.channels.associateBy { it.libraryId() }
+    val favoriteChannels = remember(allVisibleChannels, favoriteChannelIds) {
+        val channelMap = allVisibleChannels.associateBy { it.libraryId() }
         favoriteChannelIds.mapNotNull { channelMap[it] }
     }
-    val categories = remember(playlist.channels, categoryOrder, hiddenCategories) {
-        val raw = playlist.channels.mapNotNull { it.group?.takeIf(String::isNotBlank) }.distinct().filter { it !in hiddenCategories }
+    val categories = remember(allVisibleChannels, categoryOrder, hiddenCategories) {
+        val raw = allVisibleChannels.mapNotNull { it.group?.takeIf(String::isNotBlank) }.distinct().filter { it !in hiddenCategories }
         val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
         raw.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
     }
-    var selectedGroup by remember { mutableStateOf(allGroup) }
+    var selectedGroup by remember(initialCategory) {
+        mutableStateOf(
+            when {
+                initialCategory != null && (initialCategory in categories || initialCategory == favoritesGroup || initialCategory == allGroup) -> initialCategory
+                else -> initialCategory ?: allGroup
+            }
+        )
+    }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     var categorySearchQuery by remember { mutableStateOf("") }
-    val channelsInGroup = remember(playlist.channels, selectedGroup, allGroup, favoritesGroup, favoriteChannels, hiddenCategories) {
+    val channelsInGroup = remember(allVisibleChannels, selectedGroup, allGroup, favoritesGroup, favoriteChannels) {
         when (selectedGroup) {
-            allGroup -> if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+            allGroup -> allVisibleChannels
             favoritesGroup -> favoriteChannels
-            else -> playlist.channels.filter { it.group == selectedGroup }
+            else -> allVisibleChannels.filter { it.group == selectedGroup }
         }
     }
 
@@ -1945,49 +1967,83 @@ private fun ProgrammeGuideScreen(
                 Box(Modifier.size(1.dp).testTag("epg_ready"))
             }
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth().padding(horizontal = if (isCompact) 8.dp else 16.dp, vertical = if (isCompact) 4.dp else 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.size(if (isCompact) 36.dp else 44.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back, modifier = Modifier.size(if (isCompact) 20.dp else 24.dp))
                 }
-                Spacer(Modifier.width(8.dp))
-                Column {
-                    Text(strings.programmeGuide, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(if (isCompact) 4.dp else 8.dp))
+                Column(Modifier.weight(1f, fill = false)) {
+                    Text(
+                        strings.programmeGuide,
+                        fontSize = if (isCompact) 16.sp else 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         "${visibleChannels.size} ${strings.channelList.lowercase()}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
+                        fontSize = if (isCompact) 10.sp else 12.sp
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { isSearchExpanded = !isSearchExpanded }) {
+                IconButton(
+                    onClick = { isSearchExpanded = !isSearchExpanded },
+                    modifier = Modifier.size(if (isCompact) 36.dp else 44.dp)
+                ) {
                     Icon(
                         if (isSearchExpanded) Icons.Default.Close else Icons.Default.Search,
                         contentDescription = strings.search,
-                        tint = if (isSearchExpanded || searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        tint = if (isSearchExpanded || searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(if (isCompact) 18.dp else 22.dp)
                     )
                 }
-                IconButton(
-                    onClick = { timelineZoomIndex = (timelineZoomIndex - 1).coerceAtLeast(0) },
-                    enabled = timelineZoomIndex > 0
-                ) {
-                    Icon(Icons.Default.ZoomOut, contentDescription = strings.zoomOutTimeline)
+                if (!isCompact || !isPortrait) {
+                    IconButton(
+                        onClick = { timelineZoomIndex = (timelineZoomIndex - 1).coerceAtLeast(0) },
+                        enabled = timelineZoomIndex > 0,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.Default.ZoomOut, contentDescription = strings.zoomOutTimeline, modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(
+                        onClick = { timelineZoomIndex = (timelineZoomIndex + 1).coerceAtMost(timelineZoomLevels.lastIndex) },
+                        enabled = timelineZoomIndex < timelineZoomLevels.lastIndex,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.Default.ZoomIn, contentDescription = strings.zoomInTimeline, modifier = Modifier.size(20.dp))
+                    }
                 }
-                IconButton(
-                    onClick = { timelineZoomIndex = (timelineZoomIndex + 1).coerceAtMost(timelineZoomLevels.lastIndex) },
-                    enabled = timelineZoomIndex < timelineZoomLevels.lastIndex
-                ) {
-                    Icon(Icons.Default.ZoomIn, contentDescription = strings.zoomInTimeline)
-                }
-                FilledTonalButton(onClick = {
-                    selectedDate = today
-                    selectedProgramme = null
-                    scrollToNow()
-                }) {
-                    Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text(strings.now)
+                if (isCompact && isPortrait) {
+                    FilledTonalIconButton(
+                        onClick = {
+                            selectedDate = today
+                            selectedProgramme = null
+                            scrollToNow()
+                        },
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(Icons.Default.DateRange, contentDescription = strings.now, modifier = Modifier.size(16.dp))
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = {
+                            selectedDate = today
+                            selectedProgramme = null
+                            scrollToNow()
+                        },
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp)
+                    ) {
+                        Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.now, fontSize = 12.sp)
+                    }
                 }
             }
 
@@ -1999,85 +2055,61 @@ private fun ProgrammeGuideScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text(strings.searchEpg) },
+                    placeholder = { Text(strings.searchEpg, fontSize = if (isCompact) 12.sp else 14.sp) },
                     singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = null)
+                            IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = if (isCompact) 10.dp else 16.dp, vertical = 4.dp)
                 )
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = if (isCompact) 10.dp else 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Date Selector Chips
-                LazyRow(
-                    modifier = Modifier.weight(1f, fill = false),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    items(dates, key = { it.toString() }) { date ->
-                        FilterChip(
-                            selected = selectedDate == date,
-                            onClick = {
-                                selectedDate = date
-                                selectedProgramme = null
-                            },
-                            label = {
-                                Text(
-                                    if (date == today) strings.todayDate(date.dayOfMonth)
-                                    else "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, guideLocale)} ${date.dayOfMonth}"
-                                )
-                            }
-                        )
-                    }
-                }
-
-                Spacer(Modifier.width(10.dp))
-
-                // Clean Category Dropdown Button
+                // Category Filter Chip Dropdown
                 Box {
-                    FilledTonalButton(
+                    AssistChip(
                         onClick = { categoryMenuExpanded = true },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Icon(
-                            when (selectedGroup) {
-                                favoritesGroup -> Icons.Default.Star
-                                allGroup -> Icons.Default.Menu
-                                else -> Icons.Default.FolderOpen
-                            },
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = if (selectedGroup == favoritesGroup) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        val displayCategoryName = when (selectedGroup) {
-                            allGroup -> "${strings.allChannels} (${playlist.channels.size})"
-                            favoritesGroup -> "$favoritesGroup (${favoriteChannels.size})"
-                            else -> "$selectedGroup (${channelsInGroup.size})"
-                        }
-                        Text(
-                            text = displayCategoryName,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 200.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
-                    }
+                        leadingIcon = {
+                            Icon(
+                                when (selectedGroup) {
+                                    favoritesGroup -> Icons.Default.Star
+                                    allGroup -> Icons.Default.Menu
+                                    else -> Icons.Default.FolderOpen
+                                },
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = if (selectedGroup == favoritesGroup) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = {
+                            val displayCategoryName = when (selectedGroup) {
+                                allGroup -> strings.allChannels
+                                favoritesGroup -> strings.navFavorites
+                                else -> selectedGroup
+                            }
+                            Text(
+                                text = displayCategoryName,
+                                fontSize = if (isCompact) 11.sp else 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = if (isCompact && isPortrait) 90.dp else 160.dp)
+                            )
+                        },
+                        modifier = Modifier.height(32.dp)
+                    )
 
                     DropdownMenu(
                         expanded = categoryMenuExpanded,
@@ -2102,7 +2134,7 @@ private fun ProgrammeGuideScreen(
                         }
 
                         DropdownMenuItem(
-                            text = { Text("${strings.allChannels} (${playlist.channels.size})", fontWeight = if (selectedGroup == allGroup) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp) },
+                            text = { Text("${strings.allChannels} (${allVisibleChannels.size})", fontWeight = if (selectedGroup == allGroup) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp) },
                             leadingIcon = { Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             onClick = {
                                 selectedGroup = allGroup
@@ -2130,7 +2162,7 @@ private fun ProgrammeGuideScreen(
                             else categories.filter { it.contains(categorySearchQuery.trim(), ignoreCase = true) }
 
                             filteredCategories.forEach { category ->
-                                val count = playlist.channels.count { it.group == category }
+                                val count = allVisibleChannels.count { it.group == category }
                                 DropdownMenuItem(
                                     text = {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -2167,6 +2199,35 @@ private fun ProgrammeGuideScreen(
                         }
                     }
                 }
+
+                Spacer(Modifier.width(6.dp))
+                Box(Modifier.width(1.dp).height(18.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)))
+                Spacer(Modifier.width(6.dp))
+
+                // Date Selector Chips
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(dates, key = { it.toString() }) { date ->
+                        FilterChip(
+                            selected = selectedDate == date,
+                            onClick = {
+                                selectedDate = date
+                                selectedProgramme = null
+                            },
+                            label = {
+                                Text(
+                                    if (date == today) strings.todayDate(date.dayOfMonth)
+                                    else "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, guideLocale)} ${date.dayOfMonth}",
+                                    fontSize = if (isCompact) 11.sp else 13.sp
+                                )
+                            },
+                            modifier = Modifier.height(30.dp)
+                        )
+                    }
+                }
             }
 
             if (isDayLoading) {
@@ -2179,14 +2240,16 @@ private fun ProgrammeGuideScreen(
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.width(channelWidth).fillMaxHeight().background(MaterialTheme.colorScheme.surface)) {
                     Box(
-                        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 14.dp),
+                        Modifier.fillMaxWidth().height(44.dp).padding(horizontal = if (isCompact && isPortrait) 8.dp else 14.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         Text(
-                            "${strings.channelList} (${visibleChannels.size})",
+                            if (isCompact && isPortrait) strings.channelList else "${strings.channelList} (${visibleChannels.size})",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
+                            fontSize = if (isCompact && isPortrait) 11.sp else 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     HorizontalDivider()
@@ -2202,42 +2265,44 @@ private fun ProgrammeGuideScreen(
                                 modifier = Modifier.fillMaxWidth().height(rowHeight)
                             ) {
                                 Row(
-                                    Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp),
+                                    Modifier.fillMaxSize().padding(horizontal = if (isCompact && isPortrait) 6.dp else 10.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     ChannelLogo(
                                         channel = channel,
                                         epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
-                                        modifier = Modifier.size(38.dp)
+                                        modifier = Modifier.size(if (isCompact && isPortrait) 28.dp else 38.dp)
                                     )
-                                    Spacer(Modifier.width(8.dp))
+                                    Spacer(Modifier.width(if (isCompact && isPortrait) 6.dp else 8.dp))
                                     Column(Modifier.weight(1f)) {
                                         if (channel.position > 0) {
                                             Text(
                                                 "${channel.position}.",
                                                 color = MaterialTheme.colorScheme.primary,
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp
+                                                fontSize = if (isCompact && isPortrait) 9.sp else 11.sp
                                             )
                                         }
                                         Text(
                                             channel.name,
                                             fontWeight = FontWeight.SemiBold,
-                                            fontSize = 13.sp,
+                                            fontSize = if (isCompact && isPortrait) 11.sp else 13.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    IconButton(
-                                        onClick = { onToggleFavorite(channel) },
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Star,
-                                            contentDescription = null,
-                                            tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
-                                            modifier = Modifier.size(17.dp)
-                                        )
+                                    if (!isCompact || !isPortrait) {
+                                        IconButton(
+                                            onClick = { onToggleFavorite(channel) },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Star,
+                                                contentDescription = null,
+                                                tint = if (isFav) Color(0xFFFFB800) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2393,7 +2458,7 @@ private fun ProgrammeGuideScreen(
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 12.dp)
+                            .padding(horizontal = if (isCompact) 12.dp else 18.dp, vertical = if (isCompact) 8.dp else 12.dp)
                     ) {
                         Row(
                             Modifier.fillMaxWidth(),
@@ -2402,9 +2467,9 @@ private fun ProgrammeGuideScreen(
                             ChannelLogo(
                                 channel = channel,
                                 epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
-                                modifier = Modifier.size(44.dp)
+                                modifier = Modifier.size(if (isCompact) 36.dp else 44.dp)
                             )
-                            Spacer(Modifier.width(14.dp))
+                            Spacer(Modifier.width(if (isCompact) 10.dp else 14.dp))
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (isLiveNow) {
@@ -2424,7 +2489,7 @@ private fun ProgrammeGuideScreen(
                                     }
                                     Text(
                                         programme.title,
-                                        fontSize = 17.sp,
+                                        fontSize = if (isCompact) 15.sp else 17.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -2434,16 +2499,22 @@ private fun ProgrammeGuideScreen(
                                 Text(
                                     "${channel.name} · ${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 13.sp
+                                    fontSize = if (isCompact) 11.sp else 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            Spacer(Modifier.width(12.dp))
+                            Spacer(Modifier.width(8.dp))
                             Button(
-                                onClick = { onWatchChannel(channel) }
+                                onClick = { onWatchChannel(channel) },
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = if (isCompact) 10.dp else 14.dp)
                             ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (isLiveNow) strings.watchNow else strings.watchLiveChannel)
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                if (!isCompact || !isPortrait) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(if (isLiveNow) strings.watchNow else strings.watchLiveChannel, fontSize = 12.sp)
+                                }
                             }
                         }
 
@@ -4038,6 +4109,11 @@ private fun MovieDetailsDialog(
         }
     }
 
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val useVerticalLayout = isCompact && isPortrait
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -4047,91 +4123,110 @@ private fun MovieDetailsDialog(
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
             shadowElevation = 12.dp,
-            modifier = Modifier.fillMaxWidth(0.84f).fillMaxHeight(0.82f)
+            modifier = Modifier
+                .fillMaxWidth(if (isCompact) 0.94f else 0.84f)
+                .fillMaxHeight(if (isCompact) 0.90f else 0.82f)
         ) {
             Box(Modifier.fillMaxSize()) {
-                Row(
-                    Modifier.fillMaxSize().padding(24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxHeight().aspectRatio(2f / 3f)
+                if (useVerticalLayout) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (posterRequest != null) {
-                                AsyncImage(
-                                    model = posterRequest,
-                                    contentDescription = movie.name,
-                                    contentScale = ContentScale.Crop,
-                                    filterQuality = FilterQuality.Low,
-                                    modifier = Modifier.fillMaxSize()
+                        // Header with poster thumbnail and title
+                        Row(
+                            Modifier.fillMaxWidth().padding(end = 36.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.size(76.dp, 114.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (posterRequest != null) {
+                                        AsyncImage(
+                                            model = posterRequest,
+                                            contentDescription = movie.name,
+                                            contentScale = ContentScale.Crop,
+                                            filterQuality = FilterQuality.Low,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(36.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    movie.name,
+                                    fontSize = 20.sp,
+                                    lineHeight = 26.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                            } else {
-                                Icon(
-                                    Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(64.dp)
+                                val metadata = formatVodMetadata(
+                                    details?.releaseDate?.take(4) ?: movie.year,
+                                    details?.rating ?: movie.rating
                                 )
+                                if (metadata.isNotBlank()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        metadata,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                sourceName?.let {
+                                    Spacer(Modifier.height(3.dp))
+                                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                                }
                             }
                         }
-                    }
-                    Column(Modifier.weight(1f).fillMaxHeight()) {
-                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                movie.name,
-                                fontSize = 30.sp,
-                                lineHeight = 36.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            val metadata = formatVodMetadata(
-                                details?.releaseDate?.take(4) ?: movie.year,
-                                details?.rating ?: movie.rating
-                            )
-                            if (metadata.isNotBlank()) {
-                                Spacer(Modifier.height(10.dp))
-                                Text(
-                                    metadata,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            sourceName?.let {
-                                Spacer(Modifier.height(6.dp))
-                                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                            }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Scrollable plot & metadata
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                        ) {
                             if (client != null && details == null && !detailsError) {
-                                Spacer(Modifier.height(18.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(strings.loadingMovieDetails, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(strings.loadingMovieDetails, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                                 }
                             }
                             if (detailsError) {
-                                Spacer(Modifier.height(14.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(strings.movieDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Spacer(Modifier.width(8.dp))
-                                    TextButton(onClick = { retryKey++ }) { Text(strings.retry) }
+                                    Text(strings.movieDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                    Spacer(Modifier.width(6.dp))
+                                    TextButton(onClick = { retryKey++ }) { Text(strings.retry, fontSize = 12.sp) }
                                 }
                             }
                             val plot = details?.plot ?: movie.plot
                             if (!plot.isNullOrBlank()) {
-                                Spacer(Modifier.height(22.dp))
                                 Text(
                                     plot,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 16.sp,
-                                    lineHeight = 24.sp
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp
                                 )
+                                Spacer(Modifier.height(12.dp))
                             }
                             details?.let { info ->
-                                Spacer(Modifier.height(18.dp))
                                 MovieMetadataLine(strings.genre, info.genre)
                                 MovieMetadataLine(strings.duration, info.duration)
                                 MovieMetadataLine(strings.releaseDate, info.releaseDate)
@@ -4141,58 +4236,212 @@ private fun MovieDetailsDialog(
                                 MovieMetadataLine(strings.ageRating, info.ageRating)
                             }
                         }
-                        Spacer(Modifier.height(24.dp))
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = onToggleWatchlist,
-                                modifier = Modifier.weight(1f).height(54.dp)
-                            ) {
-                                Icon(
-                                    if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
-                                    contentDescription = null
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = onToggleWatched,
-                                modifier = Modifier.weight(1f).height(54.dp)
-                            ) {
-                                Icon(
-                                    if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
-                                    contentDescription = null,
-                                    tint = if (isWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    if (isWatched) strings.markUnwatched else strings.markWatched,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Actions for phones: Primary Watch Now button full width + secondary row
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = onWatch,
-                                modifier = Modifier.weight(1f).height(54.dp)
+                                modifier = Modifier.fillMaxWidth().height(48.dp)
                             ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text(strings.watchNow, fontWeight = FontWeight.Bold)
+                                Text(strings.watchNow, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = onToggleWatchlist,
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(
+                                        if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = onToggleWatched,
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(
+                                        if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                                        contentDescription = null,
+                                        tint = if (isWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        if (isWatched) strings.markUnwatched else strings.markWatched,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        Modifier.fillMaxSize().padding(24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxHeight().aspectRatio(2f / 3f)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (posterRequest != null) {
+                                    AsyncImage(
+                                        model = posterRequest,
+                                        contentDescription = movie.name,
+                                        contentScale = ContentScale.Crop,
+                                        filterQuality = FilterQuality.Low,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(64.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Column(Modifier.weight(1f).fillMaxHeight()) {
+                            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    movie.name,
+                                    fontSize = 30.sp,
+                                    lineHeight = 36.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                val metadata = formatVodMetadata(
+                                    details?.releaseDate?.take(4) ?: movie.year,
+                                    details?.rating ?: movie.rating
+                                )
+                                if (metadata.isNotBlank()) {
+                                    Spacer(Modifier.height(10.dp))
+                                    Text(
+                                        metadata,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                sourceName?.let {
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                }
+                                if (client != null && details == null && !detailsError) {
+                                    Spacer(Modifier.height(18.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(strings.loadingMovieDetails, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                if (detailsError) {
+                                    Spacer(Modifier.height(14.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(strings.movieDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Spacer(Modifier.width(8.dp))
+                                        TextButton(onClick = { retryKey++ }) { Text(strings.retry) }
+                                    }
+                                }
+                                val plot = details?.plot ?: movie.plot
+                                if (!plot.isNullOrBlank()) {
+                                    Spacer(Modifier.height(22.dp))
+                                    Text(
+                                        plot,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 16.sp,
+                                        lineHeight = 24.sp
+                                    )
+                                }
+                                details?.let { info ->
+                                    Spacer(Modifier.height(18.dp))
+                                    MovieMetadataLine(strings.genre, info.genre)
+                                    MovieMetadataLine(strings.duration, info.duration)
+                                    MovieMetadataLine(strings.releaseDate, info.releaseDate)
+                                    MovieMetadataLine(strings.director, info.director)
+                                    MovieMetadataLine(strings.cast, info.cast)
+                                    MovieMetadataLine(strings.country, info.country)
+                                    MovieMetadataLine(strings.ageRating, info.ageRating)
+                                }
+                            }
+                            Spacer(Modifier.height(24.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = onToggleWatchlist,
+                                    modifier = Modifier.weight(1f).height(54.dp)
+                                ) {
+                                    Icon(
+                                        if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                        contentDescription = null
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = onToggleWatched,
+                                    modifier = Modifier.weight(1f).height(54.dp)
+                                ) {
+                                    Icon(
+                                        if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                                        contentDescription = null,
+                                        tint = if (isWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        if (isWatched) strings.markUnwatched else strings.markWatched,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Button(
+                                    onClick = onWatch,
+                                    modifier = Modifier.weight(1f).height(54.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(strings.watchNow, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
                 FilledIconButton(
                     onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(14.dp)
+                    modifier = Modifier.align(Alignment.TopEnd).padding(if (isCompact) 8.dp else 14.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = strings.close)
+                    Icon(Icons.Default.Close, contentDescription = strings.close, modifier = Modifier.size(if (isCompact) 18.dp else 22.dp))
                 }
             }
         }
@@ -4261,13 +4510,18 @@ private fun SeriesEpisodesDialog(
         }
     }
 
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxWidth(0.86f).fillMaxHeight(0.86f)
+            modifier = Modifier
+                .fillMaxWidth(if (isCompact) 0.94f else 0.86f)
+                .fillMaxHeight(if (isCompact) 0.90f else 0.86f)
         ) {
-            Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Column(Modifier.fillMaxSize().padding(if (isCompact) 14.dp else 20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val effectiveCover = details?.coverUrl ?: series.coverUrl
                     if (!effectiveCover.isNullOrBlank()) {
@@ -4275,57 +4529,58 @@ private fun SeriesEpisodesDialog(
                             model = effectiveCover,
                             contentDescription = series.name,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(62.dp, 92.dp).clip(RoundedCornerShape(10.dp))
+                            modifier = Modifier.size(if (isCompact) 54.dp else 62.dp, if (isCompact) 80.dp else 92.dp).clip(RoundedCornerShape(10.dp))
                         )
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(if (isCompact) 10.dp else 14.dp))
                     }
                     Column(Modifier.weight(1f)) {
-                        Text(series.name, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text(series.name, fontSize = if (isCompact) 18.sp else 24.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         val meta = formatVodMetadata(
                             details?.releaseDate?.take(4) ?: series.year,
                             details?.rating ?: series.rating
                         )
                         if (meta.isNotBlank()) {
                             Spacer(Modifier.height(2.dp))
-                            Text(meta, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                            Text(meta, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = if (isCompact) 12.sp else 13.sp)
                         }
                         val plot = details?.plot ?: series.plot
                         if (!plot.isNullOrBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(3.dp))
+                            Text(plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         details?.let { info ->
-                            Spacer(Modifier.height(6.dp))
+                            Spacer(Modifier.height(4.dp))
                             val highlights = listOfNotNull(info.genre, info.duration, info.ageRating)
                             if (highlights.isNotEmpty()) {
                                 Text(
                                     highlights.joinToString("  ·  "),
                                     color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            val credits = listOfNotNull(
-                                info.director?.let { "${strings.director}: $it" },
-                                info.cast?.let { "${strings.cast}: $it" },
-                                info.country?.let { "${strings.country}: $it" }
-                            ).joinToString("  ·  ")
-                            if (credits.isNotBlank()) {
-                                Spacer(Modifier.height(3.dp))
-                                Text(credits, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
                         }
                     }
-                    OutlinedButton(onClick = onToggleFollow) {
-                        Icon(
-                            if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (isFollowed) strings.unfollowSeries else strings.followSeries)
+                    if (isCompact) {
+                        IconButton(onClick = onToggleFollow) {
+                            Icon(
+                                if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                contentDescription = if (isFollowed) strings.unfollowSeries else strings.followSeries,
+                                tint = if (isFollowed) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        OutlinedButton(onClick = onToggleFollow) {
+                            Icon(
+                                if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (isFollowed) strings.unfollowSeries else strings.followSeries)
+                        }
                     }
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = strings.close) }
                 }
@@ -4728,6 +4983,9 @@ private fun VodPlayerDialog(
                 modifier = Modifier.fillMaxSize()
             ) {
                 Box(Modifier.fillMaxSize()) {
+                    val configuration = LocalConfiguration.current
+                    val isCompact = configuration.screenWidthDp < 600
+
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -4737,7 +4995,7 @@ private fun VodPlayerDialog(
                                     colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
                                 )
                             )
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                            .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 10.dp else 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         FilledIconButton(
@@ -4745,17 +5003,18 @@ private fun VodPlayerDialog(
                             colors = IconButtonDefaults.filledIconButtonColors(
                                 containerColor = Color.Black.copy(alpha = 0.7f),
                                 contentColor = Color.White
-                            )
+                            ),
+                            modifier = Modifier.size(if (isCompact) 36.dp else 40.dp)
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back, modifier = Modifier.size(if (isCompact) 18.dp else 20.dp))
                         }
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(if (isCompact) 8.dp else 12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 request.title,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp,
+                                fontSize = if (isCompact) 14.sp else 17.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -4763,7 +5022,7 @@ private fun VodPlayerDialog(
                                 Text(
                                     "S${(request.season ?: 1).toString().padStart(2, '0')} E${(request.episode ?: 1).toString().padStart(2, '0')}",
                                     color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 12.sp,
+                                    fontSize = if (isCompact) 10.sp else 12.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -4772,103 +5031,109 @@ private fun VodPlayerDialog(
                         if (request.kind == VodProgressKind.EPISODE || loadAllEpisodes != null) {
                             Surface(
                                 onClick = { showEpisodesDrawer = true },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                                 color = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 10.dp, vertical = 6.dp)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         Icons.Default.VideoLibrary,
                                         contentDescription = strings.episodesDrawer,
                                         tint = if (showEpisodesDrawer) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        strings.episodesDrawer,
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (showEpisodesDrawer) FontWeight.Bold else FontWeight.Normal
-                                    )
+                                    if (!isCompact) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            strings.episodesDrawer,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (showEpisodesDrawer) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
                                 }
                             }
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(if (isCompact) 6.dp else 8.dp))
                         }
 
                         Surface(
                             onClick = { showTracksDialog = true },
-                            shape = RoundedCornerShape(20.dp),
+                            shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                             color = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
                             border = BorderStroke(1.dp, if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
                         ) {
                             Row(
-                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 10.dp, vertical = 6.dp)),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     Icons.Default.Subtitles,
                                     contentDescription = strings.audioAndSubtitles,
                                     tint = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    strings.audioAndSubtitles,
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Normal
-                                )
+                                if (!isCompact) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.audioAndSubtitles,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
                             }
                         }
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(if (isCompact) 6.dp else 8.dp))
 
                         if (loadNextEpisode != null) {
                             Surface(
                                 onClick = { autoPlayNext = !autoPlayNext },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                                 color = if (autoPlayNext) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 10.dp, vertical = 6.dp)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         Icons.Default.FastForward,
                                         contentDescription = strings.autoPlayNext,
                                         tint = if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        strings.autoPlayNext,
-                                        color = if (autoPlayNext) Color.White else Color.White.copy(alpha = 0.7f),
-                                        fontSize = 12.sp,
-                                        fontWeight = if (autoPlayNext) FontWeight.Bold else FontWeight.Normal
-                                    )
+                                    if (!isCompact) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            strings.autoPlayNext,
+                                            color = if (autoPlayNext) Color.White else Color.White.copy(alpha = 0.7f),
+                                            fontSize = 12.sp,
+                                            fontWeight = if (autoPlayNext) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
                                 }
                             }
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(if (isCompact) 6.dp else 8.dp))
                         }
 
                         Surface(
                             onClick = { showSleepTimerDialog = true },
-                            shape = RoundedCornerShape(20.dp),
+                            shape = if (isCompact && sleepTimerRemainingText == null && sleepTimerMinutes != -1) CircleShape else RoundedCornerShape(20.dp),
                             color = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
                             border = BorderStroke(1.dp, if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f))
                         ) {
                             Row(
-                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                Modifier.padding(if (isCompact && sleepTimerRemainingText == null && sleepTimerMinutes != -1) PaddingValues(9.dp) else PaddingValues(horizontal = 10.dp, vertical = 6.dp)),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     Icons.Default.Bedtime,
                                     contentDescription = strings.sleepTimer,
                                     tint = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                                 if (sleepTimerRemainingText != null) {
                                     Spacer(Modifier.width(6.dp))
@@ -4878,7 +5143,7 @@ private fun VodPlayerDialog(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
-                                } else if (sleepTimerMinutes == -1) {
+                                } else if (sleepTimerMinutes == -1 && !isCompact) {
                                     Spacer(Modifier.width(6.dp))
                                     Text(
                                         strings.endOfEpisode,
@@ -5950,6 +6215,11 @@ private fun ChannelBrowser(
     val channelListState = rememberLazyListState()
 
     if (showProgrammeGuide) {
+        val initialCategory = when {
+            selectedFilter.startsWith("group:") -> selectedFilter.removePrefix("group:")
+            selectedFilter == recentFilter -> strings.navFavorites
+            else -> strings.allChannels
+        }
         ProgrammeGuideScreen(
             playlist = playlist,
             epgGuide = epgGuide,
@@ -5960,6 +6230,7 @@ private fun ChannelBrowser(
             onToggleFavorite = onToggleFavorite,
             categoryOrder = categoryOrder,
             hiddenCategories = hiddenCategories,
+            initialCategory = initialCategory,
             onBack = { showProgrammeGuide = false },
             onWatchChannel = { channel ->
                 selectChannel(channel)
@@ -6325,24 +6596,41 @@ private fun ChannelBrowser(
                     )
                 }
             }
+            val movablePlayerPanel = remember(
+                selectedChannel?.libraryId() ?: selectedChannel?.streamUrl,
+                epgGuide,
+                epgTimeShiftHours,
+                playlist.channels,
+                orderedCategories,
+                favoriteChannelIds,
+                recentChannelIds,
+                playChannelsFullscreen,
+                autoPictureInPicture
+            ) {
+                if (selectedChannel == null) null
+                else movableContentOf { playerModifier: Modifier ->
+                    PlayerPanel(
+                        channel = selectedChannel!!,
+                        epgGuide = epgGuide,
+                        epgTimeShiftHours = epgTimeShiftHours,
+                        channels = playlist.channels,
+                        groups = orderedCategories,
+                        favoriteChannelIds = favoriteChannelIds,
+                        recentChannelIds = recentChannelIds,
+                        onToggleFavorite = onToggleFavorite,
+                        autoEnterFullscreen = playChannelsFullscreen,
+                        autoPictureInPicture = autoPictureInPicture,
+                        onChannelSelected = ::selectChannel,
+                        modifier = playerModifier
+                    )
+                }
+            }
+
             Spacer(Modifier.height(10.dp))
             if (isCompact && isPortrait) {
-                if (selectedChannel != null) {
+                if (selectedChannel != null && movablePlayerPanel != null) {
                     Column(Modifier.weight(1f).fillMaxWidth()) {
-                        PlayerPanel(
-                            channel = selectedChannel!!,
-                            epgGuide = epgGuide,
-                            epgTimeShiftHours = epgTimeShiftHours,
-                            channels = playlist.channels,
-                            groups = orderedCategories,
-                            favoriteChannelIds = favoriteChannelIds,
-                            recentChannelIds = recentChannelIds,
-                            onToggleFavorite = onToggleFavorite,
-                            autoEnterFullscreen = playChannelsFullscreen,
-                            autoPictureInPicture = autoPictureInPicture,
-                            onChannelSelected = ::selectChannel,
-                            modifier = Modifier.fillMaxWidth().wrapContentHeight()
-                        )
+                        movablePlayerPanel(Modifier.fillMaxWidth().wrapContentHeight())
                         Spacer(Modifier.height(10.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(6.dp))
@@ -6447,22 +6735,9 @@ private fun ChannelBrowser(
                             }
                         }
                     }
-                    selectedChannel?.let { channel ->
+                    if (selectedChannel != null && movablePlayerPanel != null) {
                         Spacer(Modifier.width(16.dp))
-                        PlayerPanel(
-                            channel = channel,
-                            epgGuide = epgGuide,
-                            epgTimeShiftHours = epgTimeShiftHours,
-                            channels = playlist.channels,
-                            groups = orderedCategories,
-                            favoriteChannelIds = favoriteChannelIds,
-                            recentChannelIds = recentChannelIds,
-                            onToggleFavorite = onToggleFavorite,
-                            autoEnterFullscreen = playChannelsFullscreen,
-                            autoPictureInPicture = autoPictureInPicture,
-                            onChannelSelected = ::selectChannel,
-                            modifier = Modifier.weight(1f).fillMaxHeight()
-                        )
+                        movablePlayerPanel(Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -6567,9 +6842,16 @@ private fun GuideChannelRow(
         } else {
             null
         }
+        val timeRange = if (adjustedStart != null && adjustedStop != null) {
+            "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+        } else if (adjustedStop != null) {
+            strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
+        } else {
+            null
+        }
         ChannelEpgPresentation(
             title = current?.title,
-            endTime = adjustedStop?.let { strings.until(formatProgrammeTime(Instant.ofEpochMilli(it))) },
+            timeRange = timeRange,
             progress = progress
         )
     }
@@ -6577,7 +6859,7 @@ private fun GuideChannelRow(
         channel = channel,
         epgChannel = epgGuide?.findChannel(channel.tvgId, channel.name),
         nowPlaying = presentation.title,
-        endTime = presentation.endTime,
+        timeRange = presentation.timeRange,
         progress = presentation.progress,
         selected = selected,
         isFavorite = isFavorite,
@@ -6588,7 +6870,7 @@ private fun GuideChannelRow(
 
 private data class ChannelEpgPresentation(
     val title: String?,
-    val endTime: String?,
+    val timeRange: String?,
     val progress: Float?
 )
 
@@ -6597,7 +6879,7 @@ private fun ChannelRow(
     channel: PlaylistChannel,
     epgChannel: com.fortresstv.player.epg.EpgChannel?,
     nowPlaying: String?,
-    endTime: String? = null,
+    timeRange: String? = null,
     progress: Float? = null,
     selected: Boolean,
     isFavorite: Boolean = false,
@@ -6609,52 +6891,73 @@ private fun ChannelRow(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
         color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .18f)
-        else MaterialTheme.colorScheme.surfaceVariant,
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+        border = if (selected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            ChannelLogo(channel, epgChannel)
-            Spacer(Modifier.width(16.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            ChannelLogo(channel, epgChannel, modifier = Modifier.size(44.dp))
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    when {
-                        nowPlaying != null -> nowPlaying
-                        epgChannel != null -> strings.noCurrentProgramme
-                        channel.tvgId == null -> strings.noEpgId
-                        else -> strings.noEpgData
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        channel.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (timeRange != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            timeRange,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                if (nowPlaying != null) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        nowPlaying,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 if (progress != null) {
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(
                         progress = { progress },
-                        modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.5.dp)
+                            .clip(RoundedCornerShape(2.dp)),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f)
+                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .12f)
                     )
                 }
             }
-            if (endTime != null) {
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    endTime,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
             onToggleFavorite?.let { toggle ->
-                Spacer(Modifier.width(6.dp))
-                IconButton(onClick = toggle) {
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = toggle,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Star else Icons.Outlined.StarOutline,
                         contentDescription = if (isFavorite) strings.removeFavorite else strings.addFavorite,
-                        tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (isFavorite) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -6717,10 +7020,16 @@ private fun PlayerPanel(
     val player = remember {
         ExoPlayer.Builder(context, renderersFactory).build().apply { playWhenReady = true }
     }
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var consecutiveStallRecoveries by remember(channel.streamUrl) { mutableIntStateOf(0) }
-    var fullscreen by remember { mutableStateOf(false) }
+    var manualFullscreen by rememberSaveable(channel.streamUrl) { mutableStateOf(autoEnterFullscreen) }
+    var landscapeFullscreenDismissed by rememberSaveable(channel.streamUrl, isPortrait) { mutableStateOf(false) }
+    val fullscreen = manualFullscreen || (isCompact && !isPortrait && !landscapeFullscreenDismissed)
     val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
     var previousWatchedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var currentTrackedChannel by remember { mutableStateOf(channel) }
@@ -6799,7 +7108,7 @@ private fun PlayerPanel(
         player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
         player.prepare()
         player.play()
-        if (autoEnterFullscreen) fullscreen = true
+        if (autoEnterFullscreen) manualFullscreen = true
     }
 
     LaunchedEffect(player, channel.streamUrl, playbackState) {
@@ -6838,7 +7147,7 @@ private fun PlayerPanel(
                 playbackError = playbackError,
                 fullscreen = false,
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
-                onFullscreen = { fullscreen = true },
+                onFullscreen = { manualFullscreen = true; landscapeFullscreenDismissed = false },
                 onToggleControls = {},
                 onRetry = {
                     playbackError = null
@@ -6883,37 +7192,108 @@ private fun PlayerPanel(
             val progress = if (stopEpoch != null && stopEpoch > startEpoch) {
                 ((nowMilli - startEpoch).toFloat() / (stopEpoch - startEpoch).toFloat()).coerceIn(0f, 1f)
             } else null
-            Spacer(Modifier.height(8.dp))
-            Text(strings.now, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(current.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            if (progress != null && stopEpoch != null) {
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f)
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatProgrammeTime(Instant.ofEpochMilli(startEpoch)), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                    Text(formatProgrammeTime(Instant.ofEpochMilli(stopEpoch)), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Surface(
+                            color = Color(0xFFE50914).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE50914).copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(6.dp).background(Color(0xFFE50914), CircleShape))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.liveBadge, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        if (startEpoch > 0L && stopEpoch != null) {
+                            Text(
+                                "${formatProgrammeTime(Instant.ofEpochMilli(startEpoch))} – ${formatProgrammeTime(Instant.ofEpochMilli(stopEpoch))}",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(current.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    if (progress != null) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f)
+                        )
+                    }
+                    current.description?.let { description ->
+                        if (description.isNotBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                description,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
-            current.description?.let { description ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    description,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        } ?: Text(strings.noCurrentProgramme, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } ?: run {
+            Spacer(Modifier.height(8.dp))
+            Text(strings.noCurrentProgramme, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+        }
         schedule?.next?.let { next ->
-            Spacer(Modifier.height(14.dp))
-            Text(strings.next, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(next.title, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+            val nextStartEpoch = next.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(strings.next, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        next.title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (nextStartEpoch > 0L) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            formatProgrammeTime(Instant.ofEpochMilli(nextStartEpoch)),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -6932,7 +7312,7 @@ private fun PlayerPanel(
             onToggleFavorite = onToggleFavorite,
             previousWatchedChannel = previousWatchedChannel,
             onChannelSelected = ::handleChannelSwitch,
-            onExit = { fullscreen = false },
+            onExit = { manualFullscreen = false; landscapeFullscreenDismissed = true },
             onRetry = {
                 playbackError = null
                 player.prepare()
@@ -7282,6 +7662,9 @@ private fun FullscreenPlayer(
             ) {
                 Box(Modifier.fillMaxSize()) {
                     // TOP BAR
+                    val configuration = LocalConfiguration.current
+                    val isCompact = configuration.screenWidthDp < 600
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -7291,12 +7674,12 @@ private fun FullscreenPlayer(
                                     colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
                                 )
                             )
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                            .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 10.dp else 14.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             FilledIconButton(
@@ -7305,107 +7688,115 @@ private fun FullscreenPlayer(
                                 colors = IconButtonDefaults.filledIconButtonColors(
                                     containerColor = Color.Black.copy(alpha = 0.6f),
                                     contentColor = Color.White
-                                )
+                                ),
+                                modifier = Modifier.size(if (isCompact) 36.dp else 40.dp)
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back, modifier = Modifier.size(if (isCompact) 18.dp else 20.dp))
                             }
                             Surface(
                                 onClick = { showChannels = true },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                                 color = Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 12.dp, vertical = 7.dp)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         Icons.Default.Menu,
                                         contentDescription = strings.miniGuide,
                                         tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        strings.miniGuide,
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                    if (!isCompact) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            strings.miniGuide,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
                             }
                             Surface(
                                 onClick = { showGuide = true },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                                 color = Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 12.dp, vertical = 7.dp)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         Icons.Default.DateRange,
                                         contentDescription = strings.programmeGuide,
                                         tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        strings.programmeGuide,
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                    if (!isCompact) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            strings.programmeGuide,
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
                             }
                             if (audioTracks.isNotEmpty() || subtitleTracks.isNotEmpty()) {
+                                val hasActiveSubs = subtitleTracks.any { it.isSelected }
                                 Surface(
                                     onClick = { showTracksDialog = true },
-                                    shape = RoundedCornerShape(20.dp),
-                                    color = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
-                                    border = BorderStroke(1.dp, if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f))
+                                    shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
+                                    color = if (hasActiveSubs) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
+                                    border = BorderStroke(1.dp, if (hasActiveSubs) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f))
                                 ) {
                                     Row(
-                                        Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                        Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 12.dp, vertical = 7.dp)),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
                                             Icons.Default.Subtitles,
                                             contentDescription = strings.audioAndSubtitles,
-                                            tint = if (subtitleTracks.any { it.isSelected }) MaterialTheme.colorScheme.primary else Color.White,
-                                            modifier = Modifier.size(16.dp)
+                                            tint = if (hasActiveSubs) MaterialTheme.colorScheme.primary else Color.White,
+                                            modifier = Modifier.size(18.dp)
                                         )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            strings.audioAndSubtitles,
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (subtitleTracks.any { it.isSelected }) FontWeight.Bold else FontWeight.Medium
-                                        )
+                                        if (!isCompact) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                strings.audioAndSubtitles,
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (hasActiveSubs) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Surface(
                                 onClick = { showSleepTimerDialog = true },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = if (isCompact && sleepTimerRemainingText == null && sleepTimerMinutes != -1) CircleShape else RoundedCornerShape(20.dp),
                                 color = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f))
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    Modifier.padding(if (isCompact && sleepTimerRemainingText == null && sleepTimerMinutes != -1) PaddingValues(9.dp) else PaddingValues(horizontal = 12.dp, vertical = 7.dp)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         Icons.Default.Bedtime,
                                         contentDescription = strings.sleepTimer,
                                         tint = if (sleepTimerMinutes != null) MaterialTheme.colorScheme.primary else Color.White,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                     if (sleepTimerRemainingText != null) {
                                         Spacer(Modifier.width(6.dp))
@@ -7415,7 +7806,7 @@ private fun FullscreenPlayer(
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                    } else if (sleepTimerMinutes == -1) {
+                                    } else if (sleepTimerMinutes == -1 && !isCompact) {
                                         Spacer(Modifier.width(6.dp))
                                         Text(
                                             strings.endOfProgramme,
@@ -7443,31 +7834,33 @@ private fun FullscreenPlayer(
                                         }
                                     }
                                 },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                                 color = Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    Modifier.padding(if (isCompact) PaddingValues(9.dp) else PaddingValues(horizontal = 12.dp, vertical = 7.dp)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         Icons.Default.AspectRatio,
                                         contentDescription = strings.aspectRatio,
                                         tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        when (resizeMode) {
-                                            AspectRatioFrameLayout.RESIZE_MODE_FILL -> strings.aspectFill
-                                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> strings.aspectZoom
-                                            else -> strings.aspectFit
-                                        },
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                    if (!isCompact) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            when (resizeMode) {
+                                                AspectRatioFrameLayout.RESIZE_MODE_FILL -> strings.aspectFill
+                                                AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> strings.aspectZoom
+                                                else -> strings.aspectFit
+                                            },
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
                             }
                             FilledIconButton(
@@ -7479,16 +7872,17 @@ private fun FullscreenPlayer(
                                 colors = IconButtonDefaults.filledIconButtonColors(
                                     containerColor = Color.Black.copy(alpha = 0.6f),
                                     contentColor = Color.White
-                                )
+                                ),
+                                modifier = Modifier.size(if (isCompact) 36.dp else 40.dp)
                             ) {
-                                Icon(Icons.Default.Lock, contentDescription = strings.lockControls)
+                                Icon(Icons.Default.Lock, contentDescription = strings.lockControls, modifier = Modifier.size(if (isCompact) 18.dp else 20.dp))
                             }
                         }
                     }
 
                     // CENTER CHANNEL SWITCH BUTTONS
                     Row(
-                        modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 24.dp),
+                        modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = if (isCompact) 16.dp else 24.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -7502,9 +7896,9 @@ private fun FullscreenPlayer(
                                 disabledContainerColor = Color.Black.copy(alpha = 0.25f),
                                 disabledContentColor = Color.White.copy(alpha = 0.3f)
                             ),
-                            modifier = Modifier.size(56.dp)
+                            modifier = Modifier.size(if (isCompact) 46.dp else 56.dp)
                         ) {
-                            Icon(Icons.Default.SkipPrevious, contentDescription = null, modifier = Modifier.size(28.dp))
+                            Icon(Icons.Default.SkipPrevious, contentDescription = null, modifier = Modifier.size(if (isCompact) 24.dp else 28.dp))
                         }
                         FilledIconButton(
                             onClick = { nextChannel?.let(onChannelSelected) },
@@ -7516,32 +7910,32 @@ private fun FullscreenPlayer(
                                 disabledContainerColor = Color.Black.copy(alpha = 0.25f),
                                 disabledContentColor = Color.White.copy(alpha = 0.3f)
                             ),
-                            modifier = Modifier.size(56.dp)
+                            modifier = Modifier.size(if (isCompact) 46.dp else 56.dp)
                         ) {
-                            Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(28.dp))
+                            Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(if (isCompact) 24.dp else 28.dp))
                         }
                     }
 
                     // BOTTOM CHANNEL INFO CARD
                     Surface(
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
-                        shape = RoundedCornerShape(22.dp),
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 20.dp),
+                        shape = RoundedCornerShape(if (isCompact) 16.dp else 22.dp),
                         color = Color.Black.copy(alpha = 0.78f),
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
                     ) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = if (isCompact) 14.dp else 20.dp, vertical = if (isCompact) 10.dp else 14.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name))
-                                Spacer(Modifier.width(14.dp))
+                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(if (isCompact) 32.dp else 40.dp))
+                                Spacer(Modifier.width(if (isCompact) 10.dp else 14.dp))
                                 Column(Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             channel.name,
                                             color = Color.White,
-                                            fontSize = 20.sp,
+                                            fontSize = if (isCompact) 16.sp else 20.sp,
                                             fontWeight = FontWeight.Bold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -7550,13 +7944,13 @@ private fun FullscreenPlayer(
                                         val isFavorited = channel.libraryId()?.let(favoriteChannelIds::contains) == true
                                         IconButton(
                                             onClick = { onToggleFavorite(channel) },
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(if (isCompact) 28.dp else 32.dp)
                                         ) {
                                             Icon(
                                                 if (isFavorited) Icons.Default.Star else Icons.Outlined.StarOutline,
                                                 contentDescription = if (isFavorited) strings.removeFavorite else strings.addFavorite,
                                                 tint = if (isFavorited) Color(0xFFFFD700) else Color.White.copy(alpha = 0.6f),
-                                                modifier = Modifier.size(20.dp)
+                                                modifier = Modifier.size(if (isCompact) 18.dp else 20.dp)
                                             )
                                         }
                                         Spacer(Modifier.width(4.dp))
@@ -7571,14 +7965,14 @@ private fun FullscreenPlayer(
                                             ) {
                                                 Box(
                                                     Modifier
-                                                        .size(6.dp)
+                                                        .size(5.dp)
                                                         .background(Color(0xFFE50914), CircleShape)
                                                 )
-                                                Spacer(Modifier.width(4.dp))
+                                                Spacer(Modifier.width(3.dp))
                                                 Text(
                                                     strings.liveBadge,
                                                     color = Color.White,
-                                                    fontSize = 10.sp,
+                                                    fontSize = 9.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             }
@@ -7589,12 +7983,12 @@ private fun FullscreenPlayer(
                                         Text(
                                             current.title,
                                             color = MaterialTheme.colorScheme.primary,
-                                            fontSize = 15.sp,
+                                            fontSize = if (isCompact) 13.sp else 15.sp,
                                             fontWeight = FontWeight.Medium,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
-                                    } ?: Text(strings.noCurrentProgramme, color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
+                                    } ?: Text(strings.noCurrentProgramme, color = Color.White.copy(alpha = .68f), fontSize = if (isCompact) 11.sp else 13.sp)
                                 }
                                 if (previousWatchedChannel != null) {
                                     Surface(
@@ -7605,47 +7999,49 @@ private fun FullscreenPlayer(
                                         contentColor = Color.White
                                     ) {
                                         Row(
-                                            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-                                            Spacer(Modifier.width(6.dp))
+                                            Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(Modifier.width(4.dp))
                                             Text(
                                                 previousWatchedChannel.name,
                                                 color = Color.White,
-                                                fontSize = 12.sp,
+                                                fontSize = 11.sp,
                                                 fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
                                     }
-                                    Spacer(Modifier.width(10.dp))
+                                    Spacer(Modifier.width(8.dp))
                                 }
-                                schedule?.next?.let { next ->
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color.White.copy(alpha = .1f),
-                                        modifier = Modifier.widthIn(max = 240.dp)
-                                    ) {
-                                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(strings.whatsNext, color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                                val nextStartEpoch = next.startEpochMilli + (epgTimeShiftHours * 3600_000L)
-                                                if (nextStartEpoch > 0L) {
-                                                    Spacer(Modifier.width(6.dp))
-                                                    Text("· ${formatProgrammeTime(Instant.ofEpochMilli(nextStartEpoch))}", color = Color.White.copy(alpha = .6f), fontSize = 10.sp)
+                                if (!isCompact) {
+                                    schedule?.next?.let { next ->
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color.White.copy(alpha = .1f),
+                                            modifier = Modifier.widthIn(max = 240.dp)
+                                        ) {
+                                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(strings.whatsNext, color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                    val nextStartEpoch = next.startEpochMilli + (epgTimeShiftHours * 3600_000L)
+                                                    if (nextStartEpoch > 0L) {
+                                                        Spacer(Modifier.width(6.dp))
+                                                        Text("· ${formatProgrammeTime(Instant.ofEpochMilli(nextStartEpoch))}", color = Color.White.copy(alpha = .6f), fontSize = 10.sp)
+                                                    }
                                                 }
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    next.title,
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
                                             }
-                                            Spacer(Modifier.height(2.dp))
-                                            Text(
-                                                next.title,
-                                                color = Color.White,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
                                         }
                                     }
                                 }
@@ -7857,7 +8253,7 @@ private fun FullscreenGuideDrawer(
     val now = Instant.now()
     val shiftMillis = epgTimeShiftHours * 3_600_000L
     val programmes = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty()
-        .filter { programme -> (programme.stopEpochMilli ?: programme.startEpochMilli) + shiftMillis > now.toEpochMilli() }
+        .filter { programme -> (programme.stopEpochMilli ?: (programme.startEpochMilli + 3_600_000L)) + shiftMillis > now.toEpochMilli() }
         .sortedBy { it.startEpochMilli }
         .distinct()
     Surface(
@@ -7869,7 +8265,7 @@ private fun FullscreenGuideDrawer(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(strings.programmeGuide, fontSize = if (isCompact) 20.sp else 25.sp, fontWeight = FontWeight.Bold)
-                    Text(channel.name, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(channel.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = strings.close) }
             }
@@ -7886,22 +8282,77 @@ private fun FullscreenGuideDrawer(
                             "${programme.channelId}:${programme.startEpochMilli}:${programme.stopEpochMilli}:${programme.title}:$index"
                         }
                     ) { _, programme ->
-                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                        val startAdjusted = programme.startEpochMilli + shiftMillis
+                        val stopAdjusted = (programme.stopEpochMilli ?: (programme.startEpochMilli + 3_600_000L)) + shiftMillis
+                        val isLive = now.toEpochMilli() in startAdjusted..stopAdjusted
+                        val liveProgress = if (isLive && stopAdjusted > startAdjusted) {
+                            ((now.toEpochMilli() - startAdjusted).toFloat() / (stopAdjusted - startAdjusted).toFloat()).coerceIn(0f, 1f)
+                        } else null
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isLive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            border = if (isLive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                            else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        ) {
                             Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                                Text(
-                                    formatProgrammeRange(programme.startEpochMilli, programme.stopEpochMilli, epgTimeShiftHours),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(programme.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                                programme.description?.let {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    if (isLive) {
+                                        Surface(
+                                            color = Color(0xFFE50914).copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(1.dp, Color(0xFFE50914).copy(alpha = 0.5f))
+                                        ) {
+                                            Row(
+                                                Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(Modifier.size(5.dp).background(Color(0xFFE50914), CircleShape))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(strings.liveBadge, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
                                     Text(
-                                        it,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                        formatProgrammeRange(programme.startEpochMilli, programme.stopEpochMilli, epgTimeShiftHours),
+                                        color = if (isLive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isLive) FontWeight.Bold else FontWeight.SemiBold
                                     )
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    programme.title,
+                                    fontSize = if (isLive) 17.sp else 15.sp,
+                                    fontWeight = if (isLive) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (liveProgress != null) {
+                                    Spacer(Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { liveProgress },
+                                        modifier = Modifier.fillMaxWidth().height(3.5.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f)
+                                    )
+                                }
+                                programme.description?.let { desc ->
+                                    if (desc.isNotBlank()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            desc,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 12.sp,
+                                            lineHeight = 16.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -8360,9 +8811,16 @@ private fun FullscreenChannelDrawer(
                                     ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() /
                                         (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
                                 } else null
+                                val timeRange = if (adjustedStart != null && adjustedStop != null) {
+                                    "${formatProgrammeTime(Instant.ofEpochMilli(adjustedStart))}–${formatProgrammeTime(Instant.ofEpochMilli(adjustedStop))}"
+                                } else if (adjustedStop != null) {
+                                    strings.until(formatProgrammeTime(Instant.ofEpochMilli(adjustedStop)))
+                                } else {
+                                    null
+                                }
                                 ChannelEpgPresentation(
                                     title = current?.title,
-                                    endTime = adjustedStop?.let { strings.until(formatProgrammeTime(Instant.ofEpochMilli(it))) },
+                                    timeRange = timeRange,
                                     progress = progress
                                 )
                             }
@@ -8422,11 +8880,11 @@ private fun FullscreenChannelDrawer(
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.weight(1f, fill = false)
                                             )
-                                            if (presentation.endTime != null) {
+                                            if (presentation.timeRange != null) {
                                                 Spacer(Modifier.width(8.dp))
                                                 Text(
-                                                    presentation.endTime,
-                                                    color = Color.White.copy(alpha = 0.5f),
+                                                    presentation.timeRange,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f),
                                                     fontSize = 11.sp,
                                                     maxLines = 1
                                                 )
@@ -8753,7 +9211,15 @@ private fun SettingsDialog(
                             Tab(
                                 selected = selectedTab == index,
                                 onClick = { selectedTab = index },
-                                text = { Text(title, fontSize = 12.sp, fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal) }
+                                text = {
+                                    Text(
+                                        title,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
                             )
                         }
                     }
@@ -9262,6 +9728,9 @@ private fun PlaylistsTab(
     onDeletePlaylist: (PlaylistProfile) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
@@ -9326,114 +9795,231 @@ private fun PlaylistsTab(
                         else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                                IconButton(
-                                    onClick = { onMoveSource(item, -1) },
-                                    enabled = !loading && sourceIndex > 0,
-                                    modifier = Modifier.size(22.dp)
+                        if (isCompact) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(14.dp))
-                                }
-                                IconButton(
-                                    onClick = { onMoveSource(item, 1) },
-                                    enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
-                                    modifier = Modifier.size(22.dp)
-                                ) {
-                                    Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(14.dp))
-                                }
-                            }
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                when (item.source) {
-                                    is ContentSource.LocalFile -> Icons.Default.FolderOpen
-                                    is ContentSource.RemoteUrl -> Icons.Default.Link
-                                    is ContentSource.Xtream -> Icons.Default.LiveTv
-                                },
-                                contentDescription = null,
-                                tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                                        IconButton(
+                                            onClick = { onMoveSource(item, -1) },
+                                            enabled = !loading && sourceIndex > 0,
+                                            modifier = Modifier.size(20.dp)
+                                        ) {
+                                            Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(13.dp))
+                                        }
+                                        IconButton(
+                                            onClick = { onMoveSource(item, 1) },
+                                            enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
+                                            modifier = Modifier.size(20.dp)
+                                        ) {
+                                            Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(13.dp))
+                                        }
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                    Icon(
+                                        when (item.source) {
+                                            is ContentSource.LocalFile -> Icons.Default.FolderOpen
+                                            is ContentSource.RemoteUrl -> Icons.Default.Link
+                                            is ContentSource.Xtream -> Icons.Default.LiveTv
+                                        },
+                                        contentDescription = null,
+                                        tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
                                     Text(
                                         item.name,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
                                     )
                                     Spacer(Modifier.width(6.dp))
-                                    SourceRoleSelector(
-                                        role = item.role,
-                                        enabled = !loading,
-                                        onRoleChanged = { onSourceRoleChanged(item, it) }
+                                    Switch(
+                                        checked = item.enabled,
+                                        onCheckedChange = { onPlaylistEnabledChanged(item, it) },
+                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.White,
+                                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                            uncheckedThumbColor = Color(0xFF94A3B8),
+                                            uncheckedTrackColor = Color(0xFF1E293B),
+                                            uncheckedBorderColor = Color(0xFF475569),
+                                            disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                                            disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                            disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                            disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
+                                            disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
+                                            disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
+                                        ),
+                                        modifier = Modifier.scale(0.75f)
                                     )
                                 }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (item.channelCount > 0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
+                                        SourceRoleSelector(
+                                            role = item.role,
+                                            enabled = !loading,
+                                            onRoleChanged = { onSourceRoleChanged(item, it) }
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        if (item.channelCount > 0) {
+                                            Text(
+                                                strings.channelsCount(item.channelCount),
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        if (item.source !is ContentSource.LocalFile) {
+                                            IconButton(
+                                                onClick = { onRefreshPlaylist(item) },
+                                                enabled = !loading,
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                        IconButton(
+                                            onClick = { onEditPlaylist(item) },
+                                            enabled = !loading,
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist, modifier = Modifier.size(16.dp))
+                                        }
+                                        IconButton(
+                                            onClick = { onDeletePlaylist(item) },
+                                            enabled = !loading,
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                                    IconButton(
+                                        onClick = { onMoveSource(item, -1) },
+                                        enabled = !loading && sourceIndex > 0,
+                                        modifier = Modifier.size(22.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(14.dp))
+                                    }
+                                    IconButton(
+                                        onClick = { onMoveSource(item, 1) },
+                                        enabled = !loading && sourceIndex in 0 until orderedSources.lastIndex,
+                                        modifier = Modifier.size(22.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    when (item.source) {
+                                        is ContentSource.LocalFile -> Icons.Default.FolderOpen
+                                        is ContentSource.RemoteUrl -> Icons.Default.Link
+                                        is ContentSource.Xtream -> Icons.Default.LiveTv
+                                    },
+                                    contentDescription = null,
+                                    tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            "${strings.channelsCount(item.channelCount)} · ",
+                                            item.name,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        SourceRoleSelector(
+                                            role = item.role,
+                                            enabled = !loading,
+                                            onRoleChanged = { onSourceRoleChanged(item, it) }
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (item.channelCount > 0) {
+                                            Text(
+                                                "${strings.channelsCount(item.channelCount)} · ",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            formatLastUpdated(item.lastUpdated),
                                             fontSize = 11.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    Text(
-                                        formatLastUpdated(item.lastUpdated),
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
-                            }
-                            Spacer(Modifier.width(6.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Switch(
-                                    checked = item.enabled,
-                                    onCheckedChange = { onPlaylistEnabledChanged(item, it) },
-                                    enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color.White,
-                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                        checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedThumbColor = Color(0xFF94A3B8),
-                                        uncheckedTrackColor = Color(0xFF1E293B),
-                                        uncheckedBorderColor = Color(0xFF475569),
-                                        disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
-                                        disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                                        disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                                        disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
-                                        disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
-                                        disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
-                                    ),
-                                    modifier = Modifier.scale(0.75f)
-                                )
-                                if (item.source !is ContentSource.LocalFile) {
+                                Spacer(Modifier.width(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Switch(
+                                        checked = item.enabled,
+                                        onCheckedChange = { onPlaylistEnabledChanged(item, it) },
+                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.White,
+                                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                            uncheckedThumbColor = Color(0xFF94A3B8),
+                                            uncheckedTrackColor = Color(0xFF1E293B),
+                                            uncheckedBorderColor = Color(0xFF475569),
+                                            disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                                            disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                            disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                            disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
+                                            disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
+                                            disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
+                                        ),
+                                        modifier = Modifier.scale(0.75f)
+                                    )
+                                    if (item.source !is ContentSource.LocalFile) {
+                                        IconButton(
+                                            onClick = { onRefreshPlaylist(item) },
+                                            enabled = !loading,
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(15.dp))
+                                        }
+                                    }
                                     IconButton(
-                                        onClick = { onRefreshPlaylist(item) },
+                                        onClick = { onEditPlaylist(item) },
                                         enabled = !loading,
                                         modifier = Modifier.size(28.dp)
                                     ) {
-                                        Icon(Icons.Default.Refresh, contentDescription = strings.refreshPlaylist, modifier = Modifier.size(15.dp))
+                                        Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist, modifier = Modifier.size(15.dp))
                                     }
-                                }
-                                IconButton(
-                                    onClick = { onEditPlaylist(item) },
-                                    enabled = !loading,
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(Icons.Default.Edit, contentDescription = strings.editPlaylist, modifier = Modifier.size(15.dp))
-                                }
-                                IconButton(
-                                    onClick = { onDeletePlaylist(item) },
-                                    enabled = !loading,
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(15.dp))
+                                    IconButton(
+                                        onClick = { onDeletePlaylist(item) },
+                                        enabled = !loading,
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(15.dp))
+                                    }
                                 }
                             }
                         }
@@ -9572,66 +10158,141 @@ private fun EpgTab(
         context.startActivity(shareIntent)
     }
 
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // EPG Source
         SettingsGroup(title = strings.xmltvSource) {
-            Row(
-                Modifier.fillMaxWidth().padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    if (epgSource is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.DateRange,
-                    contentDescription = null,
-                    tint = if (epgSource != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        epgSourceName ?: strings.noEpgConfiguredMsg,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (epgSource != null) {
-                        Text(
-                            formatLastUpdated(epgLastUpdate),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
+            if (isCompact) {
+                Column(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (epgSource is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.DateRange,
+                            contentDescription = null,
+                            tint = if (epgSource != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
                         )
-                    }
-                }
-                Spacer(Modifier.width(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (epgSource is ContentSource.RemoteUrl) {
-                        IconButton(onClick = onRefreshEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Default.Refresh, contentDescription = strings.refresh, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                epgSourceName ?: strings.noEpgConfiguredMsg,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (epgSource != null) {
+                                Text(
+                                    formatLastUpdated(epgLastUpdate),
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        if (epgSource is ContentSource.RemoteUrl) {
+                            IconButton(onClick = onRefreshEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.Refresh, contentDescription = strings.refresh, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        if (epgSource != null) {
+                            IconButton(onClick = onRemoveEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.Delete, contentDescription = strings.removeEpg, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
-                    OutlinedButton(
-                        onClick = onEpgUrl,
-                        enabled = !loading,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl, fontSize = 11.sp)
+                        OutlinedButton(
+                            onClick = onEpgUrl,
+                            enabled = !loading,
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl, fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onEpgFile,
+                            enabled = !loading,
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile, fontSize = 11.sp)
+                        }
                     }
-                    OutlinedButton(
-                        onClick = onEpgFile,
-                        enabled = !loading,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp)
-                    ) {
-                        Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile, fontSize = 11.sp)
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (epgSource is ContentSource.RemoteUrl) Icons.Default.Link else Icons.Default.DateRange,
+                        contentDescription = null,
+                        tint = if (epgSource != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            epgSourceName ?: strings.noEpgConfiguredMsg,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (epgSource != null) {
+                            Text(
+                                formatLastUpdated(epgLastUpdate),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
-                    if (epgSource != null) {
-                        IconButton(onClick = onRemoveEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Default.Delete, contentDescription = strings.removeEpg, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (epgSource is ContentSource.RemoteUrl) {
+                            IconButton(onClick = onRefreshEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.Refresh, contentDescription = strings.refresh, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = onEpgUrl,
+                            enabled = !loading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text(if (epgSource is ContentSource.RemoteUrl) strings.edit else strings.remoteUrl, fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onEpgFile,
+                            enabled = !loading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text(if (epgSource is ContentSource.LocalFile) strings.edit else strings.localFile, fontSize = 11.sp)
+                        }
+                        if (epgSource != null) {
+                            IconButton(onClick = onRemoveEpg, enabled = !loading, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.Delete, contentDescription = strings.removeEpg, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }
@@ -9641,66 +10302,143 @@ private fun EpgTab(
         // Channel Matching Status
         if (effectiveChannels.isNotEmpty()) {
             SettingsGroup(title = "EPG Matching") {
-                Row(
-                    Modifier.fillMaxWidth().padding(10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                if (epgGuide != null) strings.epgMatched(matchedCount, effectiveChannels.size) else strings.unmatchedEpgChannels,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                            )
-                            if (epgGuide != null && effectiveChannels.isNotEmpty()) {
-                                Spacer(Modifier.width(6.dp))
-                                val pct = (matchedCount * 100) / effectiveChannels.size
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = if (pct == 100) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
-                                ) {
+                if (isCompact) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        "$pct%",
-                                        fontSize = 10.sp,
+                                        if (epgGuide != null) strings.epgMatched(matchedCount, effectiveChannels.size) else strings.unmatchedEpgChannels,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (pct == 100) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        fontSize = 13.sp,
+                                        color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                     )
+                                    if (epgGuide != null && effectiveChannels.isNotEmpty()) {
+                                        Spacer(Modifier.width(6.dp))
+                                        val pct = (matchedCount * 100) / effectiveChannels.size
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = if (pct == 100) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                                        ) {
+                                            Text(
+                                                "$pct%",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (pct == 100) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    if (epgGuide != null && unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (unmatchedChannels.isNotEmpty()) {
+                                IconButton(onClick = ::shareList, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Share, contentDescription = strings.shareChannelsList, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            if (epgGuide != null && unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (unmatchedChannels.isNotEmpty()) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { saveFileLauncher.launch("channels_without_epg.txt") },
+                                    modifier = Modifier.weight(1f).height(34.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.saveChannelsList, fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = { showUnmatchedInSettings = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier.weight(1f).height(34.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.viewUnmatchedChannels, fontSize = 11.sp)
+                                }
+                            }
+                        }
                     }
-                    if (unmatchedChannels.isNotEmpty()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = ::shareList, modifier = Modifier.size(30.dp)) {
-                                Icon(Icons.Default.Share, contentDescription = strings.shareChannelsList, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (epgGuide != null) strings.epgMatched(matchedCount, effectiveChannels.size) else strings.unmatchedEpgChannels,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (epgGuide == null || unmatchedChannels.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                )
+                                if (epgGuide != null && effectiveChannels.isNotEmpty()) {
+                                    Spacer(Modifier.width(6.dp))
+                                    val pct = (matchedCount * 100) / effectiveChannels.size
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (pct == 100) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                                    ) {
+                                        Text(
+                                            "$pct%",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (pct == 100) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
                             }
-                            OutlinedButton(
-                                onClick = { saveFileLauncher.launch("channels_without_epg.txt") },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(30.dp)
-                            ) {
-                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(13.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(strings.saveChannelsList, fontSize = 11.sp)
-                            }
-                            Button(
-                                onClick = { showUnmatchedInSettings = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(30.dp)
-                            ) {
-                                Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(13.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(strings.viewUnmatchedChannels, fontSize = 11.sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                if (epgGuide != null && unmatchedChannels.isEmpty()) strings.allEpgMatched else strings.unmatchedEpgCount(unmatchedChannels.size),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (unmatchedChannels.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = ::shareList, modifier = Modifier.size(30.dp)) {
+                                    Icon(Icons.Default.Share, contentDescription = strings.shareChannelsList, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                }
+                                OutlinedButton(
+                                    onClick = { saveFileLauncher.launch("channels_without_epg.txt") },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.saveChannelsList, fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = { showUnmatchedInSettings = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(strings.viewUnmatchedChannels, fontSize = 11.sp)
+                                }
                             }
                         }
                     }
@@ -9718,55 +10456,111 @@ private fun EpgTab(
 
         // Time Shift
         SettingsGroup(title = strings.timeShift) {
-            Row(
-                Modifier.fillMaxWidth().padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(Modifier.weight(1f)) {
+            if (isCompact) {
+                Column(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(strings.timeShift, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     Text(strings.timeShiftDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                }
-                Spacer(Modifier.width(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilledTonalButton(
-                        onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
-                        enabled = epgTimeShiftHours > -23 && !loading,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.widthIn(min = 60.dp).height(32.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            val shiftDisplay = when {
-                                epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
-                                epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
-                                else -> "0 h"
+                        FilledTonalButton(
+                            onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
+                            enabled = epgTimeShiftHours > -23 && !loading,
+                            modifier = Modifier.weight(1f).height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.weight(1.2f).height(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                val shiftDisplay = when {
+                                    epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
+                                    epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
+                                    else -> "0 h"
+                                }
+                                Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                             }
-                            Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                        FilledTonalButton(
+                            onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
+                            enabled = epgTimeShiftHours < 23 && !loading,
+                            modifier = Modifier.weight(1f).height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        if (epgTimeShiftHours != 0) {
+                            TextButton(
+                                onClick = { onEpgTimeShiftChanged(0) },
+                                enabled = !loading,
+                                contentPadding = PaddingValues(horizontal = 6.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text(strings.retry, fontSize = 11.sp)
+                            }
                         }
                     }
-                    FilledTonalButton(
-                        onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
-                        enabled = epgTimeShiftHours < 23 && !loading,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.timeShift, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(strings.timeShiftDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     }
-                    if (epgTimeShiftHours != 0) {
-                        TextButton(
-                            onClick = { onEpgTimeShiftChanged(0) },
-                            enabled = !loading,
-                            contentPadding = PaddingValues(horizontal = 6.dp),
+                    Spacer(Modifier.width(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilledTonalButton(
+                            onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
+                            enabled = epgTimeShiftHours > -23 && !loading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                             modifier = Modifier.height(32.dp)
                         ) {
-                            Text(strings.retry, fontSize = 11.sp)
+                            Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.widthIn(min = 60.dp).height(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                val shiftDisplay = when {
+                                    epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
+                                    epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
+                                    else -> "0 h"
+                                }
+                                Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
+                            enabled = epgTimeShiftHours < 23 && !loading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                        if (epgTimeShiftHours != 0) {
+                            TextButton(
+                                onClick = { onEpgTimeShiftChanged(0) },
+                                enabled = !loading,
+                                contentPadding = PaddingValues(horizontal = 6.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text(strings.retry, fontSize = 11.sp)
+                            }
                         }
                     }
                 }
@@ -9775,46 +10569,92 @@ private fun EpgTab(
 
         // EPG Days to Load (1 to 7 days)
         SettingsGroup(title = strings.epgLoadedDays) {
-            Row(
-                Modifier.fillMaxWidth().padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(Modifier.weight(1f)) {
+            if (isCompact) {
+                Column(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(strings.epgLoadedDays, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     Text(strings.epgLoadedDaysDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                }
-                Spacer(Modifier.width(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilledTonalButton(
-                        onClick = { if (epgLoadedDays > 1) onEpgLoadedDaysChanged(epgLoadedDays - 1) },
-                        enabled = epgLoadedDays > 1 && !loading,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("-1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.widthIn(min = 70.dp).height(32.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
-                            Text(
-                                strings.epgDaysCount(epgLoadedDays),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                        FilledTonalButton(
+                            onClick = { if (epgLoadedDays > 1) onEpgLoadedDaysChanged(epgLoadedDays - 1) },
+                            enabled = epgLoadedDays > 1 && !loading,
+                            modifier = Modifier.weight(1f).height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("-1", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.weight(1.5f).height(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                                Text(
+                                    strings.epgDaysCount(epgLoadedDays),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = { if (epgLoadedDays < 7) onEpgLoadedDaysChanged(epgLoadedDays + 1) },
+                            enabled = epgLoadedDays < 7 && !loading,
+                            modifier = Modifier.weight(1f).height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("+1", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
-                    FilledTonalButton(
-                        onClick = { if (epgLoadedDays < 7) onEpgLoadedDaysChanged(epgLoadedDays + 1) },
-                        enabled = epgLoadedDays < 7 && !loading,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Text("+1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.epgLoadedDays, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(strings.epgLoadedDaysDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilledTonalButton(
+                            onClick = { if (epgLoadedDays > 1) onEpgLoadedDaysChanged(epgLoadedDays - 1) },
+                            enabled = epgLoadedDays > 1 && !loading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("-1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.widthIn(min = 70.dp).height(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                                Text(
+                                    strings.epgDaysCount(epgLoadedDays),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = { if (epgLoadedDays < 7) onEpgLoadedDaysChanged(epgLoadedDays + 1) },
+                            enabled = epgLoadedDays < 7 && !loading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("+1", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
                     }
                 }
             }
