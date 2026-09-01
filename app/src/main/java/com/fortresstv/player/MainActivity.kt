@@ -282,8 +282,11 @@ class MainActivity : ComponentActivity() {
     private var fullscreenVideoPlaying = false
     private val pictureInPictureHandler = Handler(Looper.getMainLooper())
     private var onPictureInPictureDismissed: (() -> Unit)? = null
+    private var isActivityResumed = false
+
     private val confirmPictureInPictureDismissed = Runnable {
-        if (!isInPictureInPictureMode && lifecycle.currentState != androidx.lifecycle.Lifecycle.State.RESUMED) {
+        if (!isInPictureInPictureMode && !isActivityResumed && !hasWindowFocus()) {
+            android.util.Log.d("FortressTV", "PiP dismissed confirmed - stopping audio & video")
             onPictureInPictureDismissed?.invoke()
         }
     }
@@ -346,8 +349,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        isActivityResumed = true
+        pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
+        UpdateManager.resumePendingInstall(this)
+    }
+
+    override fun onPause() {
+        isActivityResumed = false
+        super.onPause()
+    }
+
     override fun onStop() {
         super.onStop()
+        isActivityResumed = false
         if (!isInPictureInPictureMode) {
             pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
             onPictureInPictureDismissed?.invoke()
@@ -359,12 +375,6 @@ class MainActivity : ComponentActivity() {
         onPictureInPictureDismissed?.invoke()
         onPictureInPictureDismissed = null
         super.onDestroy()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
-        UpdateManager.resumePendingInstall(this)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -6618,16 +6628,7 @@ private fun ChannelBrowser(
                     )
                 }
             }
-            val movablePlayerPanel = remember(
-                epgGuide,
-                epgTimeShiftHours,
-                playlist.channels,
-                orderedCategories,
-                favoriteChannelIds,
-                recentChannelIds,
-                playChannelsFullscreen,
-                autoPictureInPicture
-            ) {
+            val movablePlayerPanel = remember {
                 movableContentOf { currentChannel: PlaylistChannel, playerModifier: Modifier ->
                     PlayerPanel(
                         channel = currentChannel,
@@ -7074,7 +7075,9 @@ private fun PlayerPanel(
         val pictureInPictureDismissedListener = {
             resumePlaybackOnStart = false
             manualFullscreen = false
+            player.playWhenReady = false
             player.stop()
+            player.clearMediaItems()
         }
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
