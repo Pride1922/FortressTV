@@ -26,6 +26,8 @@ class XtreamClient(
     @Volatile
     private var baseUrl = normalizeServerUrl(source.value)
 
+    fun resolvedServerUrl(): String = baseUrl
+
     suspend fun authenticate() {
         val root = JSONObject(request(null))
         val user = root.optJSONObject("user_info") ?: error("Invalid Xtream response")

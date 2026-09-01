@@ -656,10 +656,17 @@ private fun FortressTVApp() {
         retryLoad = null
         scope.launch(Dispatchers.IO) {
             runCatching {
-                XtreamClient(context.applicationContext, profile.id, source).loadCatalog(forceRefresh)
-            }.onSuccess { catalog ->
+                val client = XtreamClient(context.applicationContext, profile.id, source)
+                client.loadCatalog(forceRefresh) to client.resolvedServerUrl()
+            }.onSuccess { (catalog, resolvedServerUrl) ->
+                val resolvedSource = if (resolvedServerUrl != source.value) {
+                    source.copy(value = resolvedServerUrl)
+                } else {
+                    source
+                }
                 val totalCount = catalog.liveChannels.size + catalog.movies.size + catalog.series.size
                 val updated = profile.copy(
+                    source = resolvedSource,
                     lastUpdated = System.currentTimeMillis(),
                     channelCount = if (catalog.liveChannels.isNotEmpty()) catalog.liveChannels.size else totalCount
                 )
@@ -8613,23 +8620,9 @@ private fun SettingsDialog(
 
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val view = LocalView.current
-    val focusRequester = remember { FocusRequester() }
-
     fun hideKeyboard() {
-        runCatching { focusRequester.requestFocus() }
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
-        view.clearFocus()
-        val dialogWin = (view.parent as? DialogWindowProvider)?.window
-            ?: (view.context as? ComponentActivity)?.window
-        if (dialogWin != null) {
-            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
     }
 
     BackHandler(onBack = {
@@ -8637,19 +8630,20 @@ private fun SettingsDialog(
         onDismiss()
     })
 
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.7f))
-            .focusRequester(focusRequester)
-            .focusable()
             .imePadding()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
                 hideKeyboard()
-                onDismiss()
             },
         contentAlignment = Alignment.Center
     ) {
@@ -8672,7 +8666,7 @@ private fun SettingsDialog(
             }).clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
-            ) { hideKeyboard() }
+            ) { /* consume clicks inside settings */ }
         ) {
             Column(Modifier.fillMaxSize().padding(if (isTwoPane) 18.dp else 12.dp)) {
                 // Top Header Row
@@ -8868,6 +8862,7 @@ private fun SettingsDialog(
                 }
             }
         }
+    }
     }
 }
 
@@ -10131,31 +10126,25 @@ private fun AddPlaylistDialog(
     onPickFile: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var mode by remember { mutableIntStateOf(0) }
+    var isConnecting by remember { mutableStateOf(false) }
+    var connectionError by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val view = LocalView.current
-    val focusRequester = remember { FocusRequester() }
+    val serverFocusRequester = remember { FocusRequester() }
+    val usernameFocusRequester = remember { FocusRequester() }
+    val passwordFocusRequester = remember { FocusRequester() }
 
     fun hideKeyboard() {
-        runCatching { focusRequester.requestFocus() }
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
-        view.clearFocus()
-        val dialogWin = (view.parent as? DialogWindowProvider)?.window
-            ?: (view.context as? ComponentActivity)?.window
-        if (dialogWin != null) {
-            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
     }
 
     BackHandler(onBack = {
@@ -10163,19 +10152,23 @@ private fun AddPlaylistDialog(
         onDismiss()
     })
 
+    Dialog(
+        onDismissRequest = { hideKeyboard() },
+        properties = DialogProperties(
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.7f))
-            .focusRequester(focusRequester)
-            .focusable()
             .imePadding()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
                 hideKeyboard()
-                onDismiss()
             },
         contentAlignment = Alignment.Center
     ) {
@@ -10190,7 +10183,7 @@ private fun AddPlaylistDialog(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
-                ) { /* consume clicks on card */ }
+                ) { hideKeyboard() }
         ) {
             Column(
                 modifier = Modifier
@@ -10215,6 +10208,7 @@ private fun AddPlaylistDialog(
                         selected = mode == 0,
                         onClick = {
                             hideKeyboard()
+                            connectionError = null
                             mode = 0
                         },
                         text = { Text(strings.remoteUrl) }
@@ -10223,6 +10217,7 @@ private fun AddPlaylistDialog(
                         selected = mode == 1,
                         onClick = {
                             hideKeyboard()
+                            connectionError = null
                             mode = 1
                         },
                         text = { Text(strings.localFile) }
@@ -10231,6 +10226,7 @@ private fun AddPlaylistDialog(
                         selected = mode == 2,
                         onClick = {
                             hideKeyboard()
+                            connectionError = null
                             mode = 2
                         },
                         text = { Text(strings.xtreamCodes) }
@@ -10244,19 +10240,24 @@ private fun AddPlaylistDialog(
                     placeholder = { Text(strings.playlistNamePlaceholder) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(
+                        onNext = {
+                            if (mode == 1) hideKeyboard() else serverFocusRequester.requestFocus()
+                        }
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
                 if (mode == 0) {
                     OutlinedTextField(
                         value = url,
-                        onValueChange = { url = it },
+                        onValueChange = { url = it; connectionError = null },
                         label = { Text(strings.playlistM3u) },
                         placeholder = { Text(strings.enterM3uUrl) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().focusRequester(serverFocusRequester)
                     )
                 } else if (mode == 1) {
                     Text(
@@ -10272,21 +10273,23 @@ private fun AddPlaylistDialog(
                         placeholder = { Text("http://server.example:port") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardActions = KeyboardActions(onNext = { usernameFocusRequester.requestFocus() }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(serverFocusRequester)
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = username,
-                        onValueChange = { username = it },
+                        onValueChange = { username = it; connectionError = null },
                         label = { Text(strings.username) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardActions = KeyboardActions(onNext = { passwordFocusRequester.requestFocus() }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(usernameFocusRequester)
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { password = it },
+                        onValueChange = { password = it; connectionError = null },
                         label = { Text(strings.password) },
                         singleLine = true,
                         visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
@@ -10300,7 +10303,16 @@ private fun AddPlaylistDialog(
                                 )
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().focusRequester(passwordFocusRequester)
+                    )
+                }
+
+                connectionError?.let { message ->
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
 
@@ -10335,14 +10347,102 @@ private fun AddPlaylistDialog(
                         Button(
                             onClick = {
                                 hideKeyboard()
-                                onAddXtream(name.trim(), url.trim(), username.trim(), password)
+                                isConnecting = true
+                                connectionError = null
+                                scope.launch {
+                                    val result = runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            validateXtreamConnection(
+                                                url.trim(),
+                                                name.trim().ifBlank { "Xtream" },
+                                                username.trim(),
+                                                password
+                                            )
+                                        }
+                                    }
+                                    isConnecting = false
+                                    result.onSuccess {
+                                        onAddXtream(name.trim(), url.trim(), username.trim(), password)
+                                    }.onFailure { failure ->
+                                        connectionError = xtreamConnectionErrorMessage(failure, strings)
+                                    }
+                                }
                             },
-                            enabled = (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
+                            enabled = !isConnecting &&
+                                    (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
                                     username.isNotBlank() && password.isNotBlank()
-                        ) { Text(strings.connect) }
+                        ) {
+                            if (isConnecting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(
+                                if (isConnecting) {
+                                    if (strings.languageTag == "pt-PT") "A ligar…" else "Connecting…"
+                                } else strings.connect
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+    }
+}
+
+private suspend fun validateXtreamConnection(
+    serverUrl: String,
+    displayName: String,
+    username: String,
+    password: String
+) {
+    val source = ContentSource.Xtream(serverUrl, displayName, username, password)
+    XtreamClient(null, "connection_test", source).authenticate()
+}
+
+private fun xtreamConnectionErrorMessage(failure: Throwable, strings: Strings): String {
+    val causes = generateSequence(failure) { it.cause }.toList()
+    val message = causes.firstNotNullOfOrNull { it.message?.takeIf(String::isNotBlank) }.orEmpty()
+    val portuguese = strings.languageTag == "pt-PT"
+    return when {
+        message.contains("account is", ignoreCase = true) -> if (portuguese) {
+            when {
+                message.contains("expired", true) -> "A conta Xtream expirou."
+                message.contains("disabled", true) -> "A conta Xtream está desativada."
+                message.contains("banned", true) -> "A conta Xtream está bloqueada."
+                else -> "A conta Xtream não está ativa."
+            }
+        } else {
+            when {
+                message.contains("expired", true) -> "The Xtream account has expired."
+                message.contains("disabled", true) -> "The Xtream account is disabled."
+                message.contains("banned", true) -> "The Xtream account is banned."
+                else -> "The Xtream account is not active."
+            }
+        }
+        message.contains("authentication failed", true) ->
+            if (portuguese) "Nome de utilizador ou palavra-passe incorretos." else "Incorrect username or password."
+        causes.any { it is java.net.UnknownHostException } ->
+            if (portuguese) "Não foi possível encontrar o servidor." else "The server could not be found."
+        causes.any { it is java.net.SocketTimeoutException } ->
+            if (portuguese) "A ligação ao servidor excedeu o tempo limite." else "The server connection timed out."
+        causes.any { it is javax.net.ssl.SSLException } ->
+            if (portuguese) "Não foi possível estabelecer uma ligação segura ao servidor." else "A secure connection to the server could not be established."
+        message.contains("HTTP 401") || message.contains("HTTP 403") ->
+            if (portuguese) "O servidor recusou as credenciais ($message)." else "The server rejected the credentials ($message)."
+        message.contains("HTTP ") ->
+            if (portuguese) "O servidor recusou a ligação ($message)." else "The server rejected the connection ($message)."
+        message.contains("Invalid Xtream response", true) || message.contains("JSON", true) ->
+            if (portuguese) "O servidor devolveu uma resposta Xtream inválida." else "The server returned an invalid Xtream response."
+        message.contains("catalogue is empty", true) ->
+            if (portuguese) "A ligação foi estabelecida, mas o servidor não devolveu canais, filmes ou séries." else "Connected, but the server returned no channels, movies, or series."
+        else -> if (portuguese) {
+            "Não foi possível carregar o catálogo Xtream. Verifique o servidor e as credenciais."
+        } else {
+            "The Xtream catalogue could not be loaded. Check the server and credentials."
         }
     }
 }
@@ -10354,8 +10454,12 @@ private fun EditPlaylistDialog(
     onConfirm: (String, ContentSource, SourceRole) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val serverFocusRequester = remember { FocusRequester() }
+    val usernameFocusRequester = remember { FocusRequester() }
+    val passwordFocusRequester = remember { FocusRequester() }
     var name by remember(profile.id) { mutableStateOf(profile.name) }
     var role by remember(profile.id) { mutableStateOf(profile.role) }
     var roleDropdownExpanded by remember { mutableStateOf(false) }
@@ -10377,6 +10481,8 @@ private fun EditPlaylistDialog(
         mutableStateOf((initialSource as? ContentSource.Xtream)?.password ?: "")
     }
     var showPassword by remember { mutableStateOf(false) }
+    var isConnecting by remember(profile.id) { mutableStateOf(false) }
+    var connectionError by remember(profile.id) { mutableStateOf<String?>(null) }
 
     val canSave = when (initialSource) {
         is ContentSource.Xtream -> name.isNotBlank() &&
@@ -10387,23 +10493,9 @@ private fun EditPlaylistDialog(
         is ContentSource.LocalFile -> name.isNotBlank()
     }
 
-    val view = LocalView.current
-    val focusRequester = remember { FocusRequester() }
-
     fun hideKeyboard() {
-        runCatching { focusRequester.requestFocus() }
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
-        view.clearFocus()
-        val dialogWin = (view.parent as? DialogWindowProvider)?.window
-            ?: (view.context as? ComponentActivity)?.window
-        if (dialogWin != null) {
-            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
     }
 
     BackHandler(onBack = {
@@ -10411,19 +10503,23 @@ private fun EditPlaylistDialog(
         onDismiss()
     })
 
+    Dialog(
+        onDismissRequest = { hideKeyboard() },
+        properties = DialogProperties(
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.7f))
-            .focusRequester(focusRequester)
-            .focusable()
             .imePadding()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
                 hideKeyboard()
-                onDismiss()
             },
         contentAlignment = Alignment.Center
     ) {
@@ -10438,7 +10534,7 @@ private fun EditPlaylistDialog(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
-                ) { /* consume clicks on card */ }
+                ) { hideKeyboard() }
         ) {
             Column(
                 modifier = Modifier
@@ -10461,30 +10557,38 @@ private fun EditPlaylistDialog(
                     label = { Text(strings.playlistName) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(
+                        onNext = {
+                            if (initialSource is ContentSource.LocalFile) hideKeyboard()
+                            else serverFocusRequester.requestFocus()
+                        }
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 if (initialSource is ContentSource.Xtream) {
                     OutlinedTextField(
                         value = serverUrl,
-                        onValueChange = { serverUrl = it },
+                        onValueChange = { serverUrl = it; connectionError = null },
                         label = { Text(strings.xtreamServer) },
                         placeholder = { Text("https://server.example:port") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardActions = KeyboardActions(onNext = { usernameFocusRequester.requestFocus() }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(serverFocusRequester)
                     )
                     OutlinedTextField(
                         value = username,
-                        onValueChange = { username = it },
+                        onValueChange = { username = it; connectionError = null },
                         label = { Text(strings.username) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardActions = KeyboardActions(onNext = { passwordFocusRequester.requestFocus() }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(usernameFocusRequester)
                     )
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { password = it },
+                        onValueChange = { password = it; connectionError = null },
                         label = { Text(strings.password) },
                         singleLine = true,
                         visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
@@ -10498,7 +10602,7 @@ private fun EditPlaylistDialog(
                                 )
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().focusRequester(passwordFocusRequester)
                     )
                 } else if (initialSource is ContentSource.RemoteUrl) {
                     OutlinedTextField(
@@ -10508,7 +10612,15 @@ private fun EditPlaylistDialog(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().focusRequester(serverFocusRequester)
+                    )
+                }
+
+                connectionError?.let { message ->
+                    Text(
+                        message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
 
@@ -10586,13 +10698,47 @@ private fun EditPlaylistDialog(
                                     displayName = name.trim()
                                 )
                             }
-                            onConfirm(name.trim(), updatedSource, role)
+                            if (updatedSource is ContentSource.Xtream) {
+                                isConnecting = true
+                                connectionError = null
+                                scope.launch {
+                                    val result = runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            validateXtreamConnection(
+                                                updatedSource.value,
+                                                name.trim(),
+                                                updatedSource.username,
+                                                updatedSource.password
+                                            )
+                                        }
+                                    }
+                                    isConnecting = false
+                                    result.onSuccess {
+                                        onConfirm(name.trim(), updatedSource, role)
+                                    }.onFailure { failure ->
+                                        connectionError = xtreamConnectionErrorMessage(failure, strings)
+                                    }
+                                }
+                            } else {
+                                onConfirm(name.trim(), updatedSource, role)
+                            }
                         },
-                        enabled = canSave
-                    ) { Text(strings.save) }
+                        enabled = canSave && !isConnecting
+                    ) {
+                        if (isConnecting) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            if (isConnecting) {
+                                if (strings.languageTag == "pt-PT") "A verificar…" else "Checking…"
+                            } else strings.save
+                        )
+                    }
                 }
             }
         }
+    }
     }
 }
 
