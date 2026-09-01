@@ -1100,7 +1100,12 @@ private fun FortressTVApp() {
                     onRetry = retryLoad,
                     onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
                     onOpenUrl = { showAddPlaylistDialog = true },
-                    onRestoreBackup = { restoreBackupPicker.launch(arrayOf("*/*", "application/octet-stream")) }
+                    onRestoreBackup = { restoreBackupPicker.launch(arrayOf("*/*", "application/octet-stream")) },
+                    onEditPlaylist = (activeProfile ?: playlists.firstOrNull())?.let { prof -> { editingProfile = prof } },
+                    onOpenSettings = {
+                        settingsInitialTab = 1
+                        showSettings = true
+                    }
                 )
             } else {
                 FortressLibrary(
@@ -1570,7 +1575,9 @@ private fun WelcomeScreen(
     onRetry: (() -> Unit)?,
     onOpenFile: () -> Unit,
     onOpenUrl: () -> Unit,
-    onRestoreBackup: () -> Unit
+    onRestoreBackup: () -> Unit,
+    onEditPlaylist: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -1580,6 +1587,21 @@ private fun WelcomeScreen(
 
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().padding(if (isCompact) 20.dp else 32.dp), contentAlignment = Alignment.Center) {
+            if (onOpenSettings != null && !loading) {
+                IconButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = strings.settingsTitle,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             Column(
                 modifier = Modifier.widthIn(max = 680.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -1652,10 +1674,32 @@ private fun WelcomeScreen(
                 }
                 if (error != null) {
                     Spacer(Modifier.height(16.dp))
-                    Text(error, color = MaterialTheme.colorScheme.error)
-                    if (onRetry != null) {
-                        Spacer(Modifier.height(10.dp))
-                        Button(onClick = onRetry, enabled = !loading) { Text(strings.retry) }
+                    Text(
+                        error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (onRetry != null) {
+                            Button(onClick = onRetry, enabled = !loading) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(strings.retry)
+                            }
+                        }
+                        if (onEditPlaylist != null) {
+                            OutlinedButton(onClick = onEditPlaylist, enabled = !loading) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(strings.editPlaylist)
+                            }
+                        }
                     }
                 }
             }
@@ -8572,36 +8616,78 @@ private fun SettingsDialog(
     val view = LocalView.current
     val focusRequester = remember { FocusRequester() }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(if (isTwoPane) 0.85f else 0.95f)
-                .fillMaxHeight(0.85f)
-                .focusRequester(focusRequester),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
+    fun hideKeyboard() {
+        runCatching { focusRequester.requestFocus() }
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        view.clearFocus()
+        val dialogWin = (view.parent as? DialogWindowProvider)?.window
+            ?: (view.context as? ComponentActivity)?.window
+        if (dialogWin != null) {
+            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
+    }
+
+    BackHandler(onBack = {
+        hideKeyboard()
+        onDismiss()
+    })
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.7f))
+            .focusRequester(focusRequester)
+            .focusable()
+            .imePadding()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
             ) {
+                hideKeyboard()
+                onDismiss()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(if (isTwoPane) 20.dp else 16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = (if (isTwoPane) {
+                Modifier
+                    .fillMaxWidth(0.88f)
+                    .widthIn(max = 940.dp)
+                    .fillMaxHeight(0.85f)
+                    .heightIn(max = 640.dp)
+                    .padding(16.dp)
+            } else {
+                Modifier
+                    .fillMaxWidth(0.96f)
+                    .fillMaxHeight(0.94f)
+                    .padding(6.dp)
+            }).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { hideKeyboard() }
+        ) {
+            Column(Modifier.fillMaxSize().padding(if (isTwoPane) 18.dp else 12.dp)) {
                 // Top Header Row
                 Row(
-                    Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         strings.settingsTitle,
-                        style = MaterialTheme.typography.titleLarge,
+                        fontSize = if (isTwoPane) 20.sp else 18.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = strings.close)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = strings.close, modifier = Modifier.size(20.dp))
                     }
                 }
 
@@ -10084,8 +10170,12 @@ private fun AddPlaylistDialog(
             .focusRequester(focusRequester)
             .focusable()
             .imePadding()
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { hideKeyboard() })
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                hideKeyboard()
+                onDismiss()
             },
         contentAlignment = Alignment.Center
     ) {
@@ -10097,16 +10187,14 @@ private fun AddPlaylistDialog(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.92f)
                 .padding(16.dp)
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { hideKeyboard() })
-                }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { /* consume clicks on card */ }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { hideKeyboard() })
-                    }
                     .verticalScroll(rememberScrollState())
                     .padding(24.dp)
             ) {
@@ -10330,8 +10418,12 @@ private fun EditPlaylistDialog(
             .focusRequester(focusRequester)
             .focusable()
             .imePadding()
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { hideKeyboard() })
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                hideKeyboard()
+                onDismiss()
             },
         contentAlignment = Alignment.Center
     ) {
@@ -10343,16 +10435,14 @@ private fun EditPlaylistDialog(
                 .widthIn(max = 520.dp)
                 .fillMaxWidth(0.92f)
                 .padding(16.dp)
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { hideKeyboard() })
-                }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { /* consume clicks on card */ }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { hideKeyboard() })
-                    }
                     .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -10549,18 +10639,7 @@ private fun SourceUrlDialog(
         properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(title) },
         text = {
-            Column(
-                Modifier.pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = {
-                            focusManager.clearFocus(force = true)
-                            keyboardController?.hide()
-                            val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                            imm?.hideSoftInputFromWindow(view.windowToken, 0)
-                        }
-                    )
-                }
-            ) {
+            Column {
                 Text("Enter a direct HTTP or HTTPS URL. It will be encrypted on this device.")
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
@@ -11554,8 +11633,12 @@ private fun CreateBackupDialog(
                 .focusRequester(focusRequester)
                 .focusable()
                 .imePadding()
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { hideKeyboard() })
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    hideKeyboard()
+                    onDismiss()
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -11567,16 +11650,14 @@ private fun CreateBackupDialog(
                     .widthIn(max = 480.dp)
                     .fillMaxWidth(0.92f)
                     .padding(16.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { hideKeyboard() })
-                    }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { /* consume clicks on card */ }
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectTapGestures(onTap = { hideKeyboard() })
-                        }
                         .verticalScroll(rememberScrollState())
                         .padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -11735,8 +11816,14 @@ private fun RestoreBackupPasswordDialog(
                 .focusRequester(focusRequester)
                 .focusable()
                 .imePadding()
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { hideKeyboard() })
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    if (!isRestoring) {
+                        hideKeyboard()
+                        onDismiss()
+                    }
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -11748,16 +11835,14 @@ private fun RestoreBackupPasswordDialog(
                     .widthIn(max = 500.dp)
                     .fillMaxWidth(0.92f)
                     .padding(16.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = { hideKeyboard() })
-                    }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { /* consume clicks on card */ }
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectTapGestures(onTap = { hideKeyboard() })
-                        }
                         .verticalScroll(rememberScrollState())
                         .padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
