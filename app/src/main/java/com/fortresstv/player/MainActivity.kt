@@ -116,6 +116,7 @@ import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Star
@@ -657,16 +658,10 @@ private fun FortressTVApp() {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val client = XtreamClient(context.applicationContext, profile.id, source)
-                client.loadCatalog(forceRefresh) to client.resolvedServerUrl()
-            }.onSuccess { (catalog, resolvedServerUrl) ->
-                val resolvedSource = if (resolvedServerUrl != source.value) {
-                    source.copy(value = resolvedServerUrl)
-                } else {
-                    source
-                }
+                client.loadCatalog(forceRefresh)
+            }.onSuccess { catalog ->
                 val totalCount = catalog.liveChannels.size + catalog.movies.size + catalog.series.size
                 val updated = profile.copy(
-                    source = resolvedSource,
                     lastUpdated = System.currentTimeMillis(),
                     channelCount = if (catalog.liveChannels.isNotEmpty()) catalog.liveChannels.size else totalCount
                 )
@@ -938,19 +933,6 @@ private fun FortressTVApp() {
         }
     }
 
-    val welcomeFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "My Playlist"
-        val profile = PlaylistProfile(
-            id = UUID.randomUUID().toString(),
-            name = name,
-            source = ContentSource.LocalFile(uri.toString(), name),
-            order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
-        )
-        loadPlaylistProfile(profile, forceRefresh = true)
-    }
-
     val addPlaylistFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -1098,15 +1080,14 @@ private fun FortressTVApp() {
     CompositionLocalProvider(LocalAppStrings provides strings) {
         Box(Modifier.fillMaxSize()) {
             if (restoring) {
-                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onOpenFile = {}, onOpenUrl = {}, onRestoreBackup = {})
+                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
             } else if (playlist == null || activeProfile == null) {
                 WelcomeScreen(
                     loading = loading,
                     showActions = !loading && (activeProfile == null || error != null),
                     error = error,
                     onRetry = retryLoad,
-                    onOpenFile = { welcomeFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*")) },
-                    onOpenUrl = { showAddPlaylistDialog = true },
+                    onAddSource = { showAddPlaylistDialog = true },
                     onRestoreBackup = { restoreBackupPicker.launch(arrayOf("*/*", "application/octet-stream")) },
                     onEditPlaylist = (activeProfile ?: playlists.firstOrNull())?.let { prof -> { editingProfile = prof } },
                     onOpenSettings = {
@@ -1377,6 +1358,11 @@ private fun FortressTVApp() {
                     playlists = remaining
                     playlist = mergeLivePlaylists(remaining, loadedPlaylists)
                     activeProfile = remaining.filter { it.enabled }.minByOrNull { it.order }
+                    if (remaining.isEmpty()) {
+                        showSettings = false
+                        loading = false
+                        error = null
+                    }
                 }
             )
         }
@@ -1580,8 +1566,7 @@ private fun WelcomeScreen(
     showActions: Boolean,
     error: String?,
     onRetry: (() -> Unit)?,
-    onOpenFile: () -> Unit,
-    onOpenUrl: () -> Unit,
+    onAddSource: () -> Unit,
     onRestoreBackup: () -> Unit,
     onEditPlaylist: (() -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null
@@ -1590,7 +1575,6 @@ private fun WelcomeScreen(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
-    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
 
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().padding(if (isCompact) 20.dp else 32.dp), contentAlignment = Alignment.Center) {
@@ -1629,49 +1613,24 @@ private fun WelcomeScreen(
                     Text(strings.loadingSavedData, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(20.dp))
                 }
-                if (showActions && isCompact && isPortrait) {
+                if (showActions) {
                     Column(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
-                        }
-                        OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                            Icon(Icons.Default.Link, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(strings.remoteUrl)
-                        }
-                        TextButton(onClick = onRestoreBackup, enabled = !loading) {
-                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.restoreFromBackup, fontSize = 13.sp)
-                        }
-                    }
-                } else if (showActions) {
-                    Column(
-                        Modifier.widthIn(max = 520.dp).fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        LargeFloatingActionButton(
+                            onClick = onAddSource,
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
                         ) {
-                            Button(onClick = onOpenFile, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(if (loading) strings.loadingPlaylist else strings.browseLocalFile)
-                            }
-                            OutlinedButton(onClick = onOpenUrl, enabled = !loading, modifier = Modifier.weight(1f).height(56.dp)) {
-                                Icon(Icons.Default.Link, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(strings.remoteUrl)
-                            }
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = strings.addPlaylist,
+                                modifier = Modifier.size(36.dp)
+                            )
                         }
+                        Text(strings.addPlaylist, fontWeight = FontWeight.SemiBold)
                         TextButton(onClick = onRestoreBackup, enabled = !loading) {
                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -10119,6 +10078,39 @@ private fun AboutTab() {
 }
 
 @Composable
+private fun SourceMethodCard(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(
+                    description,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Icon(Icons.Default.ArrowForward, contentDescription = null)
+        }
+    }
+}
+
+@Composable
 private fun AddPlaylistDialog(
     onDismiss: () -> Unit,
     onAddUrl: (String, String) -> Unit,
@@ -10133,9 +10125,10 @@ private fun AddPlaylistDialog(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
-    var mode by remember { mutableIntStateOf(0) }
+    var mode by remember { mutableIntStateOf(-1) }
     var isConnecting by remember { mutableStateOf(false) }
     var connectionError by remember { mutableStateOf<String?>(null) }
+    var pendingHttpServerUrl by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val serverFocusRequester = remember { FocusRequester() }
@@ -10192,47 +10185,48 @@ private fun AddPlaylistDialog(
                     .padding(24.dp)
             ) {
                 Text(
-                    strings.addPlaylist,
+                    if (mode < 0) {
+                        if (strings.languageTag == "pt-PT") "Onde está o seu conteúdo?" else "Where is your content?"
+                    } else strings.addPlaylist,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                Text(
+                    if (mode < 0) {
+                        if (strings.languageTag == "pt-PT") "Escolha os dados que recebeu do fornecedor ou proprietário da lista." else "Choose the details supplied by your provider or playlist owner."
+                    } else {
+                        when (mode) {
+                            0 -> if (strings.languageTag == "pt-PT") "Cole o endereço da lista ou escolha um ficheiro neste dispositivo." else "Paste the playlist address or choose a file on this device."
+                            else -> if (strings.languageTag == "pt-PT") "Introduza os dados exatamente como foram fornecidos." else "Enter the credentials exactly as supplied."
+                        }
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium
+                )
                 Spacer(Modifier.height(16.dp))
 
-                PrimaryTabRow(
-                    selectedTabIndex = mode,
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                ) {
-                    Tab(
-                        selected = mode == 0,
-                        onClick = {
-                            hideKeyboard()
-                            connectionError = null
-                            mode = 0
-                        },
-                        text = { Text(strings.remoteUrl) }
+                if (mode < 0) {
+                    SourceMethodCard(
+                        icon = Icons.Default.Key,
+                        title = strings.xtreamCodes,
+                        description = if (strings.languageTag == "pt-PT") "Servidor, nome de utilizador e palavra-passe" else "Server, username and password",
+                        onClick = { mode = 2 }
                     )
-                    Tab(
-                        selected = mode == 1,
-                        onClick = {
-                            hideKeyboard()
-                            connectionError = null
-                            mode = 1
-                        },
-                        text = { Text(strings.localFile) }
+                    Spacer(Modifier.height(10.dp))
+                    SourceMethodCard(
+                        icon = Icons.Default.Link,
+                        title = if (strings.languageTag == "pt-PT") "Lista M3U" else "M3U playlist",
+                        description = if (strings.languageTag == "pt-PT") "Adicionar por endereço ou ficheiro local" else "Add by web address or local file",
+                        onClick = { mode = 0 }
                     )
-                    Tab(
-                        selected = mode == 2,
-                        onClick = {
-                            hideKeyboard()
-                            connectionError = null
-                            mode = 2
-                        },
-                        text = { Text(strings.xtreamCodes) }
-                    )
+                    Spacer(Modifier.height(18.dp))
+                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                        Text(strings.cancel)
+                    }
+                    return@Column
                 }
-                Spacer(Modifier.height(16.dp))
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -10241,9 +10235,7 @@ private fun AddPlaylistDialog(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     keyboardActions = KeyboardActions(
-                        onNext = {
-                            if (mode == 1) hideKeyboard() else serverFocusRequester.requestFocus()
-                        }
+                        onNext = { serverFocusRequester.requestFocus() }
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -10251,7 +10243,7 @@ private fun AddPlaylistDialog(
                 if (mode == 0) {
                     OutlinedTextField(
                         value = url,
-                        onValueChange = { url = it; connectionError = null },
+                        onValueChange = { url = it; connectionError = null; pendingHttpServerUrl = null },
                         label = { Text(strings.playlistM3u) },
                         placeholder = { Text(strings.enterM3uUrl) },
                         singleLine = true,
@@ -10259,12 +10251,18 @@ private fun AddPlaylistDialog(
                         keyboardActions = KeyboardActions(onDone = { hideKeyboard() }),
                         modifier = Modifier.fillMaxWidth().focusRequester(serverFocusRequester)
                     )
-                } else if (mode == 1) {
-                    Text(
-                        strings.orSelectLocalFile,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
-                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = {
+                            hideKeyboard()
+                            onPickFile()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.selectFile)
+                    }
                 } else {
                     OutlinedTextField(
                         value = url,
@@ -10325,9 +10323,11 @@ private fun AddPlaylistDialog(
                 ) {
                     TextButton(onClick = {
                         hideKeyboard()
-                        onDismiss()
+                        connectionError = null
+                        pendingHttpServerUrl = null
+                        mode = -1
                     }) {
-                        Text(strings.cancel)
+                        Text(strings.back)
                     }
                     Spacer(Modifier.width(8.dp))
                     if (mode == 0) {
@@ -10338,15 +10338,15 @@ private fun AddPlaylistDialog(
                             },
                             enabled = url.startsWith("http://", true) || url.startsWith("https://", true)
                         ) { Text(strings.addPlaylist) }
-                    } else if (mode == 1) {
-                        Button(onClick = {
-                            hideKeyboard()
-                            onPickFile()
-                        }) { Text(strings.selectFile) }
                     } else {
                         Button(
                             onClick = {
                                 hideKeyboard()
+                                val confirmedHttpUrl = pendingHttpServerUrl
+                                if (confirmedHttpUrl != null) {
+                                    onAddXtream(name.trim(), confirmedHttpUrl, username.trim(), password)
+                                    return@Button
+                                }
                                 isConnecting = true
                                 connectionError = null
                                 scope.launch {
@@ -10361,8 +10361,17 @@ private fun AddPlaylistDialog(
                                         }
                                     }
                                     isConnecting = false
-                                    result.onSuccess {
-                                        onAddXtream(name.trim(), url.trim(), username.trim(), password)
+                                    result.onSuccess { check ->
+                                        if (check.requiresHttpConfirmation) {
+                                            pendingHttpServerUrl = check.resolvedServerUrl
+                                            connectionError = if (strings.languageTag == "pt-PT") {
+                                                "Este servidor não suporta HTTPS. Utilize HTTP apenas se confiar no fornecedor; as credenciais serão enviadas sem encriptação."
+                                            } else {
+                                                "This server does not support HTTPS. Use HTTP only if you trust the provider; credentials will be sent without encryption."
+                                            }
+                                        } else {
+                                            onAddXtream(name.trim(), check.resolvedServerUrl, username.trim(), password)
+                                        }
                                     }.onFailure { failure ->
                                         connectionError = xtreamConnectionErrorMessage(failure, strings)
                                     }
@@ -10380,7 +10389,9 @@ private fun AddPlaylistDialog(
                                 Spacer(Modifier.width(8.dp))
                             }
                             Text(
-                                if (isConnecting) {
+                                if (pendingHttpServerUrl != null) {
+                                    if (strings.languageTag == "pt-PT") "Utilizar HTTP" else "Use HTTP"
+                                } else if (isConnecting) {
                                     if (strings.languageTag == "pt-PT") "A ligar…" else "Connecting…"
                                 } else strings.connect
                             )
@@ -10393,14 +10404,27 @@ private fun AddPlaylistDialog(
     }
 }
 
+private data class XtreamConnectionCheck(
+    val resolvedServerUrl: String,
+    val requiresHttpConfirmation: Boolean
+)
+
 private suspend fun validateXtreamConnection(
     serverUrl: String,
     displayName: String,
     username: String,
     password: String
-) {
+) : XtreamConnectionCheck {
     val source = ContentSource.Xtream(serverUrl, displayName, username, password)
-    XtreamClient(null, "connection_test", source).authenticate()
+    val client = XtreamClient(null, "connection_test", source)
+    client.authenticate()
+    val normalizedInput = XtreamClient.normalizeServerUrl(serverUrl)
+    val resolved = client.resolvedServerUrl()
+    return XtreamConnectionCheck(
+        resolvedServerUrl = resolved,
+        requiresHttpConfirmation = normalizedInput.startsWith("https://", true) &&
+                resolved.startsWith("http://", true)
+    )
 }
 
 private fun xtreamConnectionErrorMessage(failure: Throwable, strings: Strings): String {
@@ -10483,6 +10507,7 @@ private fun EditPlaylistDialog(
     var showPassword by remember { mutableStateOf(false) }
     var isConnecting by remember(profile.id) { mutableStateOf(false) }
     var connectionError by remember(profile.id) { mutableStateOf<String?>(null) }
+    var pendingHttpServerUrl by remember(profile.id) { mutableStateOf<String?>(null) }
 
     val canSave = when (initialSource) {
         is ContentSource.Xtream -> name.isNotBlank() &&
@@ -10569,7 +10594,7 @@ private fun EditPlaylistDialog(
                 if (initialSource is ContentSource.Xtream) {
                     OutlinedTextField(
                         value = serverUrl,
-                        onValueChange = { serverUrl = it; connectionError = null },
+                        onValueChange = { serverUrl = it; connectionError = null; pendingHttpServerUrl = null },
                         label = { Text(strings.xtreamServer) },
                         placeholder = { Text("https://server.example:port") },
                         singleLine = true,
@@ -10699,6 +10724,15 @@ private fun EditPlaylistDialog(
                                 )
                             }
                             if (updatedSource is ContentSource.Xtream) {
+                                val confirmedHttpUrl = pendingHttpServerUrl
+                                if (confirmedHttpUrl != null) {
+                                    onConfirm(
+                                        name.trim(),
+                                        updatedSource.copy(value = confirmedHttpUrl),
+                                        role
+                                    )
+                                    return@Button
+                                }
                                 isConnecting = true
                                 connectionError = null
                                 scope.launch {
@@ -10713,8 +10747,21 @@ private fun EditPlaylistDialog(
                                         }
                                     }
                                     isConnecting = false
-                                    result.onSuccess {
-                                        onConfirm(name.trim(), updatedSource, role)
+                                    result.onSuccess { check ->
+                                        if (check.requiresHttpConfirmation) {
+                                            pendingHttpServerUrl = check.resolvedServerUrl
+                                            connectionError = if (strings.languageTag == "pt-PT") {
+                                                "Este servidor não suporta HTTPS. Utilize HTTP apenas se confiar no fornecedor; as credenciais serão enviadas sem encriptação."
+                                            } else {
+                                                "This server does not support HTTPS. Use HTTP only if you trust the provider; credentials will be sent without encryption."
+                                            }
+                                        } else {
+                                            onConfirm(
+                                                name.trim(),
+                                                updatedSource.copy(value = check.resolvedServerUrl),
+                                                role
+                                            )
+                                        }
                                     }.onFailure { failure ->
                                         connectionError = xtreamConnectionErrorMessage(failure, strings)
                                     }
@@ -10730,7 +10777,9 @@ private fun EditPlaylistDialog(
                             Spacer(Modifier.width(8.dp))
                         }
                         Text(
-                            if (isConnecting) {
+                            if (pendingHttpServerUrl != null) {
+                                if (strings.languageTag == "pt-PT") "Utilizar HTTP" else "Use HTTP"
+                            } else if (isConnecting) {
                                 if (strings.languageTag == "pt-PT") "A verificar…" else "Checking…"
                             } else strings.save
                         )
@@ -12164,5 +12213,5 @@ private fun RestoreBackupPasswordDialog(
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
 @Composable
 private fun WelcomePreview() = FortressTVTheme {
-    WelcomeScreen(false, true, null, onRetry = null, onOpenFile = {}, onOpenUrl = {}, onRestoreBackup = {})
+    WelcomeScreen(false, true, null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
 }
