@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#031235" />
+        </shape>
+    </item>
+    <item
+        android:gravity="center"
+        android:left="64dp"
+        android:top="36dp"
+        android:right="64dp"
+        android:bottom="36dp">
+        <bitmap
+            android:src="@drawable/fortress_tv_logo"
+            android:gravity="center" />
+    </item>
+</layer-list>

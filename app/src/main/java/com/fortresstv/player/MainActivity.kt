@@ -138,6 +138,15 @@ import com.fortresstv.player.ui.AppLanguage
 import com.fortresstv.player.ui.LocalAppStrings
 import com.fortresstv.player.ui.getStringsFor
 import com.fortresstv.player.ui.Strings
+import com.fortresstv.player.ui.AppFormFactor
+import com.fortresstv.player.ui.FormFactorDetector
+import com.fortresstv.player.ui.LocalFormFactor
+import com.fortresstv.player.ui.tvFocusHighlight
+import com.fortresstv.player.ui.TvPlayerAction
+import com.fortresstv.player.ui.TvPlayerKeyDispatcher
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
 import com.fortresstv.player.backup.BackupManager
 import com.fortresstv.player.backup.BackupRestoreResult
 import com.fortresstv.player.backup.BackupExportResult
@@ -165,6 +174,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -1099,7 +1109,13 @@ private fun FortressTVApp() {
         }
     }
 
-    CompositionLocalProvider(LocalAppStrings provides strings) {
+    val configuration = LocalConfiguration.current
+    val formFactor = remember(configuration) { FormFactorDetector.detectFromConfiguration(configuration) }
+
+    CompositionLocalProvider(
+        LocalAppStrings provides strings,
+        LocalFormFactor provides formFactor
+    ) {
         Box(Modifier.fillMaxSize()) {
             if (restoring) {
                 WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
@@ -1597,6 +1613,17 @@ private fun WelcomeScreen(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
+    val isTv = LocalFormFactor.current.isTelevision
+    val addSourceFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(isTv, showActions) {
+        if (isTv && showActions) {
+            delay(150)
+            try {
+                addSourceFocusRequester.requestFocus()
+            } catch (_: Throwable) {}
+        }
+    }
 
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().padding(if (isCompact) 20.dp else 32.dp), contentAlignment = Alignment.Center) {
@@ -1606,6 +1633,10 @@ private fun WelcomeScreen(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
+                        .tvFocusHighlight(
+                            shape = CircleShape,
+                            scaleOnFocus = if (isTv) 1.15f else 1.0f
+                        )
                 ) {
                     Icon(
                         Icons.Default.Settings,
@@ -1644,7 +1675,12 @@ private fun WelcomeScreen(
                         LargeFloatingActionButton(
                             onClick = onAddSource,
                             containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier
+                                .focusRequester(addSourceFocusRequester)
+                                .tvFocusHighlight(
+                                    scaleOnFocus = if (isTv) 1.08f else 1.0f
+                                )
                         ) {
                             Icon(
                                 Icons.Default.Add,
@@ -1653,7 +1689,14 @@ private fun WelcomeScreen(
                             )
                         }
                         Text(strings.addPlaylist, fontWeight = FontWeight.SemiBold)
-                        TextButton(onClick = onRestoreBackup, enabled = !loading) {
+                        TextButton(
+                            onClick = onRestoreBackup,
+                            enabled = !loading,
+                            modifier = Modifier.tvFocusHighlight(
+                                shape = RoundedCornerShape(8.dp),
+                                scaleOnFocus = if (isTv) 1.04f else 1.0f
+                            )
+                        ) {
                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(strings.restoreFromBackup, fontSize = 13.sp)
@@ -1675,14 +1718,26 @@ private fun WelcomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (onRetry != null) {
-                            Button(onClick = onRetry, enabled = !loading) {
+                            Button(
+                                onClick = onRetry,
+                                enabled = !loading,
+                                modifier = Modifier.tvFocusHighlight(
+                                    scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                )
+                            ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text(strings.retry)
                             }
                         }
                         if (onEditPlaylist != null) {
-                            OutlinedButton(onClick = onEditPlaylist, enabled = !loading) {
+                            OutlinedButton(
+                                onClick = onEditPlaylist,
+                                enabled = !loading,
+                                modifier = Modifier.tvFocusHighlight(
+                                    scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                )
+                            ) {
                                 Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text(strings.editPlaylist)
@@ -1716,7 +1771,6 @@ private fun ProgrammeGuideScreen(
     onBack: () -> Unit,
     onWatchChannel: (PlaylistChannel) -> Unit
 ) {
-    BackHandler(onBack = onBack)
     val strings = LocalAppStrings.current
     val guideLocale = remember(strings.languageTag) { Locale.forLanguageTag(strings.languageTag) }
     val density = LocalDensity.current
@@ -1726,6 +1780,22 @@ private fun ProgrammeGuideScreen(
     val dates = remember(today, epgLoadedDays) { List(epgLoadedDays.coerceIn(1, 7)) { today.plusDays(it.toLong()) } }
     var selectedDate by remember { mutableStateOf(today) }
     var selectedProgramme by remember { mutableStateOf<Pair<PlaylistChannel, EpgProgramme>?>(null) }
+
+    val isTv = LocalFormFactor.current.isTelevision
+    val watchButtonFocusRequester = remember { FocusRequester() }
+    BackHandler {
+        if (selectedProgramme != null) {
+            selectedProgramme = null
+        } else {
+            onBack()
+        }
+    }
+    LaunchedEffect(selectedProgramme) {
+        if (selectedProgramme != null && isTv) {
+            delay(100)
+            try { watchButtonFocusRequester.requestFocus() } catch (_: Throwable) {}
+        }
+    }
     var now by remember { mutableStateOf(Instant.now()) }
     val horizontalState = rememberScrollState()
     var useWideTimelineWindow by remember { mutableStateOf(false) }
@@ -2439,6 +2509,10 @@ private fun ProgrammeGuideScreen(
                                                     .offset(x = hourWidth * (block.startMinutes / 60f), y = 5.dp)
                                                     .width(blockWidth)
                                                     .height(rowHeight - 10.dp)
+                                                    .tvFocusHighlight(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        scaleOnFocus = 1.0f
+                                                    )
                                             ) {
                                                 if (blockWidth >= 42.dp) {
                                                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
@@ -2560,7 +2634,13 @@ private fun ProgrammeGuideScreen(
                             Spacer(Modifier.width(8.dp))
                             Button(
                                 onClick = { onWatchChannel(channel) },
-                                modifier = Modifier.height(36.dp),
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .focusRequester(watchButtonFocusRequester)
+                                    .tvFocusHighlight(
+                                        shape = ButtonDefaults.shape,
+                                        scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                    ),
                                 contentPadding = PaddingValues(horizontal = if (isCompact) 10.dp else 14.dp)
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -2703,7 +2783,19 @@ private fun FortressLibrary(
             Playlist(filtered)
         }
     }
-    BackHandler(globalSidebarExpanded) { globalSidebarExpanded = false }
+    val isTv = LocalFormFactor.current.isTelevision
+    var sidebarHasFocus by remember { mutableStateOf(false) }
+    val sidebarFocusRequester = remember { FocusRequester() }
+
+    BackHandler(globalSidebarExpanded || (isTv && !sidebarHasFocus)) {
+        if (globalSidebarExpanded) {
+            globalSidebarExpanded = false
+        } else if (isTv && !sidebarHasFocus) {
+            try {
+                sidebarFocusRequester.requestFocus()
+            } catch (_: Throwable) {}
+        }
+    }
 
     Row(
         Modifier
@@ -2723,7 +2815,9 @@ private fun FortressLibrary(
             onOpenSettings = {
                 if (compactLibraryNavigation) globalSidebarExpanded = false
                 onOpenSettings(0)
-            }
+            },
+            modifier = Modifier.focusRequester(sidebarFocusRequester),
+            onFocusChanged = { sidebarHasFocus = it }
         )
         Box(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.background)) {
             when (destination) {
@@ -2947,20 +3041,32 @@ private fun GlobalLibrarySidebar(
     selectedDestination: LibraryDestination,
     onDestinationSelected: (LibraryDestination) -> Unit,
     onToggleExpanded: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+    onFocusChanged: ((Boolean) -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+    var sidebarHasFocus by remember { mutableStateOf(false) }
+    val effectiveExpanded = if (isTv) (expanded || sidebarHasFocus) else expanded
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         shadowElevation = 4.dp,
-        modifier = Modifier.width(if (expanded) 220.dp else 76.dp).fillMaxHeight()
+        modifier = modifier
+            .width(if (effectiveExpanded) 220.dp else 76.dp)
+            .fillMaxHeight()
+            .onFocusChanged { state ->
+                sidebarHasFocus = state.hasFocus
+                onFocusChanged?.invoke(state.hasFocus)
+            }
     ) {
         Column(
             Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (expanded) {
+            if (effectiveExpanded) {
                 Row(
                     Modifier.fillMaxWidth().height(48.dp).padding(start = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -2980,7 +3086,7 @@ private fun GlobalLibrarySidebar(
                 LibraryNavigationItem(
                     label = label,
                     icon = icon,
-                    expanded = expanded,
+                    expanded = effectiveExpanded,
                     selected = selectedDestination == item,
                     testTag = "library_destination_${item.name.lowercase()}",
                     onClick = { onDestinationSelected(item) }
@@ -2993,7 +3099,7 @@ private fun GlobalLibrarySidebar(
             LibraryNavigationItem(
                 label = strings.settings,
                 icon = Icons.Default.Settings,
-                expanded = expanded,
+                expanded = effectiveExpanded,
                 selected = false,
                 onClick = onOpenSettings
             )
@@ -3010,16 +3116,41 @@ private fun LibraryNavigationItem(
     testTag: String? = null,
     onClick: () -> Unit
 ) {
+    val isTv = LocalFormFactor.current.isTelevision
+    var isFocused by remember { mutableStateOf(false) }
+
+    val surfaceColor = when {
+        isFocused && selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
+        isFocused -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        else -> Color.Transparent
+    }
+    val surfaceBorder = when {
+        isFocused -> BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        selected -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
+        else -> null
+    }
+    val contentColor = when {
+        isFocused && selected -> MaterialTheme.colorScheme.primary
+        isFocused -> MaterialTheme.colorScheme.onSurface
+        selected -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-        else Color.Transparent,
-        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
-        contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = surfaceColor,
+        border = surfaceBorder,
+        contentColor = contentColor,
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .tvFocusHighlight(
+                shape = RoundedCornerShape(12.dp),
+                scaleOnFocus = if (isTv) 1.04f else 1.0f
+            )
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
     ) {
         Row(
@@ -3540,6 +3671,7 @@ private fun LibraryCatalogScaffold(
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     var isSidebarExpanded by remember { mutableStateOf(false) }
@@ -3554,8 +3686,11 @@ private fun LibraryCatalogScaffold(
         }
     }
 
-    BackHandler(isSearchExpanded && query.isEmpty()) {
+    BackHandler(isSearchExpanded) {
+        onQueryChanged("")
         isSearchExpanded = false
+        focusManager.clearFocus()
+        keyboardController?.hide()
     }
 
     BackHandler(isSidebarExpanded) {
@@ -3931,7 +4066,12 @@ private fun LibraryCatalogScaffold(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                 border = BorderStroke(1.dp, if (sortOption != VodSortOption.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .tvFocusHighlight(
+                                        shape = RoundedCornerShape(10.dp),
+                                        scaleOnFocus = if (isTv) 1.08f else 1.0f
+                                    )
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -4000,7 +4140,12 @@ private fun LibraryCatalogScaffold(
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier
+                                .size(40.dp)
+                                .tvFocusHighlight(
+                                    shape = RoundedCornerShape(10.dp),
+                                    scaleOnFocus = if (isTv) 1.08f else 1.0f
+                                )
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -4059,11 +4204,16 @@ private fun VodPosterCard(
                 .build()
         }
     }
+    val isTv = LocalFormFactor.current.isTelevision
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+        modifier = Modifier.tvFocusHighlight(
+            shape = RoundedCornerShape(16.dp),
+            scaleOnFocus = if (isTv) 1.06f else 1.0f
+        )
     ) {
         Column {
             Box(
@@ -4166,6 +4316,15 @@ private fun MovieDetailsDialog(
     val isCompact = configuration.screenWidthDp < 600
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val useVerticalLayout = isCompact && isPortrait
+    val isTv = LocalFormFactor.current.isTelevision
+    val watchButtonFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            delay(100)
+            try { watchButtonFocusRequester.requestFocus() } catch (_: Throwable) {}
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -4445,7 +4604,13 @@ private fun MovieDetailsDialog(
                             ) {
                                 OutlinedButton(
                                     onClick = onToggleWatchlist,
-                                    modifier = Modifier.weight(1f).height(54.dp)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(54.dp)
+                                        .tvFocusHighlight(
+                                            shape = ButtonDefaults.outlinedShape,
+                                            scaleOnFocus = if (isTv) 1.04f else 1.0f
+                                        )
                                 ) {
                                     Icon(
                                         if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
@@ -4460,7 +4625,13 @@ private fun MovieDetailsDialog(
                                 }
                                 OutlinedButton(
                                     onClick = onToggleWatched,
-                                    modifier = Modifier.weight(1f).height(54.dp)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(54.dp)
+                                        .tvFocusHighlight(
+                                            shape = ButtonDefaults.outlinedShape,
+                                            scaleOnFocus = if (isTv) 1.04f else 1.0f
+                                        )
                                 ) {
                                     Icon(
                                         if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
@@ -4476,7 +4647,14 @@ private fun MovieDetailsDialog(
                                 }
                                 Button(
                                     onClick = onWatch,
-                                    modifier = Modifier.weight(1f).height(54.dp)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(54.dp)
+                                        .focusRequester(watchButtonFocusRequester)
+                                        .tvFocusHighlight(
+                                            shape = ButtonDefaults.shape,
+                                            scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                        )
                                 ) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
@@ -4488,7 +4666,13 @@ private fun MovieDetailsDialog(
                 }
                 FilledIconButton(
                     onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(if (isCompact) 8.dp else 14.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(if (isCompact) 8.dp else 14.dp)
+                        .tvFocusHighlight(
+                            shape = CircleShape,
+                            scaleOnFocus = if (isTv) 1.15f else 1.0f
+                        ),
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -4530,6 +4714,8 @@ private fun SeriesEpisodesDialog(
     onPlay: (XtreamEpisode, String) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+    val playNextFocusRequester = remember { FocusRequester() }
     var details by remember(series.id) { mutableStateOf<XtreamSeriesDetails?>(null) }
     var loadError by remember(series.id) { mutableStateOf(false) }
     var retryKey by remember(series.id) { mutableIntStateOf(0) }
@@ -4538,6 +4724,12 @@ private fun SeriesEpisodesDialog(
         runCatching { client.loadSeriesDetails(series.id) }
             .onSuccess { details = it }
             .onFailure { loadError = true }
+    }
+    LaunchedEffect(details) {
+        if (details != null && isTv) {
+            delay(100)
+            try { playNextFocusRequester.requestFocus() } catch (_: Throwable) {}
+        }
     }
     val episodes = details?.episodes
     val sortedEpisodes = remember(episodes) {
@@ -4647,7 +4839,13 @@ private fun SeriesEpisodesDialog(
                         if (nextUnwatchedEpisode != null) {
                             Button(
                                 onClick = { onPlay(nextUnwatchedEpisode, client.episodeStreamUrl(nextUnwatchedEpisode)) },
-                                modifier = Modifier.height(40.dp)
+                                modifier = Modifier
+                                    .height(40.dp)
+                                    .focusRequester(playNextFocusRequester)
+                                    .tvFocusHighlight(
+                                        shape = ButtonDefaults.shape,
+                                        scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                    )
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
@@ -4732,7 +4930,22 @@ private fun SeriesEpisodesDialog(
                             Surface(
                                 onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
                                 shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onKeyEvent { keyEvent ->
+                                        if (isTv && keyEvent.type == KeyEventType.KeyDown &&
+                                            (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_MENU ||
+                                             keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_STAR)
+                                        ) {
+                                            onToggleEpisodeWatched(episode)
+                                            true
+                                        } else false
+                                    }
+                                    .tvFocusHighlight(
+                                        shape = RoundedCornerShape(12.dp),
+                                        scaleOnFocus = if (isTv) 1.02f else 1.0f
+                                    )
                             ) {
                                 Column {
                                     Row(
@@ -4754,7 +4967,10 @@ private fun SeriesEpisodesDialog(
                                         }
                                         IconButton(
                                             onClick = { onToggleEpisodeWatched(episode) },
-                                            modifier = Modifier.size(36.dp)
+                                            enabled = !isTv,
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .focusable(!isTv)
                                         ) {
                                             Icon(
                                                 imageVector = if (isEpisodeWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
@@ -4915,16 +5131,38 @@ private fun VodPlayerDialog(
         }
     }
 
-    LaunchedEffect(showEpisodesDrawer) {
-        if (showEpisodesDrawer) {
-            delay(2_000)
-            showEpisodesDrawer = false
+    val isTv = LocalFormFactor.current.isTelevision
+    val playerFocusRequester = remember { FocusRequester() }
+    val resumeFocusRequester = remember { FocusRequester() }
+    var lastInteractionEpoch by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            delay(100)
+            try { playerFocusRequester.requestFocus() } catch (_: Throwable) {}
         }
     }
 
-    LaunchedEffect(controlsVisible, showEpisodesDrawer, showSleepTimerDialog, showTracksDialog) {
+    LaunchedEffect(resumeDecisionMade) {
+        if (!resumeDecisionMade && isTv) {
+            delay(100)
+            try { resumeFocusRequester.requestFocus() } catch (_: Throwable) {}
+        }
+    }
+
+    val isOverlayActive = showEpisodesDrawer || showTracksDialog || showSleepTimerDialog || controlsVisible
+    BackHandler(enabled = isOverlayActive) {
+        when {
+            showEpisodesDrawer -> showEpisodesDrawer = false
+            showTracksDialog -> showTracksDialog = false
+            showSleepTimerDialog -> showSleepTimerDialog = false
+            controlsVisible -> controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(controlsVisible, showEpisodesDrawer, showSleepTimerDialog, showTracksDialog, lastInteractionEpoch) {
         if (controlsVisible && !showEpisodesDrawer && !showSleepTimerDialog && !showTracksDialog) {
-            delay(2_000)
+            delay(if (isTv) 5_000 else 3_000)
             controlsVisible = false
         }
     }
@@ -5027,7 +5265,59 @@ private fun VodPlayerDialog(
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ImmersiveSystemBars()
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .focusRequester(playerFocusRequester)
+                .focusable()
+                .onKeyEvent { keyEvent ->
+                    val action = TvPlayerKeyDispatcher.dispatch(
+                        keyCode = keyEvent.nativeKeyEvent.keyCode,
+                        isActionDown = keyEvent.type == KeyEventType.KeyDown,
+                        isLiveStream = false
+                    )
+                    if (action != null) {
+                        lastInteractionEpoch = System.currentTimeMillis()
+                        when (action) {
+                            TvPlayerAction.TOGGLE_CONTROLS -> {
+                                controlsVisible = !controlsVisible
+                                true
+                            }
+                            TvPlayerAction.SEEK_BACKWARD -> {
+                                val newPos = (player.currentPosition - 10_000L).coerceAtLeast(0L)
+                                player.seekTo(newPos)
+                                controlsVisible = true
+                                true
+                            }
+                            TvPlayerAction.SEEK_FORWARD -> {
+                                val newPos = (player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))
+                                player.seekTo(newPos)
+                                controlsVisible = true
+                                true
+                            }
+                            TvPlayerAction.PLAY -> {
+                                player.play()
+                                true
+                            }
+                            TvPlayerAction.PAUSE -> {
+                                player.pause()
+                                true
+                            }
+                            TvPlayerAction.TOGGLE_PLAY_PAUSE -> {
+                                if (player.isPlaying) player.pause() else player.play()
+                                true
+                            }
+                            TvPlayerAction.STOP -> {
+                                player.stop()
+                                onDismiss()
+                                true
+                            }
+                            else -> false
+                        }
+                    } else false
+                }
+        ) {
             VideoSurface(
                 player = player,
                 playbackState = playbackState,
@@ -5344,11 +5634,28 @@ private fun VodPlayerDialog(
                         Text(strings.resumePlaybackDescription, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(20.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(onClick = {
-                                resumePositionMs = 0L
-                                resumeDecisionMade = true
-                            }, modifier = Modifier.weight(1f)) { Text(strings.restartPlayback) }
-                            Button(onClick = { resumeDecisionMade = true }, modifier = Modifier.weight(1f)) {
+                            OutlinedButton(
+                                onClick = {
+                                    resumePositionMs = 0L
+                                    resumeDecisionMade = true
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .tvFocusHighlight(
+                                        shape = ButtonDefaults.outlinedShape,
+                                        scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                    )
+                            ) { Text(strings.restartPlayback) }
+                            Button(
+                                onClick = { resumeDecisionMade = true },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(resumeFocusRequester)
+                                    .tvFocusHighlight(
+                                        shape = ButtonDefaults.shape,
+                                        scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                    )
+                            ) {
                                 Text(strings.resume)
                             }
                         }
@@ -6841,12 +7148,18 @@ private fun SidebarSectionLabel(label: String) {
 
 @Composable
 private fun GroupItem(name: String, count: Int?, selected: Boolean, onClick: () -> Unit) {
+    val isTv = LocalFormFactor.current.isTelevision
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
         color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent,
         contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .tvFocusHighlight(
+                shape = RoundedCornerShape(10.dp),
+                scaleOnFocus = if (isTv) 1.03f else 1.0f
+            )
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -6941,6 +7254,8 @@ private fun ChannelRow(
     onClick: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
@@ -6948,7 +7263,22 @@ private fun ChannelRow(
         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
         border = if (selected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
         else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-        contentColor = MaterialTheme.colorScheme.onSurface
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier
+            .fillMaxWidth()
+            .onKeyEvent { keyEvent ->
+                if (isTv && keyEvent.type == KeyEventType.KeyDown &&
+                    (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_MENU ||
+                     keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_STAR)
+                ) {
+                    onToggleFavorite?.invoke()
+                    true
+                } else false
+            }
+            .tvFocusHighlight(
+                shape = RoundedCornerShape(14.dp),
+                scaleOnFocus = if (isTv) 1.02f else 1.0f
+            )
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             ChannelLogo(channel, epgChannel, modifier = Modifier.size(44.dp))
@@ -7005,7 +7335,10 @@ private fun ChannelRow(
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = toggle,
-                    modifier = Modifier.size(36.dp)
+                    enabled = !isTv,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .focusable(!isTv)
                 ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Star else Icons.Outlined.StarOutline,
@@ -7600,9 +7933,31 @@ private fun FullscreenPlayer(
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
 
-    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, showSleepTimerDialog, locked) {
+    val isTv = LocalFormFactor.current.isTelevision
+    val playerFocusRequester = remember { FocusRequester() }
+    var lastInteractionEpoch by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            delay(100)
+            try { playerFocusRequester.requestFocus() } catch (_: Throwable) {}
+        }
+    }
+
+    val isOverlayActive = showChannels || showGuide || showTracksDialog || showSleepTimerDialog || controlsVisible
+    BackHandler(enabled = isOverlayActive) {
+        when {
+            showChannels -> showChannels = false
+            showGuide -> showGuide = false
+            showTracksDialog -> showTracksDialog = false
+            showSleepTimerDialog -> showSleepTimerDialog = false
+            controlsVisible -> controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, showSleepTimerDialog, locked, lastInteractionEpoch) {
         if (controlsVisible && !showChannels && !showGuide && !showTracksDialog && !showSleepTimerDialog && !locked) {
-            delay(3_500)
+            delay(if (isTv) 5_000 else 3_500)
             controlsVisible = false
         }
     }
@@ -7663,6 +8018,53 @@ private fun FullscreenPlayer(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black)
+                .focusRequester(playerFocusRequester)
+                .focusable()
+                .onKeyEvent { keyEvent ->
+                    val action = TvPlayerKeyDispatcher.dispatch(
+                        keyCode = keyEvent.nativeKeyEvent.keyCode,
+                        isActionDown = keyEvent.type == KeyEventType.KeyDown
+                    )
+                    if (action != null) {
+                        lastInteractionEpoch = System.currentTimeMillis()
+                        when (action) {
+                            TvPlayerAction.TOGGLE_CONTROLS -> {
+                                controlsVisible = !controlsVisible
+                                true
+                            }
+                            TvPlayerAction.CHANNEL_UP -> {
+                                previousChannel?.let {
+                                    onChannelSelected(it)
+                                    true
+                                } ?: false
+                            }
+                            TvPlayerAction.CHANNEL_DOWN -> {
+                                nextChannel?.let {
+                                    onChannelSelected(it)
+                                    true
+                                } ?: false
+                            }
+                            TvPlayerAction.PLAY -> {
+                                player.play()
+                                true
+                            }
+                            TvPlayerAction.PAUSE -> {
+                                player.pause()
+                                true
+                            }
+                            TvPlayerAction.TOGGLE_PLAY_PAUSE -> {
+                                if (player.isPlaying) player.pause() else player.play()
+                                true
+                            }
+                            TvPlayerAction.STOP -> {
+                                player.stop()
+                                onExit()
+                                true
+                            }
+                            else -> false
+                        }
+                    } else false
+                }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures { change, dragAmount ->
                         if (change.position.x < 160f && dragAmount > 18f && !showChannels && !locked && !inPictureInPicture) {
@@ -9083,6 +9485,7 @@ private fun SettingsDialog(
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
     val isTwoPane = configuration.screenWidthDp >= 640
+    val isTv = LocalFormFactor.current.isTelevision
 
     var selectedTab by remember { mutableIntStateOf(initialTab) }
     val tabItems = listOf(
@@ -9154,7 +9557,15 @@ private fun SettingsDialog(
                         fontSize = if (isTwoPane) 20.sp else 18.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .tvFocusHighlight(
+                                shape = CircleShape,
+                                scaleOnFocus = if (isTv) 1.15f else 1.0f
+                            )
+                    ) {
                         Icon(Icons.Default.Close, contentDescription = strings.close, modifier = Modifier.size(20.dp))
                     }
                 }
@@ -9178,7 +9589,13 @@ private fun SettingsDialog(
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
                                     contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.fillMaxWidth().height(42.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(42.dp)
+                                        .tvFocusHighlight(
+                                            shape = RoundedCornerShape(10.dp),
+                                            scaleOnFocus = if (isTv) 1.03f else 1.0f
+                                        )
                                 ) {
                                     Row(
                                         Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -9381,53 +9798,67 @@ private fun SettingsToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Row(
-        Modifier
+    val isTv = LocalFormFactor.current.isTelevision
+    Surface(
+        onClick = { onCheckedChange(!checked) },
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent,
+        modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (icon != null) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
+            .tvFocusHighlight(
+                shape = RoundedCornerShape(8.dp),
+                scaleOnFocus = if (isTv) 1.02f else 1.0f
             )
-            Spacer(Modifier.width(10.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            if (subtitle.isNotBlank()) {
-                Text(
-                    subtitle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (icon != null) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
                 )
+                Spacer(Modifier.width(10.dp))
             }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        subtitle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                    uncheckedThumbColor = Color(0xFF94A3B8),
+                    uncheckedTrackColor = Color(0xFF1E293B),
+                    uncheckedBorderColor = Color(0xFF475569),
+                    disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
+                    disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                    disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                    disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
+                    disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
+                    disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
+                ),
+                modifier = Modifier
+                    .scale(0.8f)
+                    .focusable(!isTv)
+            )
         }
-        Spacer(Modifier.width(10.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = Color(0xFF94A3B8),
-                uncheckedTrackColor = Color(0xFF1E293B),
-                uncheckedBorderColor = Color(0xFF475569),
-                disabledCheckedThumbColor = Color.White.copy(alpha = 0.85f),
-                disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                disabledCheckedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                disabledUncheckedThumbColor = Color(0xFF94A3B8).copy(alpha = 0.38f),
-                disabledUncheckedTrackColor = Color(0xFF1E293B).copy(alpha = 0.38f),
-                disabledUncheckedBorderColor = Color(0xFF475569).copy(alpha = 0.38f)
-            ),
-            modifier = Modifier.scale(0.8f)
-        )
     }
 }
 
@@ -9440,6 +9871,7 @@ private fun SettingsDropdownPickerRow(
     options: List<Pair<String, String>>,
     onValueSelected: (String) -> Unit
 ) {
+    val isTv = LocalFormFactor.current.isTelevision
     var expanded by remember { mutableStateOf(false) }
     val currentLabel = options.firstOrNull { it.first == selectedValue }?.second ?: selectedValue
 
@@ -9476,7 +9908,11 @@ private fun SettingsDropdownPickerRow(
                 onClick = { expanded = true },
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.tvFocusHighlight(
+                    shape = RoundedCornerShape(8.dp),
+                    scaleOnFocus = if (isTv) 1.05f else 1.0f
+                )
             ) {
                 Row(
                     Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -9785,6 +10221,7 @@ private fun PlaylistsTab(
     onDeletePlaylist: (PlaylistProfile) -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
 
@@ -9804,7 +10241,12 @@ private fun PlaylistsTab(
                 onClick = onAddPlaylist,
                 enabled = !loading,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                modifier = Modifier.height(34.dp)
+                modifier = Modifier
+                    .height(34.dp)
+                    .tvFocusHighlight(
+                        shape = ButtonDefaults.shape,
+                        scaleOnFocus = if (isTv) 1.05f else 1.0f
+                    )
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
@@ -9850,7 +10292,12 @@ private fun PlaylistsTab(
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                         border = if (isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
                         else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusHighlight(
+                                shape = RoundedCornerShape(10.dp),
+                                scaleOnFocus = if (isTv) 1.02f else 1.0f
+                            )
                     ) {
                         if (isCompact) {
                             Column(
@@ -10981,12 +11428,18 @@ private fun SourceMethodCard(
     description: String,
     onClick: () -> Unit
 ) {
+    val isTv = LocalFormFactor.current.isTelevision
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .tvFocusHighlight(
+                shape = RoundedCornerShape(14.dp),
+                scaleOnFocus = if (isTv) 1.03f else 1.0f
+            )
     ) {
         Row(
             Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
@@ -11015,6 +11468,7 @@ private fun AddPlaylistDialog(
     onPickFile: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
@@ -11118,7 +11572,15 @@ private fun AddPlaylistDialog(
                         onClick = { mode = 0 }
                     )
                     Spacer(Modifier.height(18.dp))
-                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .tvFocusHighlight(
+                                shape = ButtonDefaults.textShape,
+                                scaleOnFocus = if (isTv) 1.05f else 1.0f
+                            )
+                    ) {
                         Text(strings.cancel)
                     }
                     return@Column
@@ -11154,7 +11616,12 @@ private fun AddPlaylistDialog(
                             hideKeyboard()
                             onPickFile()
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusHighlight(
+                                shape = ButtonDefaults.outlinedShape,
+                                scaleOnFocus = if (isTv) 1.02f else 1.0f
+                            )
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
@@ -11218,12 +11685,18 @@ private fun AddPlaylistDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = {
-                        hideKeyboard()
-                        connectionError = null
-                        pendingHttpServerUrl = null
-                        mode = -1
-                    }) {
+                    TextButton(
+                        onClick = {
+                            hideKeyboard()
+                            connectionError = null
+                            pendingHttpServerUrl = null
+                            mode = -1
+                        },
+                        modifier = Modifier.tvFocusHighlight(
+                            shape = ButtonDefaults.textShape,
+                            scaleOnFocus = if (isTv) 1.05f else 1.0f
+                        )
+                    ) {
                         Text(strings.back)
                     }
                     Spacer(Modifier.width(8.dp))
@@ -11233,7 +11706,11 @@ private fun AddPlaylistDialog(
                                 hideKeyboard()
                                 onAddUrl(name.trim(), url.trim())
                             },
-                            enabled = url.startsWith("http://", true) || url.startsWith("https://", true)
+                            enabled = url.startsWith("http://", true) || url.startsWith("https://", true),
+                            modifier = Modifier.tvFocusHighlight(
+                                shape = ButtonDefaults.shape,
+                                scaleOnFocus = if (isTv) 1.05f else 1.0f
+                            )
                         ) { Text(strings.addPlaylist) }
                     } else {
                         Button(
@@ -11276,7 +11753,11 @@ private fun AddPlaylistDialog(
                             },
                             enabled = !isConnecting &&
                                     (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
-                                    username.isNotBlank() && password.isNotBlank()
+                                    username.isNotBlank() && password.isNotBlank(),
+                            modifier = Modifier.tvFocusHighlight(
+                                shape = ButtonDefaults.shape,
+                                scaleOnFocus = if (isTv) 1.05f else 1.0f
+                            )
                         ) {
                             if (isConnecting) {
                                 CircularProgressIndicator(
@@ -11764,6 +12245,16 @@ private fun StartupUpdateDialog(
     onInstallUpdate: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+    val primaryButtonFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            delay(100)
+            try { primaryButtonFocusRequester.requestFocus() } catch (_: Throwable) {}
+        }
+    }
+
     Dialog(onDismissRequest = { if (progress < 0f) onDismiss() }) {
         Surface(
             shape = RoundedCornerShape(20.dp),
@@ -11870,17 +12361,39 @@ private fun StartupUpdateDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (downloaded) {
-                        Button(onClick = onInstallUpdate) {
+                        Button(
+                            onClick = onInstallUpdate,
+                            modifier = Modifier
+                                .focusRequester(primaryButtonFocusRequester)
+                                .tvFocusHighlight(
+                                    shape = ButtonDefaults.shape,
+                                    scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                )
+                        ) {
                             Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(strings.installUpdate)
                         }
                     } else if (progress < 0f) {
-                        TextButton(onClick = onDismiss) {
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.tvFocusHighlight(
+                                shape = ButtonDefaults.textShape,
+                                scaleOnFocus = if (isTv) 1.05f else 1.0f
+                            )
+                        ) {
                             Text(strings.later)
                         }
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = onStartUpdate) {
+                        Button(
+                            onClick = onStartUpdate,
+                            modifier = Modifier
+                                .focusRequester(primaryButtonFocusRequester)
+                                .tvFocusHighlight(
+                                    shape = ButtonDefaults.shape,
+                                    scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                )
+                        ) {
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(strings.updateNow)
