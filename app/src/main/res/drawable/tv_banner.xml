@@ -13,6 +13,6 @@
         android:bottom="36dp">
         <bitmap
             android:src="@drawable/fortress_tv_logo"
-            android:gravity="center" />
+            android:gravity="fill" />
     </item>
 </layer-list>

@@ -86,6 +86,7 @@ interface Strings {
     fun channelsCount(count: Int): String
     val settings: String
     val close: String
+    val clearSearch: String
     val save: String
     val cancel: String
     val delete: String
@@ -253,6 +254,10 @@ interface Strings {
     val deletePlaylistConfirmTitle: String
     fun deletePlaylistConfirmMsg(name: String): String
     fun lastUpdated(time: String): String
+    val updatedJustNow: String
+    fun updatedMinutesAgo(minutes: Long): String
+    fun updatedHoursAgo(hours: Long): String
+    fun updatedAt(time: String): String
     val notUpdatedYet: String
     val refreshPlaylist: String
     val xmltvSource: String
@@ -395,6 +400,7 @@ object EnglishStrings : Strings {
     override fun channelsCount(count: Int) = "$count ${if (count == 1) "channel" else "channels"}"
     override val settings = "Settings"
     override val close = "Close"
+    override val clearSearch = "Clear search"
     override val save = "Save"
     override val cancel = "Cancel"
     override val delete = "Delete"
@@ -562,6 +568,10 @@ object EnglishStrings : Strings {
     override val deletePlaylistConfirmTitle = "Delete Playlist"
     override fun deletePlaylistConfirmMsg(name: String) = "Are you sure you want to delete \"$name\"? This action cannot be undone."
     override fun lastUpdated(time: String) = "Last updated: $time"
+    override val updatedJustNow = "Updated just now"
+    override fun updatedMinutesAgo(minutes: Long) = "Updated ${minutes}m ago"
+    override fun updatedHoursAgo(hours: Long) = "Updated ${hours}h ago"
+    override fun updatedAt(time: String) = "Updated $time"
     override val notUpdatedYet = "Not updated yet"
     override val refreshPlaylist = "Refresh playlist"
     override val xmltvSource = "XMLTV Guide Source"
@@ -705,6 +715,7 @@ object PortugueseStrings : Strings {
     override fun channelsCount(count: Int) = "$count ${if (count == 1) "canal" else "canais"}"
     override val settings = "Definições"
     override val close = "Fechar"
+    override val clearSearch = "Limpar pesquisa"
     override val save = "Guardar"
     override val cancel = "Cancelar"
     override val delete = "Eliminar"
@@ -872,6 +883,10 @@ object PortugueseStrings : Strings {
     override val deletePlaylistConfirmTitle = "Eliminar Lista"
     override fun deletePlaylistConfirmMsg(name: String) = "Tem a certeza de que deseja eliminar \"$name\"? Esta ação não pode ser anulada."
     override fun lastUpdated(time: String) = "Última atualização: $time"
+    override val updatedJustNow = "Atualizado agora"
+    override fun updatedMinutesAgo(minutes: Long) = "Atualizado há ${minutes} min"
+    override fun updatedHoursAgo(hours: Long) = "Atualizado há ${hours} h"
+    override fun updatedAt(time: String) = "Atualizado em $time"
     override val notUpdatedYet = "Ainda não atualizada"
     override val refreshPlaylist = "Atualizar lista"
     override val xmltvSource = "Origem do Guia XMLTV"

@@ -135,5 +135,34 @@ class EpgRepositoryTest {
             assertEquals("Telejornal Amanhã", it?.programmes?.get("RTP1.pt")?.first()?.title)
         }
     }
+
+    @Test
+    fun dynamicallyPinsCurrentDayWhenManifestWasCreatedYesterday() = runBlocking {
+        val currentDay = java.time.LocalDate.now(java.time.ZoneId.of("UTC")).toEpochDay()
+        val yesterday = currentDay - 1
+        val dynamicManifest = EpgManifest(
+            generationId = "gen-dynamic",
+            sourceFingerprint = "fp",
+            timezoneId = "UTC",
+            loadedDays = 3,
+            todayEpochDay = yesterday, // Manifest was saved yesterday
+            channels = mapOf("RTP1.pt" to channel),
+            partitions = mapOf(
+                yesterday to EpgPartitionMetadata(yesterday, "epg_day_gen-dynamic_$yesterday.bin", 1),
+                currentDay to EpgPartitionMetadata(currentDay, "epg_day_gen-dynamic_$currentDay.bin", 1)
+            )
+        )
+        val repo = DefaultEpgRepository(epgDir = tempFolder.root)
+        val guide = EpgGuide(
+            channels = mapOf("RTP1.pt" to channel),
+            programmes = mapOf("RTP1.pt" to listOf(programme1)),
+            manifest = dynamicManifest
+        )
+        repo.setGuide(guide)
+
+        // Today must be dynamically resolved to currentDay (today), not yesterday's saved value
+        assertEquals(currentDay, repo.today.value?.epochDay)
+        assertEquals(currentDay, repo.cachedDay(currentDay)?.epochDay)
+    }
 }
 

@@ -50,15 +50,12 @@ fun Modifier.tvFocusHighlight(
             scaleX = animatedScale
             scaleY = animatedScale
         }
-        .then(
-            if (isFocused) {
-                Modifier.border(
-                    BorderStroke(focusedBorderWidth, borderColor),
-                    shape = shape
-                )
-            } else {
-                Modifier
-            }
+        .border(
+            BorderStroke(
+                width = if (isFocused) focusedBorderWidth else 0.dp,
+                color = if (isFocused) borderColor else Color.Transparent
+            ),
+            shape = shape
         )
 }
 

@@ -46,6 +46,17 @@ class DefaultEpgRepository(
     // In-flight load deduplication
     private val inFlightLoads = ConcurrentHashMap<DayLoadKey, Deferred<EpgDay?>>()
 
+    private fun resolveActiveTodayEpoch(manifest: EpgManifest?): Long? {
+        if (manifest == null) return null
+        val zone = runCatching { java.time.ZoneId.of(manifest.timezoneId) }.getOrElse { java.time.ZoneId.systemDefault() }
+        val currentTodayEpoch = java.time.LocalDate.now(zone).toEpochDay()
+        return if (manifest.partitions.containsKey(currentTodayEpoch)) {
+            currentTodayEpoch
+        } else {
+            manifest.todayEpochDay
+        }
+    }
+
     override fun setGuide(guide: EpgGuide?) {
         val generationChanged = _manifest.value?.generationId != guide?.manifest?.generationId
         if (generationChanged) {
@@ -54,8 +65,8 @@ class DefaultEpgRepository(
         }
         _guide.value = guide
         _manifest.value = guide?.manifest
-        val todayEpoch = guide?.manifest?.todayEpochDay
-        if (todayEpoch != null && guide.programmes.isNotEmpty()) {
+        val todayEpoch = resolveActiveTodayEpoch(guide?.manifest)
+        if (guide != null && todayEpoch != null && guide.programmes.isNotEmpty()) {
             val todayDay = EpgDay(todayEpoch, guide.programmes)
             pinnedTodayDay = todayDay
             _today.value = todayDay
@@ -100,7 +111,8 @@ class DefaultEpgRepository(
                 cacheMutex.withLock {
                     // Do not publish a stale partition if the guide changed while it was loading.
                     if (_manifest.value?.generationId == currentManifest.generationId) {
-                        if (epochDay == currentManifest.todayEpochDay) {
+                        val activeTodayEpoch = resolveActiveTodayEpoch(currentManifest)
+                        if (epochDay == activeTodayEpoch) {
                             pinnedTodayDay = loaded
                             _today.value = loaded
                         } else {
@@ -121,7 +133,8 @@ class DefaultEpgRepository(
 
     override suspend fun preloadTomorrowNearMidnight() {
         val currentManifest = _manifest.value ?: return
-        val tomorrowEpochDay = currentManifest.todayEpochDay + 1
+        val activeTodayEpoch = resolveActiveTodayEpoch(currentManifest) ?: currentManifest.todayEpochDay
+        val tomorrowEpochDay = activeTodayEpoch + 1
         if (cachedDay(tomorrowEpochDay) == null && currentManifest.partitions.containsKey(tomorrowEpochDay)) {
             withContext(Dispatchers.IO) {
                 loadDay(tomorrowEpochDay)
