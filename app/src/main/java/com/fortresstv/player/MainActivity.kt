@@ -69,6 +69,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -3170,6 +3171,7 @@ private fun FortressLibrary(
                 LibraryDestination.MOVIES -> XtreamMoviesScreen(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
+                    contentFocusRequester = contentFocusRequester,
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.MOVIE },
                     progressEntries = progressEntries,
                     watchedItemIds = watchedItemIds,
@@ -3206,6 +3208,7 @@ private fun FortressLibrary(
                 LibraryDestination.SERIES -> XtreamSeriesScreen(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
+                    contentFocusRequester = contentFocusRequester,
                     hideAdultContent = hideAdultContent,
                     gridState = seriesGridState,
                     followedSeriesIds = followedSeriesIds,
@@ -3645,7 +3648,6 @@ private fun ContinueWatchingRow(
 
         // Hero Spotlight Banner
         Surface(
-            onClick = { onClick(featured) },
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
@@ -3655,60 +3657,68 @@ private fun ContinueWatchingRow(
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!featured.posterUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = featured.posterUrl,
-                        contentDescription = featured.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .width(60.dp)
-                            .height(84.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    )
-                    Spacer(Modifier.width(14.dp))
-                }
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                        ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onClick(featured) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!featured.posterUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = featured.posterUrl,
+                            contentDescription = featured.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .width(60.dp)
+                                .height(84.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    if (featured.kind == VodProgressKind.MOVIE) strings.navMovies else strings.navSeries,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            val pct = (featured.progressFraction * 100).toInt()
                             Text(
-                                if (featured.kind == VodProgressKind.MOVIE) strings.navMovies else strings.navSeries,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                "$pct% ${strings.watchedProgress.lowercase()}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
-                        Spacer(Modifier.width(8.dp))
-                        val pct = (featured.progressFraction * 100).toInt()
+                        Spacer(Modifier.height(6.dp))
                         Text(
-                            "$pct% ${strings.watchedProgress.lowercase()}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                            featured.title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { featured.progressFraction },
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        featured.title,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { featured.progressFraction },
-                        modifier = Modifier
-                            .fillMaxWidth(0.9f)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-                    )
                 }
                 Spacer(Modifier.width(12.dp))
                 FilledTonalButton(
@@ -3722,7 +3732,12 @@ private fun ContinueWatchingRow(
                 }
                 IconButton(
                     onClick = { onRemove(featured) },
-                    modifier = Modifier.padding(start = 4.dp)
+                    modifier = Modifier
+                        .padding(start = 4.dp)
+                        .tvFocusHighlight(
+                            shape = CircleShape,
+                            scaleOnFocus = 1.15f
+                        )
                 ) {
                     Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching)
                 }
@@ -3734,7 +3749,6 @@ private fun ContinueWatchingRow(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(remaining.take(15), key = { "continue:${it.key}" }) { entry ->
                     Surface(
-                        onClick = { onClick(entry) },
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainer,
                         modifier = Modifier.width(220.dp)
@@ -3753,9 +3767,17 @@ private fun ContinueWatchingRow(
                                     fontSize = 13.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f).padding(start = 12.dp, top = 10.dp, bottom = 10.dp)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { onClick(entry) }
+                                        .padding(start = 12.dp, top = 10.dp, bottom = 10.dp)
                                 )
-                                IconButton(onClick = { onRemove(entry) }, modifier = Modifier.size(36.dp)) {
+                                IconButton(
+                                    onClick = { onRemove(entry) },
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.15f)
+                                ) {
                                     Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching, modifier = Modifier.size(16.dp))
                                 }
                             }
@@ -3771,6 +3793,7 @@ private fun ContinueWatchingRow(
 private fun XtreamMoviesScreen(
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
+    contentFocusRequester: FocusRequester,
     continueWatching: List<VodProgressEntry>,
     progressEntries: List<VodProgressEntry>,
     watchedItemIds: Set<String>,
@@ -3791,6 +3814,7 @@ private fun XtreamMoviesScreen(
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var visibleMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    var isCatalogLoading by remember { mutableStateOf(true) }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy(VodProgressEntry::key) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
@@ -3805,6 +3829,7 @@ private fun XtreamMoviesScreen(
         appliedQuery = query.trim()
     }
     LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, sortOption) {
+        isCatalogLoading = true
         visibleMovies = withContext(Dispatchers.Default) {
             val filtered = catalogs.flatMap { catalog ->
                 val categoryNames = catalog.movieCategories.associate { it.id to it.name }
@@ -3825,6 +3850,7 @@ private fun XtreamMoviesScreen(
                 VodSortOption.ALPHABETICAL -> filtered.sortedBy { it.movie.name.lowercase() }
             }
         }
+        isCatalogLoading = false
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
@@ -3842,17 +3868,18 @@ private fun XtreamMoviesScreen(
         onSelectSortOption = { sortOption = it },
         emptyMessage = strings.noMoviesAvailable,
         itemCount = visibleMovies.size,
+        isContentLoading = isCatalogLoading,
         gridState = gridState,
         gridTestTag = "movies_grid",
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
     ) {
-        gridItems(
+        gridItemsIndexed(
             visibleMovies,
-            key = { "${it.catalog.sourceId}:${it.movie.id}" },
-            contentType = { "movie_poster" }
-        ) { entry ->
+            key = { _, entry -> "${entry.catalog.sourceId}:${entry.movie.id}" },
+            contentType = { _, _ -> "movie_poster" }
+        ) { index, entry ->
             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
             VodPosterCard(
                 title = entry.movie.name,
@@ -3860,6 +3887,7 @@ private fun XtreamMoviesScreen(
                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
                 isWatched = libraryId in watchedItemIds,
                 progressFraction = progressByKey[libraryId]?.progressFraction,
+                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                 onClick = { selectedMovie = entry }
             )
         }
@@ -3893,6 +3921,7 @@ private fun XtreamMoviesScreen(
 private fun XtreamSeriesScreen(
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
+    contentFocusRequester: FocusRequester,
     hideAdultContent: Boolean = false,
     gridState: LazyGridState,
     followedSeriesIds: Set<String>,
@@ -3913,6 +3942,7 @@ private fun XtreamSeriesScreen(
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
     var visibleSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
+    var isCatalogLoading by remember { mutableStateOf(true) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
         catalogs.flatMap { catalog ->
@@ -3926,6 +3956,7 @@ private fun XtreamSeriesScreen(
         appliedQuery = query.trim()
     }
     LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, sortOption) {
+        isCatalogLoading = true
         visibleSeries = withContext(Dispatchers.Default) {
             val filtered = catalogs.flatMap { catalog ->
                 val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
@@ -3946,6 +3977,7 @@ private fun XtreamSeriesScreen(
                 VodSortOption.ALPHABETICAL -> filtered.sortedBy { it.series.name.lowercase() }
             }
         }
+        isCatalogLoading = false
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
@@ -3963,21 +3995,23 @@ private fun XtreamSeriesScreen(
         onSelectSortOption = { sortOption = it },
         emptyMessage = strings.noSeriesAvailable,
         itemCount = visibleSeries.size,
+        isContentLoading = isCatalogLoading,
         gridState = gridState,
         gridTestTag = "series_grid",
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
     ) {
-        gridItems(
+        gridItemsIndexed(
             visibleSeries,
-            key = { "${it.catalog.sourceId}:${it.series.id}" },
-            contentType = { "series_poster" }
-        ) { entry ->
+            key = { _, entry -> "${entry.catalog.sourceId}:${entry.series.id}" },
+            contentType = { _, _ -> "series_poster" }
+        ) { index, entry ->
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
                 subtitle = listOfNotNull(entry.series.year, entry.series.rating).joinToString(" · "),
+                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                 onClick = { selected = entry }
             )
         }
@@ -4019,6 +4053,7 @@ private fun LibraryCatalogScaffold(
     onSelectSortOption: (VodSortOption) -> Unit = {},
     emptyMessage: String,
     itemCount: Int,
+    isContentLoading: Boolean = false,
     gridState: LazyGridState,
     gridTestTag: String,
     header: @Composable () -> Unit = {},
@@ -4557,16 +4592,24 @@ private fun LibraryCatalogScaffold(
                 Spacer(Modifier.height(10.dp))
                 header()
 
-                if (itemCount == 0) {
+                if (isContentLoading && itemCount == 0) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    }
+                } else if (itemCount == 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
                     }
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(150.dp),
+                        columns = GridCells.Adaptive(if (isTv) 120.dp else 150.dp),
                         state = gridState,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(
+                            top = if (isTv) 14.dp else 6.dp,
+                            bottom = if (isTv) 14.dp else 6.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
                         modifier = Modifier.fillMaxSize().testTag(gridTestTag),
                         content = content
                     )
@@ -4583,6 +4626,7 @@ private fun VodPosterCard(
     subtitle: String,
     isWatched: Boolean = false,
     progressFraction: Float? = null,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -4605,7 +4649,7 @@ private fun VodPosterCard(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
-        modifier = Modifier.tvFocusHighlight(
+        modifier = modifier.tvFocusHighlight(
             shape = RoundedCornerShape(16.dp),
             scaleOnFocus = if (isTv) 1.06f else 1.0f
         )
@@ -5638,8 +5682,11 @@ private fun VodPlayerDialog(
 
     LaunchedEffect(controlsVisible, showEpisodesDrawer, showTracksDialog, showSleepTimerDialog, resumeDecisionMade) {
         if (isTv && controlsVisible && !showEpisodesDrawer && !showTracksDialog && !showSleepTimerDialog && resumeDecisionMade) {
-            delay(50)
-            runCatching { vodPlayFocusRequester.requestFocus() }
+            delay(100)
+            if (runCatching { vodPlayFocusRequester.requestFocus() }.isFailure) {
+                delay(100)
+                runCatching { vodPlayFocusRequester.requestFocus() }
+            }
         } else if (isTv && !isOverlayActive && resumeDecisionMade) {
             runCatching { playerFocusRequester.requestFocus() }
         }
@@ -5654,7 +5701,7 @@ private fun VodPlayerDialog(
 
     LaunchedEffect(controlsVisible, showEpisodesDrawer, showSleepTimerDialog, showTracksDialog, lastInteractionEpoch) {
         if (controlsVisible && !showEpisodesDrawer && !showSleepTimerDialog && !showTracksDialog) {
-            delay(if (isTv) 8_000 else 3_000)
+            delay(if (isTv) 4_000 else 3_000)
             controlsVisible = false
         }
     }
@@ -6113,6 +6160,7 @@ private fun VodPlayerDialog(
                                     isPlaying = true
                                 }
                             },
+                            enabled = playbackState != Player.STATE_BUFFERING,
                             modifier = Modifier
                                 .size(72.dp)
                                 .tvFullscreenControl(
@@ -6130,11 +6178,19 @@ private fun VodPlayerDialog(
                                 contentColor = MaterialTheme.colorScheme.onPrimary
                             )
                         ) {
-                            Icon(
-                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                modifier = Modifier.size(40.dp)
-                            )
+                            if (playbackState == Player.STATE_BUFFERING) {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 3.dp,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            } else {
+                                Icon(
+                                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
                         }
 
                         FilledIconButton(
@@ -6621,7 +6677,17 @@ private fun PlaybackTracksDialog(
 ) {
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
-    var selectedTrackTab by remember { mutableIntStateOf(0) }
+    val audioFocusRequester = remember { FocusRequester() }
+    val selectedAudio = audioTracks.firstOrNull { it.isSelected } ?: audioTracks.firstOrNull()
+    val selectedSubtitle = subtitleTracks.firstOrNull { it.isSelected }
+
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            delay(100)
+            runCatching { audioFocusRequester.requestFocus() }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -6632,180 +6698,48 @@ private fun PlaybackTracksDialog(
             }
         },
         text = {
-            Column(Modifier.fillMaxWidth()) {
-                TabRow(selectedTabIndex = selectedTrackTab) {
-                    Tab(
-                        selected = selectedTrackTab == 0,
-                        onClick = { selectedTrackTab = 0 },
-                        text = { Text(strings.audioTracks) },
-                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp), scaleOnFocus = if (isTv) 1.05f else 1.0f)
-                    )
-                    Tab(
-                        selected = selectedTrackTab == 1,
-                        onClick = { selectedTrackTab = 1 },
-                        text = { Text(strings.subtitles) },
-                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp), scaleOnFocus = if (isTv) 1.05f else 1.0f)
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                if (selectedTrackTab == 0) {
-                    if (audioTracks.isEmpty()) {
-                        Text(
-                            strings.noAudioTracksAvailable,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
-                    } else {
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.heightIn(max = 280.dp)
-                        ) {
-                            items(audioTracks, key = { it.id }) { track ->
-                                Surface(
-                                    onClick = {
-                                        onUserTrackSelected()
-                                        player.trackSelectionParameters = player.trackSelectionParameters
-                                            .buildUpon()
-                                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-                                            .build()
-                                        onDismiss()
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                                    border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .tvFocusHighlight(
-                                            shape = RoundedCornerShape(10.dp),
-                                            scaleOnFocus = if (isTv) 1.05f else 1.0f
-                                        )
-                                ) {
-                                    Row(
-                                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            track.label,
-                                            fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (track.isSelected) {
-                                            Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                PlaybackTrackDropdown(
+                    title = strings.audioTracks,
+                    selectedValue = selectedAudio?.let { localizedPlaybackTrackLabel(it, strings) }
+                        ?: strings.noAudioTracksAvailable,
+                    options = audioTracks.map { localizedPlaybackTrackLabel(it, strings) },
+                    selectedIndex = audioTracks.indexOfFirst { it.isSelected }.coerceAtLeast(0),
+                    enabled = audioTracks.isNotEmpty(),
+                    modifier = Modifier.focusRequester(audioFocusRequester),
+                    onSelected = { index ->
+                        val track = audioTracks[index]
+                        onUserTrackSelected()
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                            .build()
                     }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.heightIn(max = 280.dp)
-                    ) {
-                        val isSubtitlesOff = subtitleTracks.none { it.isSelected }
-                        item {
-                            Surface(
-                                onClick = {
-                                    onUserTrackSelected()
-                                    player.trackSelectionParameters = player.trackSelectionParameters
-                                        .buildUpon()
-                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                                        .build()
-                                    onDismiss()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                                border = if (isSubtitlesOff) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .tvFocusHighlight(
-                                        shape = RoundedCornerShape(10.dp),
-                                        scaleOnFocus = if (isTv) 1.05f else 1.0f
-                                    )
-                            ) {
-                                Row(
-                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        strings.subtitlesOff,
-                                        fontWeight = if (isSubtitlesOff) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSubtitlesOff) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                    if (isSubtitlesOff) {
-                                        Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        if (subtitleTracks.isEmpty()) {
-                            item {
-                                Text(
-                                    strings.noSubtitlesAvailable,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 13.sp,
-                                    modifier = Modifier.padding(vertical = 8.dp)
-                                )
-                            }
+                )
+                PlaybackTrackDropdown(
+                    title = strings.subtitles,
+                    selectedValue = selectedSubtitle?.let { localizedPlaybackTrackLabel(it, strings) }
+                        ?: strings.subtitlesOff,
+                    options = listOf(strings.subtitlesOff) + subtitleTracks.map { localizedPlaybackTrackLabel(it, strings) },
+                    selectedIndex = subtitleTracks.indexOfFirst { it.isSelected }.let { if (it < 0) 0 else it + 1 },
+                    enabled = true,
+                    onSelected = { index ->
+                        onUserTrackSelected()
+                        player.trackSelectionParameters = if (index == 0) {
+                            player.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                .build()
                         } else {
-                            items(subtitleTracks, key = { it.id }) { track ->
-                                Surface(
-                                    onClick = {
-                                        onUserTrackSelected()
-                                        player.trackSelectionParameters = player.trackSelectionParameters
-                                            .buildUpon()
-                                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-                                            .build()
-                                        onDismiss()
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (track.isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                                    border = if (track.isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .tvFocusHighlight(
-                                            shape = RoundedCornerShape(10.dp),
-                                            scaleOnFocus = if (isTv) 1.05f else 1.0f
-                                        )
-                                ) {
-                                    Row(
-                                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            track.label,
-                                            fontWeight = if (track.isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (track.isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (track.isSelected) {
-                                            Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                            val track = subtitleTracks[index - 1]
+                            player.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                .build()
                         }
                     }
-                }
+                )
             }
         },
         confirmButton = {
@@ -6814,6 +6748,71 @@ private fun PlaybackTracksDialog(
             }
         }
     )
+}
+
+@Composable
+private fun PlaybackTrackDropdown(
+    title: String,
+    selectedValue: String,
+    options: List<String>,
+    selectedIndex: Int,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onSelected: (Int) -> Unit
+) {
+    val isTv = LocalFormFactor.current.isTelevision
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier.fillMaxWidth()) {
+        Surface(
+            onClick = { expanded = true },
+            enabled = enabled,
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier
+                .fillMaxWidth()
+                .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.04f else 1f)
+        ) {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("$title:", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
+                Text(selectedValue, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 280.dp, max = 440.dp)
+        ) {
+            options.forEachIndexed { index, label ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = {
+                        onSelected(index)
+                        expanded = false
+                    },
+                    trailingIcon = if (index == selectedIndex) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null
+                )
+            }
+        }
+    }
+}
+
+@UnstableApi
+private fun localizedPlaybackTrackLabel(track: PlaybackTrackItem, strings: Strings): String = when {
+    TrackLanguageMatcher.matchesLanguage(track.language, track.label, "pt") -> strings.langPortuguese
+    TrackLanguageMatcher.matchesLanguage(track.language, track.label, "en") -> strings.langEnglish
+    TrackLanguageMatcher.matchesLanguage(track.language, track.label, "es") -> strings.langSpanish
+    TrackLanguageMatcher.matchesLanguage(track.language, track.label, "fr") -> strings.langFrench
+    TrackLanguageMatcher.matchesLanguage(track.language, track.label, "de") -> strings.langGerman
+    TrackLanguageMatcher.matchesLanguage(track.language, track.label, "it") -> strings.langItalian
+    else -> track.label
 }
 
 @Composable
@@ -8635,6 +8634,11 @@ private fun VideoSurface(
                         }
                     )
                     setShowSubtitleButton(showTrackSettings)
+                    subtitleView?.apply {
+                        visibility = android.view.View.VISIBLE
+                        setApplyEmbeddedStyles(true)
+                        setApplyEmbeddedFontSizes(true)
+                    }
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
                         if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
                     findViewById<android.view.View>(androidx.media3.ui.R.id.exo_fullscreen)?.visibility = android.view.View.GONE
@@ -8659,6 +8663,11 @@ private fun VideoSurface(
                     }
                 )
                 it.setShowSubtitleButton(showTrackSettings)
+                it.subtitleView?.apply {
+                    visibility = android.view.View.VISIBLE
+                    setApplyEmbeddedStyles(true)
+                    setApplyEmbeddedFontSizes(true)
+                }
                 it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_settings)?.visibility =
                     if (showTrackSettings) android.view.View.VISIBLE else android.view.View.GONE
                 if (!showTrackSettings) {
