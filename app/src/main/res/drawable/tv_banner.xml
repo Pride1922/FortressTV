@@ -1,18 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="#031235" />
-        </shape>
-    </item>
-    <item
-        android:gravity="center"
-        android:left="64dp"
-        android:top="36dp"
-        android:right="64dp"
-        android:bottom="36dp">
-        <bitmap
-            android:src="@drawable/fortress_tv_logo"
-            android:gravity="fill" />
-    </item>
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <!-- Android TV banners must expose a 16:9 intrinsic size. -->
+    <path
+        android:fillColor="#07162D"
+        android:pathData="M0,0 H320 V180 H0 Z" />
+    <path
+        android:fillColor="#0D2447"
+        android:pathData="M0,0 H320 V5 H0 Z" />
+    <path
+        android:fillColor="#35D9F2"
+        android:pathData="M160,27 L202,40 L202,91 C202,119 185,141 160,156 C135,141 118,119 118,91 L118,40 Z" />
+    <path
+        android:fillColor="#07162D"
+        android:pathData="M160,40 L190,49 L190,91 C190,111 178,128 160,140 C142,128 130,111 130,91 L130,49 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M145,70 L145,113 L177,91.5 Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M168,61 C181,65 190,74 194,86"
+        android:strokeColor="#35D9F2"
+        android:strokeLineCap="round"
+        android:strokeWidth="5" />
+</vector>

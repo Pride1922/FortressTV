@@ -1038,19 +1038,42 @@ private fun FortressTVApp() {
         }
     }
 
-    fun triggerRestoreBackup() {
-        val appFilesDir = context.getExternalFilesDir(null)
+    fun openLatestLocalBackup(): Boolean {
         val candidateFiles = mutableListOf<File>()
-        appFilesDir?.listFiles { file -> file.isFile && file.extension.lowercase() == "ftv" }?.let { candidateFiles.addAll(it) }
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        context.getExternalFilesDir(null)
+            ?.listFiles { file -> file.isFile && file.extension.equals("ftv", ignoreCase = true) }
+            ?.let(candidateFiles::addAll)
         runCatching {
-            downloadsDir?.listFiles { file -> file.isFile && file.extension.lowercase() == "ftv" }?.let { candidateFiles.addAll(it) }
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                ?.listFiles { file -> file.isFile && file.extension.equals("ftv", ignoreCase = true) }
+                ?.let(candidateFiles::addAll)
         }
-        val bestCandidate = candidateFiles.maxByOrNull { it.lastModified() }
-        if (bestCandidate != null) {
-            pendingRestoreUri = Uri.fromFile(bestCandidate)
-            restoreErrorMessage = null
-            showRestoreBackupPasswordDialog = true
+        val bestCandidate = candidateFiles.maxByOrNull(File::lastModified) ?: return false
+        pendingRestoreUri = Uri.fromFile(bestCandidate)
+        restoreErrorMessage = null
+        showRestoreBackupPasswordDialog = true
+        return true
+    }
+
+    val restoreStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted || !openLatestLocalBackup()) {
+            Toast.makeText(
+                context,
+                if (strings.languageTag == "pt-PT") "Nenhum ficheiro de cópia (.ftv) encontrado." else "No backup file (.ftv) found.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    fun triggerRestoreBackup() {
+        if (openLatestLocalBackup()) return
+        if (
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 &&
+            context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            restoreStoragePermissionLauncher.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
             return
         }
         try {
@@ -3246,6 +3269,7 @@ private fun FortressLibrary(
                     channels = effectivePlaylist.channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true },
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
+                    contentFocusRequester = contentFocusRequester,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
                     favoriteChannelIds = favoriteChannelIds,
@@ -6849,6 +6873,7 @@ private fun FavoriteLibraryScreen(
     channels: List<PlaylistChannel>,
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
+    contentFocusRequester: FocusRequester,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int,
     favoriteChannelIds: Set<String>,
@@ -6897,6 +6922,11 @@ private fun FavoriteLibraryScreen(
             }.map { CatalogSeries(catalog, it) }
         }
     }
+    val selectedSectionIsEmpty = when (section) {
+        FavoriteSection.CHANNELS -> channels.isEmpty()
+        FavoriteSection.MOVIES -> movies.isEmpty()
+        FavoriteSection.SERIES -> series.isEmpty()
+    }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(epgGuide) {
         while (true) {
@@ -6928,7 +6958,12 @@ private fun FavoriteLibraryScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                     Spacer(Modifier.width(10.dp))
-                    Text(strings.navFavorites, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        strings.navFavorites,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(Modifier.width(10.dp))
                     Text("${channels.size + movies.size + series.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
             }
@@ -6938,6 +6973,9 @@ private fun FavoriteLibraryScreen(
                     FilterChip(
                         selected = section == FavoriteSection.CHANNELS,
                         onClick = { section = FavoriteSection.CHANNELS },
+                        modifier = if (section == FavoriteSection.CHANNELS && selectedSectionIsEmpty) {
+                            Modifier.focusRequester(contentFocusRequester)
+                        } else Modifier,
                         label = { Text("${strings.favoriteChannels} (${channels.size})") }
                     )
                 }
@@ -6945,6 +6983,9 @@ private fun FavoriteLibraryScreen(
                     FilterChip(
                         selected = section == FavoriteSection.MOVIES,
                         onClick = { section = FavoriteSection.MOVIES },
+                        modifier = if (section == FavoriteSection.MOVIES && selectedSectionIsEmpty) {
+                            Modifier.focusRequester(contentFocusRequester)
+                        } else Modifier,
                         label = { Text("${strings.movieWatchlist} (${movies.size})") }
                     )
                 }
@@ -6952,6 +6993,9 @@ private fun FavoriteLibraryScreen(
                     FilterChip(
                         selected = section == FavoriteSection.SERIES,
                         onClick = { section = FavoriteSection.SERIES },
+                        modifier = if (section == FavoriteSection.SERIES && selectedSectionIsEmpty) {
+                            Modifier.focusRequester(contentFocusRequester)
+                        } else Modifier,
                         label = { Text("${strings.followedSeries} (${series.size})") }
                     )
                 }
@@ -6961,8 +7005,12 @@ private fun FavoriteLibraryScreen(
                 FavoriteSection.CHANNELS -> if (channels.isEmpty()) {
                     FavoriteEmptyMessage(strings.noFavoriteChannels)
                 } else {
-                    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(channels, key = { "favorite:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = 14.dp, bottom = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        itemsIndexed(channels, key = { _, channel -> "favorite:${channel.sourceId}:${channel.sourceItemId}" }) { index, channel ->
                             GuideChannelRow(
                                 channel = channel,
                                 epgGuide = epgGuide,
@@ -6970,6 +7018,7 @@ private fun FavoriteLibraryScreen(
                                 epgTimeShiftHours = epgTimeShiftHours,
                                 selected = false,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
+                                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                                 onToggleFavorite = { onToggleFavorite(channel) },
                                 onClick = { onWatch(channel) }
                             )
@@ -6980,12 +7029,13 @@ private fun FavoriteLibraryScreen(
                     FavoriteEmptyMessage(strings.noWatchlistMovies)
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(150.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        columns = GridCells.Adaptive(120.dp),
+                        contentPadding = PaddingValues(top = 14.dp, bottom = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        gridItems(movies, key = { "watchlist:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+                        gridItemsIndexed(movies, key = { _, entry -> "watchlist:${entry.catalog.sourceId}:${entry.movie.id}" }) { index, entry ->
                             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
                             VodPosterCard(
                                 title = entry.movie.name,
@@ -6993,6 +7043,7 @@ private fun FavoriteLibraryScreen(
                                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
                                 isWatched = libraryId in watchedItemIds,
                                 progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
+                                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                                 onClick = { selectedMovie = entry }
                             )
                         }
@@ -7002,16 +7053,18 @@ private fun FavoriteLibraryScreen(
                     FavoriteEmptyMessage(strings.noFollowedSeries)
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(150.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        columns = GridCells.Adaptive(120.dp),
+                        contentPadding = PaddingValues(top = 14.dp, bottom = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        gridItems(series, key = { "followed:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                        gridItemsIndexed(series, key = { _, entry -> "followed:${entry.catalog.sourceId}:${entry.series.id}" }) { index, entry ->
                             VodPosterCard(
                                 title = entry.series.name,
                                 posterUrl = entry.series.coverUrl,
                                 subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                                 onClick = { selectedSeries = entry }
                             )
                         }
@@ -12368,6 +12421,10 @@ private fun AboutTab() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+    val checkUpdateFocusRequester = remember { FocusRequester() }
+    val updateNowFocusRequester = remember { FocusRequester() }
+    val installUpdateFocusRequester = remember { FocusRequester() }
 
     var checkingUpdate by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
@@ -12375,6 +12432,15 @@ private fun AboutTab() {
     var updateError by remember { mutableStateOf<String?>(null) }
     var downloadProgress by remember { mutableFloatStateOf(-1f) }
     var updateDownloaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isTv, checkingUpdate, updateInfo, updateDownloaded) {
+        if (!isTv || checkingUpdate) return@LaunchedEffect
+        delay(100)
+        when {
+            updateDownloaded -> runCatching { installUpdateFocusRequester.requestFocus() }
+            updateInfo != null -> runCatching { updateNowFocusRequester.requestFocus() }
+        }
+    }
 
     fun doCheckForUpdates() {
         checkingUpdate = true
@@ -12465,11 +12531,18 @@ private fun AboutTab() {
                         Text(strings.checkForUpdates, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Text("Installed: v${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     }
-                    if (!checkingUpdate && downloadProgress < 0f && updateInfo == null) {
+                    if (downloadProgress < 0f && updateInfo == null) {
                         FilledTonalButton(
                             onClick = ::doCheckForUpdates,
+                            enabled = !checkingUpdate,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(32.dp)
+                            modifier = Modifier
+                                .height(32.dp)
+                                .focusRequester(checkUpdateFocusRequester)
+                                .tvFocusHighlight(
+                                    shape = ButtonDefaults.filledTonalShape,
+                                    scaleOnFocus = if (isTv) 1.05f else 1f
+                                )
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
@@ -12536,7 +12609,14 @@ private fun AboutTab() {
                                             updateError = result.exceptionOrNull()?.localizedMessage ?: "Installation failed"
                                         }
                                     },
-                                    modifier = Modifier.fillMaxWidth().height(34.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(34.dp)
+                                        .focusRequester(installUpdateFocusRequester)
+                                        .tvFocusHighlight(
+                                            shape = ButtonDefaults.shape,
+                                            scaleOnFocus = if (isTv) 1.04f else 1f
+                                        ),
                                     contentPadding = PaddingValues(vertical = 2.dp)
                                 ) {
                                     Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -12561,7 +12641,14 @@ private fun AboutTab() {
                             } else {
                                 Button(
                                     onClick = { startUpdate(info) },
-                                    modifier = Modifier.fillMaxWidth().height(34.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(34.dp)
+                                        .focusRequester(updateNowFocusRequester)
+                                        .tvFocusHighlight(
+                                            shape = ButtonDefaults.shape,
+                                            scaleOnFocus = if (isTv) 1.04f else 1f
+                                        ),
                                     contentPadding = PaddingValues(vertical = 2.dp)
                                 ) {
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
