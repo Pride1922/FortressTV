@@ -212,6 +212,16 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.PhoneAndroid
+import com.fortresstv.player.transfer.LocalTransferServer
+import com.fortresstv.player.transfer.TransferKind
+import com.fortresstv.player.transfer.TransferPreview
+import com.fortresstv.player.transfer.TransferRequestResult
+import com.fortresstv.player.transfer.TransferSessionState
+import com.fortresstv.player.transfer.TransferSourcePayload
+import com.fortresstv.player.transfer.SendToTvDialog
+import com.fortresstv.player.transfer.TvNsdManager
+import com.fortresstv.player.transfer.sanitizeHostForDisplay
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -525,6 +535,9 @@ private fun FortressTVApp() {
     var showSettings by remember { mutableStateOf(false) }
     var settingsInitialTab by remember { mutableIntStateOf(0) }
     var showAddPlaylistDialog by remember { mutableStateOf(false) }
+    var showTransferDialog by remember { mutableStateOf(false) }
+    var showSendToTvDialog by remember { mutableStateOf(false) }
+    var sendToTvProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var editingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var deletingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var showEpgUrlDialog by remember { mutableStateOf(false) }
@@ -1383,6 +1396,10 @@ private fun FortressTVApp() {
                 onDeletePlaylist = { profile ->
                     deletingProfile = profile
                 },
+                onSendPlaylistToTv = { profile ->
+                    sendToTvProfile = profile
+                    showSendToTvDialog = true
+                },
                 onEpgUrl = {
                     showEpgUrlDialog = true
                 },
@@ -1530,6 +1547,61 @@ private fun FortressTVApp() {
                 onPickFile = {
                     showAddPlaylistDialog = false
                     addPlaylistFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*"))
+                },
+                  onSendFromPhone = {
+                    if (formFactor.isTelevision) showTransferDialog = true
+                    else showSendToTvDialog = true
+                  }
+              )
+          }
+
+        if (showSendToTvDialog) {
+            SendToTvDialog(
+                profiles = playlists,
+                initialProfile = sendToTvProfile,
+                onDismiss = {
+                    showSendToTvDialog = false
+                    sendToTvProfile = null
+                }
+            )
+        }
+
+        if (showTransferDialog) {
+            TvReceiveSourceDialog(
+                onDismiss = { showTransferDialog = false },
+                onSourceConfirmed = { payload ->
+                    showTransferDialog = false
+                    val displayName = payload.name.ifBlank {
+                        when (payload.kind) {
+                            TransferKind.XTREAM -> "Xtream"
+                            TransferKind.M3U -> payload.url?.substringAfterLast('/')?.ifBlank { "Remote Playlist" } ?: "Remote Playlist"
+                        }
+                    }
+                    when (payload.kind) {
+                        TransferKind.M3U -> {
+                            val profile = PlaylistProfile(
+                                id = UUID.randomUUID().toString(),
+                                name = displayName,
+                                source = ContentSource.RemoteUrl(payload.url!!.trim(), displayName),
+                                order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
+                            )
+                            loadPlaylistProfile(profile, forceRefresh = true)
+                        }
+                        TransferKind.XTREAM -> {
+                            val profile = PlaylistProfile(
+                                id = UUID.randomUUID().toString(),
+                                name = displayName,
+                                source = ContentSource.Xtream(
+                                    payload.url!!.trim(), displayName,
+                                    payload.username ?: "", payload.password ?: ""
+                                ),
+                                enabled = true,
+                                role = SourceRole.EVERYTHING,
+                                order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
+                            )
+                            loadXtreamProfile(profile, forceRefresh = true)
+                        }
+                    }
                 }
             )
         }
@@ -10694,6 +10766,7 @@ private fun SettingsDialog(
     onAddPlaylist: () -> Unit,
     onEditPlaylist: (PlaylistProfile) -> Unit,
     onDeletePlaylist: (PlaylistProfile) -> Unit,
+    onSendPlaylistToTv: (PlaylistProfile) -> Unit,
     onEpgUrl: () -> Unit,
     onEpgFile: () -> Unit,
     onRefreshEpg: () -> Unit,
@@ -10899,7 +10972,8 @@ private fun SettingsDialog(
                                     onRefreshPlaylist = onRefreshPlaylist,
                                     onAddPlaylist = onAddPlaylist,
                                     onEditPlaylist = onEditPlaylist,
-                                    onDeletePlaylist = onDeletePlaylist
+                                    onDeletePlaylist = onDeletePlaylist,
+                                    onSendPlaylistToTv = onSendPlaylistToTv
                                 )
                                 2 -> EpgTab(
                                     epgSource = epgSource,
@@ -10984,7 +11058,8 @@ private fun SettingsDialog(
                                 onRefreshPlaylist = onRefreshPlaylist,
                                 onAddPlaylist = onAddPlaylist,
                                 onEditPlaylist = onEditPlaylist,
-                                onDeletePlaylist = onDeletePlaylist
+                                onDeletePlaylist = onDeletePlaylist,
+                                onSendPlaylistToTv = onSendPlaylistToTv
                             )
                             2 -> EpgTab(
                                 epgSource = epgSource,
@@ -11468,7 +11543,8 @@ private fun PlaylistsTab(
     onRefreshPlaylist: (PlaylistProfile) -> Unit,
     onAddPlaylist: () -> Unit,
     onEditPlaylist: (PlaylistProfile) -> Unit,
-    onDeletePlaylist: (PlaylistProfile) -> Unit
+    onDeletePlaylist: (PlaylistProfile) -> Unit,
+    onSendPlaylistToTv: (PlaylistProfile) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
@@ -11638,6 +11714,15 @@ private fun PlaylistsTab(
                                         }
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        if (!isTv && item.source !is ContentSource.LocalFile) {
+                                            IconButton(
+                                                onClick = { onSendPlaylistToTv(item) },
+                                                enabled = !loading,
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(Icons.Default.Share, contentDescription = strings.transferSendToTv, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
                                         if (item.source !is ContentSource.LocalFile) {
                                             IconButton(
                                                 onClick = { onRefreshPlaylist(item) },
@@ -11751,6 +11836,15 @@ private fun PlaylistsTab(
                                         ),
                                         modifier = Modifier.scale(0.75f)
                                     )
+                                    if (!isTv && item.source !is ContentSource.LocalFile) {
+                                        IconButton(
+                                            onClick = { onSendPlaylistToTv(item) },
+                                            enabled = !loading,
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(Icons.Default.Share, contentDescription = strings.transferSendToTv, modifier = Modifier.size(15.dp))
+                                        }
+                                    }
                                     if (item.source !is ContentSource.LocalFile) {
                                         IconButton(
                                             onClick = { onRefreshPlaylist(item) },
@@ -12750,7 +12844,8 @@ private fun AddPlaylistDialog(
     onDismiss: () -> Unit,
     onAddUrl: (String, String) -> Unit,
     onAddXtream: (String, String, String, String) -> Unit,
-    onPickFile: () -> Unit
+    onPickFile: () -> Unit,
+    onSendFromPhone: () -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
@@ -12880,6 +12975,16 @@ private fun AddPlaylistDialog(
                         title = if (strings.languageTag == "pt-PT") "Lista M3U" else "M3U playlist",
                         description = if (strings.languageTag == "pt-PT") "Adicionar por endereço ou ficheiro local" else "Add by web address or local file",
                         onClick = { mode = 0 }
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    SourceMethodCard(
+                        icon = Icons.Default.PhoneAndroid,
+                        title = if (isTv) strings.transferSendFromPhone else strings.transferSendToTv,
+                        description = if (isTv) strings.transferSendFromPhoneDesc else strings.transferSendToTvDesc,
+                        onClick = {
+                            onDismiss()
+                            onSendFromPhone()
+                        }
                     )
                     Spacer(Modifier.height(18.dp))
                     TextButton(
@@ -14994,4 +15099,324 @@ private fun RestoreBackupPasswordDialog(
 @Composable
 private fun WelcomePreview() = FortressTVTheme {
     WelcomeScreen(false, true, null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
+}
+
+// ---------------------------------------------------------------------------
+// TvReceiveSourceDialog — QR + browser-based local transfer dialog
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun TvReceiveSourceDialog(
+    onDismiss: () -> Unit,
+    onSourceConfirmed: (TransferSourcePayload) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val isTv = LocalFormFactor.current.isTelevision
+    val scope = rememberCoroutineScope()
+
+    // Session state
+    var sessionState by remember { mutableStateOf<TransferSessionState>(TransferSessionState.Waiting) }
+    var serverUrl by remember { mutableStateOf("") }
+    var sessionPin by remember { mutableStateOf("") }
+    var countdown by remember { mutableIntStateOf(300) } // 5 minutes in seconds
+
+    // Server lifecycle
+    val server = remember { mutableStateOf<LocalTransferServer?>(null) }
+
+    // Helper to get device IP (supports both Wi-Fi and Ethernet)
+    fun getLocalIp(): String? = runCatching {
+        val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+        for (intf in java.util.Collections.list(interfaces)) {
+            if (intf.isLoopback || !intf.isUp) continue
+            for (addr in java.util.Collections.list(intf.inetAddresses)) {
+                if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+                    return@runCatching addr.hostAddress
+                }
+            }
+        }
+        null
+    }.getOrNull()
+
+    // Start server on launch
+    DisposableEffect(Unit) {
+        val deviceName = android.os.Build.MODEL
+        val nsd = TvNsdManager(context)
+        val srv = LocalTransferServer(deviceName) { result ->
+            when (result) {
+                is TransferRequestResult.Accepted -> {
+                    val payload = result.payload
+                    val preview = TransferPreview(
+                        sourceName = payload.name.ifBlank {
+                            when (payload.kind) {
+                                TransferKind.M3U -> "M3U Playlist"
+                                TransferKind.XTREAM -> "Xtream Codes"
+                            }
+                        },
+                        kind = payload.kind,
+                        sanitizedHost = sanitizeHostForDisplay(payload.url ?: payload.url),
+                        payload = payload
+                    )
+                    sessionState = TransferSessionState.PendingConfirmation(preview)
+                }
+                is TransferRequestResult.LockedOut ->
+                    sessionState = TransferSessionState.Error(strings.transferLockedOut)
+                is TransferRequestResult.BadPin -> { /* state stays Waiting, shown in status */ }
+                else -> { /* Expired / parse errors handled inline */ }
+            }
+        }
+        runCatching { srv.start() }
+        val port = srv.listeningPort
+        nsd.advertise(port, deviceName)
+        val ip = getLocalIp() ?: "?.?.?.?"
+        val url = "http://$ip:$port/#token=${srv.sessionToken}"
+        serverUrl = "http://$ip:$port"
+        sessionPin = srv.sessionPin
+        server.value = srv
+        onDispose {
+            nsd.close()
+            runCatching { srv.stop() }
+            server.value = null
+        }
+    }
+
+    // Countdown timer
+    LaunchedEffect(Unit) {
+        while (countdown > 0) {
+            kotlinx.coroutines.delay(1000)
+            countdown--
+        }
+        if (sessionState is TransferSessionState.Waiting) {
+            sessionState = TransferSessionState.Error(strings.transferSessionExpired)
+        }
+    }
+
+    BackHandler { onDismiss() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.85f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                modifier = Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxWidth(if (isTv) 0.7f else 0.94f)
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Title
+                    Text(
+                        strings.transferDialogTitle,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(20.dp))
+
+                    when (val state = sessionState) {
+                        is TransferSessionState.Waiting -> {
+                            // QR Code
+                            val qrBitmap = remember(serverUrl) {
+                                val fullUrl = if (serverUrl.isNotBlank())
+                                    "$serverUrl/#token=${server.value?.sessionToken.orEmpty()}"
+                                else null
+                                fullUrl?.let {
+                                    com.fortresstv.player.transfer.QrCodeGenerator.generateImageBitmap(it, 400)
+                                }
+                            }
+                            if (qrBitmap != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = qrBitmap,
+                                    contentDescription = strings.transferScanQr,
+                                    modifier = Modifier
+                                        .size(220.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                )
+                            } else {
+                                Box(
+                                    Modifier.size(220.dp)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator()
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                strings.transferScanQr,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                strings.transferOrOpenUrl,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                serverUrl.ifBlank { "…" },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    strings.transferPairingCode,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    sessionPin.chunked(3).joinToString(" "),
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 4.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            // Countdown
+                            val mins = countdown / 60
+                            val secs = countdown % 60
+                            Text(
+                                "%d:%02d".format(mins, secs),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (countdown < 60) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                strings.transferWaiting,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        is TransferSessionState.PendingConfirmation -> {
+                            val preview = state.preview
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                strings.transferConfirmTitle,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                strings.transferConfirmDesc,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            // Preview card
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row {
+                                        Text(strings.playlistName + ":", fontWeight = FontWeight.SemiBold, modifier = Modifier.width(100.dp))
+                                        Text(preview.sourceName.ifBlank { "—" }, Modifier.weight(1f))
+                                    }
+                                    Row {
+                                        Text(strings.transferSourceType + ":", fontWeight = FontWeight.SemiBold, modifier = Modifier.width(100.dp))
+                                        Text(
+                                            when (preview.kind) {
+                                                TransferKind.M3U -> "M3U Playlist"
+                                                TransferKind.XTREAM -> "Xtream Codes"
+                                            }
+                                        )
+                                    }
+                                    if (preview.sanitizedHost.isNotBlank()) {
+                                        Row {
+                                            Text(strings.transferSourceServer + ":", fontWeight = FontWeight.SemiBold, modifier = Modifier.width(100.dp))
+                                            Text(preview.sanitizedHost, Modifier.weight(1f), overflow = TextOverflow.Ellipsis, maxLines = 1)
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(20.dp))
+                            Button(
+                                onClick = { onSourceConfirmed(preview.payload) },
+                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
+                            ) {
+                                Text(strings.transferAddSource)
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = ButtonDefaults.textShape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
+                            ) {
+                                Text(strings.cancel)
+                            }
+                            return@Column
+                        }
+
+                        is TransferSessionState.Success -> {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(strings.transferSuccessMessage, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        is TransferSessionState.Error -> {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                state.message,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+
+                    // Cancel button (shown on Waiting and Error states)
+                    if (sessionState is TransferSessionState.Waiting || sessionState is TransferSessionState.Error) {
+                        Spacer(Modifier.height(20.dp))
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .tvFocusHighlight(shape = ButtonDefaults.textShape, scaleOnFocus = if (isTv) 1.05f else 1.0f)
+                        ) {
+                            Text(strings.transferCancelSession)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

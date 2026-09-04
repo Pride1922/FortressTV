@@ -94,6 +94,8 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.coil.compose)
     implementation(libs.androidx.profileinstaller)
+    implementation(libs.nanohttpd)
+    implementation(libs.zxing.core)
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
     androidTestImplementation(platform(libs.androidx.compose.bom))

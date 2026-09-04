@@ -13,6 +13,8 @@ coil = "2.7.0"
 benchmark = "1.4.1"
 profileInstaller = "1.4.1"
 uiautomator = "2.3.0"
+nanohttpd = "2.3.1"
+zxing-core = "3.5.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +39,8 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 androidx-benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "benchmark" }
 androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileInstaller" }
 androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
+nanohttpd = { group = "org.nanohttpd", name = "nanohttpd", version.ref = "nanohttpd" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing-core" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

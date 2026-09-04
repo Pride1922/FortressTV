@@ -335,6 +335,40 @@ interface Strings {
     val restoreModeMergeDesc: String
     val exportBackupAction: String
     val restoreBackupAction: String
+
+    // Local transfer (QR / phone to TV)
+    val transferSendFromPhone: String
+    val transferSendFromPhoneDesc: String
+    val transferDialogTitle: String
+    val transferScanQr: String
+    val transferOrOpenUrl: String
+    val transferPairingCode: String
+    val transferSessionExpired: String
+    val transferWaiting: String
+    val transferReceived: String
+    val transferConfirmTitle: String
+    val transferConfirmDesc: String
+    val transferSourceType: String
+    val transferSourceServer: String
+    val transferAddSource: String
+    val transferSuccessMessage: String
+    val transferLockedOut: String
+    fun transferAttemptsRemaining(remaining: Int): String
+    val transferNetworkError: String
+    val transferCancelSession: String
+    val transferSendToTv: String
+    val transferSendToTvDesc: String
+    val transferChooseSource: String
+    val transferAvailableTvs: String
+    val transferSearchingTvs: String
+    val transferEnterTvCode: String
+    val transferEnterTvCodeDesc: String
+    val transferSendNow: String
+    val transferSending: String
+    val transferSentToTv: String
+    val transferConfirmOnTv: String
+    val transferSendFailed: String
+    val transferNoSendableSources: String
 }
 
 object EnglishStrings : Strings {
@@ -650,6 +684,41 @@ object EnglishStrings : Strings {
     override val restoreModeMergeDesc = "Combines restored playlists and library with your existing items"
     override val exportBackupAction = "Export"
     override val restoreBackupAction = "Restore"
+
+    // Local transfer (QR / phone to TV)
+    override val transferSendFromPhone = "Send from Phone or Computer"
+    override val transferSendFromPhoneDesc = "Add a source by scanning a QR code with any phone or opening the URL on a computer"
+    override val transferDialogTitle = "Add Source from Phone"
+    override val transferScanQr = "Scan with your phone camera"
+    override val transferOrOpenUrl = "Or open this address in a browser:"
+    override val transferPairingCode = "Pairing code:"
+    override val transferSessionExpired = "Session expired. Please try again."
+    override val transferWaiting = "Waiting for connection…"
+    override val transferReceived = "Source received — confirm below"
+    override val transferConfirmTitle = "Confirm source"
+    override val transferConfirmDesc = "Review the source below before adding it to your library."
+    override val transferSourceType = "Type"
+    override val transferSourceServer = "Server"
+    override val transferAddSource = "Add Source"
+    override val transferSuccessMessage = "Source added successfully!"
+    override val transferLockedOut = "Too many failed attempts. Please close and try again."
+    override fun transferAttemptsRemaining(remaining: Int) =
+        if (remaining == 1) "1 attempt remaining" else "$remaining attempts remaining"
+    override val transferNetworkError = "Could not start local server. Check Wi-Fi."
+    override val transferCancelSession = "Cancel"
+    override val transferSendToTv = "Send to TV"
+    override val transferSendToTvDesc = "Choose a source and a nearby FortressTV device on the same local network."
+    override val transferChooseSource = "Source to send"
+    override val transferAvailableTvs = "Available TVs"
+    override val transferSearchingTvs = "Searching for TVs on the local network…"
+    override val transferEnterTvCode = "6-digit TV code"
+    override val transferEnterTvCodeDesc = "Enter the pairing code displayed on the TV."
+    override val transferSendNow = "Send to TV"
+    override val transferSending = "Sending…"
+    override val transferSentToTv = "Source sent successfully"
+    override val transferConfirmOnTv = "Confirm the source on your TV to finish."
+    override val transferSendFailed = "Could not send the source. Check the code and ensure both devices are on the same network."
+    override val transferNoSendableSources = "No URL or Xtream sources are available to send."
 }
 
 object PortugueseStrings : Strings {
@@ -966,6 +1035,41 @@ object PortugueseStrings : Strings {
     override val restoreModeMergeDesc = "Combina as listas e biblioteca restauradas com os itens existentes"
     override val exportBackupAction = "Exportar"
     override val restoreBackupAction = "Restaurar"
+
+    // Transferência local (QR / telemóvel para TV)
+    override val transferSendFromPhone = "Enviar do Telemóvel ou Computador"
+    override val transferSendFromPhoneDesc = "Adicione uma fonte lendo o código QR com o telemóvel ou abrindo o endereço num computador"
+    override val transferDialogTitle = "Adicionar Fonte pelo Telemóvel"
+    override val transferScanQr = "Aponte a câmara do telemóvel ao código QR"
+    override val transferOrOpenUrl = "Ou abra este endereço num browser:"
+    override val transferPairingCode = "Código de emparelhamento:"
+    override val transferSessionExpired = "Sessão expirada. Por favor tente novamente."
+    override val transferWaiting = "À espera de ligação…"
+    override val transferReceived = "Fonte recebida — confirme abaixo"
+    override val transferConfirmTitle = "Confirmar fonte"
+    override val transferConfirmDesc = "Verifique a fonte abaixo antes de a adicionar à sua biblioteca."
+    override val transferSourceType = "Tipo"
+    override val transferSourceServer = "Servidor"
+    override val transferAddSource = "Adicionar Fonte"
+    override val transferSuccessMessage = "Fonte adicionada com sucesso!"
+    override val transferLockedOut = "Demasiadas tentativas falhadas. Feche e tente novamente."
+    override fun transferAttemptsRemaining(remaining: Int) =
+        if (remaining == 1) "1 tentativa restante" else "$remaining tentativas restantes"
+    override val transferNetworkError = "Não foi possível iniciar o servidor local. Verifique o Wi-Fi."
+    override val transferCancelSession = "Cancelar"
+    override val transferSendToTv = "Enviar para a TV"
+    override val transferSendToTvDesc = "Escolha uma fonte e um dispositivo FortressTV próximo na mesma rede local."
+    override val transferChooseSource = "Fonte a enviar"
+    override val transferAvailableTvs = "TVs disponíveis"
+    override val transferSearchingTvs = "A procurar TVs na rede local…"
+    override val transferEnterTvCode = "Código de 6 dígitos da TV"
+    override val transferEnterTvCodeDesc = "Introduza o código de emparelhamento apresentado na TV."
+    override val transferSendNow = "Enviar para a TV"
+    override val transferSending = "A enviar…"
+    override val transferSentToTv = "Fonte enviada com sucesso"
+    override val transferConfirmOnTv = "Confirme a fonte na TV para concluir."
+    override val transferSendFailed = "Não foi possível enviar a fonte. Verifique o código e confirme que os dispositivos estão na mesma rede."
+    override val transferNoSendableSources = "Não existem fontes por URL ou Xtream disponíveis para enviar."
 }
 
 val LocalAppStrings = staticCompositionLocalOf<Strings> { EnglishStrings }
