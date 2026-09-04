@@ -206,7 +206,9 @@ object UpdateManager {
     private fun verifyDownloadedApk(context: Context, apkFile: File) {
         val packageManager = context.packageManager
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            PackageManager.GET_SIGNING_CERTIFICATES
+            // Some Android 9 TV package managers leave SigningInfo empty for archive APKs.
+            // Request the legacy signatures too so the same certificate can still be verified.
+            PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
         } else {
             PackageManager.GET_SIGNATURES
         }
@@ -238,11 +240,10 @@ object UpdateManager {
 
     @Suppress("DEPRECATION")
     private fun signingCertificates(info: PackageInfo): Set<String> {
-        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val modernSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             info.signingInfo?.apkContentsSigners.orEmpty()
-        } else {
-            info.signatures.orEmpty()
-        }
+        } else emptyArray()
+        val signatures = modernSignatures.takeIf { it.isNotEmpty() } ?: info.signatures.orEmpty()
         return signatures.mapTo(mutableSetOf()) { signature ->
             MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
                 .joinToString("") { "%02x".format(it) }
