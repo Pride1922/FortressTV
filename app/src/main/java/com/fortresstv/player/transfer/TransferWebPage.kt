@@ -122,6 +122,8 @@ object TransferWebPage {
         }
         .btn:disabled { background: #3a3a58; cursor: default; }
         .btn:not(:disabled):hover { background: #7b72ff; }
+        .app-link { display: none; margin-bottom: 18px; padding: 13px; border: 1.5px solid #6c63ff; border-radius: 12px; color: #b9b5ff; text-align: center; text-decoration: none; font-weight: 700; }
+        .app-link.visible { display: block; }
 
         /* PIN fallback */
         .pin-section {
@@ -164,6 +166,12 @@ object TransferWebPage {
           }
 
           window.addEventListener('DOMContentLoaded', function() {
+            if (token) {
+              var appLink = document.getElementById('open-app');
+              var endpoint = window.location.protocol + '//' + window.location.host;
+              appLink.href = 'fortresstv://send?endpoint=' + encodeURIComponent(endpoint) + '&token=' + encodeURIComponent(token);
+              appLink.classList.add('visible');
+            }
             if (pinRequired) {
               document.getElementById('pin-section').classList.add('visible');
             }
@@ -281,6 +289,7 @@ object TransferWebPage {
     // ------------------------------------------------------------------
 
     private val FORM_HTML = """
+        <a id="open-app" class="app-link" href="#">Open FortressTV app / Abrir a app FortressTV</a>
         <div class="tabs">
           <button class="tab active" data-panel="form-m3u">M3U Playlist</button>
           <button class="tab" data-panel="panel-xtream">Xtream Codes</button>

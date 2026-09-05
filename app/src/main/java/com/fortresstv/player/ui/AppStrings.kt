@@ -360,6 +360,7 @@ interface Strings {
     val transferSendToTvDesc: String
     val transferChooseSource: String
     val transferAvailableTvs: String
+    val transferConnectedViaQr: String
     val transferSearchingTvs: String
     val transferEnterTvCode: String
     val transferEnterTvCodeDesc: String
@@ -371,6 +372,7 @@ interface Strings {
     val transferNoSendableSources: String
     val transferSourceTab: String
     val transferBackupTab: String
+    val transferSourceExplanation: String
     val transferBackupExplanation: String
     val transferBackupPasswordDesc: String
     val transferBackupReceived: String
@@ -715,6 +717,7 @@ object EnglishStrings : Strings {
     override val transferSendToTvDesc = "Choose a source and a nearby FortressTV device on the same local network."
     override val transferChooseSource = "Source to send"
     override val transferAvailableTvs = "Available TVs"
+    override val transferConnectedViaQr = "Connected to TV via QR code"
     override val transferSearchingTvs = "Searching for TVs on the local network…"
     override val transferEnterTvCode = "6-digit TV code"
     override val transferEnterTvCodeDesc = "Enter the pairing code displayed on the TV."
@@ -724,9 +727,10 @@ object EnglishStrings : Strings {
     override val transferConfirmOnTv = "Confirm the source on your TV to finish."
     override val transferSendFailed = "Could not send the source. Check the code and ensure both devices are on the same network."
     override val transferNoSendableSources = "No URL or Xtream sources are available to send."
-    override val transferSourceTab = "Source"
-    override val transferBackupTab = "Backup"
-    override val transferBackupExplanation = "Create and send an encrypted backup of this device to the TV."
+    override val transferSourceTab = "Playlist + EPG"
+    override val transferBackupTab = "Full backup"
+    override val transferSourceExplanation = "Send only the selected playlist and its associated EPG configuration."
+    override val transferBackupExplanation = "Send an encrypted full backup containing sources, settings, favourites, and viewing data."
     override val transferBackupPasswordDesc = "You will enter this password again on the TV. Minimum 8 characters."
     override val transferBackupReceived = "Encrypted backup received"
 }
@@ -1071,6 +1075,7 @@ object PortugueseStrings : Strings {
     override val transferSendToTvDesc = "Escolha uma fonte e um dispositivo FortressTV próximo na mesma rede local."
     override val transferChooseSource = "Fonte a enviar"
     override val transferAvailableTvs = "TVs disponíveis"
+    override val transferConnectedViaQr = "Ligado à TV através do código QR"
     override val transferSearchingTvs = "A procurar TVs na rede local…"
     override val transferEnterTvCode = "Código de 6 dígitos da TV"
     override val transferEnterTvCodeDesc = "Introduza o código de emparelhamento apresentado na TV."
@@ -1080,9 +1085,10 @@ object PortugueseStrings : Strings {
     override val transferConfirmOnTv = "Confirme a fonte na TV para concluir."
     override val transferSendFailed = "Não foi possível enviar a fonte. Verifique o código e confirme que os dispositivos estão na mesma rede."
     override val transferNoSendableSources = "Não existem fontes por URL ou Xtream disponíveis para enviar."
-    override val transferSourceTab = "Fonte"
-    override val transferBackupTab = "Cópia"
-    override val transferBackupExplanation = "Crie e envie para a TV uma cópia encriptada deste dispositivo."
+    override val transferSourceTab = "Lista + EPG"
+    override val transferBackupTab = "Cópia completa"
+    override val transferSourceExplanation = "Envie apenas a lista selecionada e a configuração de EPG associada."
+    override val transferBackupExplanation = "Envie uma cópia completa encriptada com fontes, definições, favoritos e dados de visualização."
     override val transferBackupPasswordDesc = "Introduzirá novamente esta palavra-passe na TV. Mínimo de 8 caracteres."
     override val transferBackupReceived = "Cópia encriptada recebida"
 }

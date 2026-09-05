@@ -221,6 +221,8 @@ import com.fortresstv.player.transfer.TransferSessionState
 import com.fortresstv.player.transfer.TransferSourcePayload
 import com.fortresstv.player.transfer.TransferBackupPayload
 import com.fortresstv.player.transfer.SendToTvDialog
+import com.fortresstv.player.transfer.DirectTransferLink
+import com.fortresstv.player.transfer.DiscoveredFortressTv
 import com.fortresstv.player.transfer.TvNsdManager
 import com.fortresstv.player.transfer.sanitizeHostForDisplay
 import androidx.media3.common.C
@@ -309,6 +311,7 @@ class MainActivity : ComponentActivity() {
     private val pictureInPictureHandler = Handler(Looper.getMainLooper())
     private var onPictureInPictureDismissed: (() -> Unit)? = null
     private var isActivityResumed = false
+    private var transferDeepLink by mutableStateOf<String?>(null)
 
     private val confirmPictureInPictureDismissed = Runnable {
         if (!isInPictureInPictureMode && !isActivityResumed && !hasWindowFocus()) {
@@ -405,6 +408,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        transferDeepLink = intent?.dataString
         enableEdgeToEdge()
 
         val imageLoader = ImageLoader.Builder(this)
@@ -466,10 +470,19 @@ class MainActivity : ComponentActivity() {
                             } else Modifier
                         )
                 ) {
-                    FortressTVApp()
+                    FortressTVApp(
+                        transferDeepLink = transferDeepLink,
+                        onTransferDeepLinkConsumed = { transferDeepLink = null }
+                    )
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        transferDeepLink = intent.dataString
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
@@ -485,7 +498,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun FortressTVApp() {
+private fun FortressTVApp(
+    transferDeepLink: String?,
+    onTransferDeepLinkConsumed: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { SourceSettingsStore(context.applicationContext) }
@@ -539,6 +555,7 @@ private fun FortressTVApp() {
     var showTransferDialog by remember { mutableStateOf(false) }
     var showSendToTvDialog by remember { mutableStateOf(false) }
     var sendToTvProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
+    var directTransferTarget by remember { mutableStateOf<DiscoveredFortressTv?>(null) }
     var editingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var deletingProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
     var showEpgUrlDialog by remember { mutableStateOf(false) }
@@ -1203,6 +1220,17 @@ private fun FortressTVApp() {
 
     val configuration = LocalConfiguration.current
     val formFactor = remember(configuration) { FormFactorDetector.detectFromConfiguration(configuration) }
+    LaunchedEffect(transferDeepLink, formFactor.isTelevision) {
+        val rawLink = transferDeepLink ?: return@LaunchedEffect
+        if (!formFactor.isTelevision) {
+            DirectTransferLink.parse(rawLink)?.let { target ->
+                directTransferTarget = target
+                sendToTvProfile = null
+                showSendToTvDialog = true
+            }
+        }
+        onTransferDeepLinkConsumed()
+    }
 
     CompositionLocalProvider(
         LocalAppStrings provides strings,
@@ -1580,9 +1608,11 @@ private fun FortressTVApp() {
             SendToTvDialog(
                 profiles = playlists,
                 initialProfile = sendToTvProfile,
+                directTarget = directTransferTarget,
                 onDismiss = {
                     showSendToTvDialog = false
                     sendToTvProfile = null
+                    directTransferTarget = null
                 }
             )
         }

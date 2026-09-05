@@ -66,6 +66,7 @@ private enum class NativeTransferMode { SOURCE, BACKUP }
 fun SendToTvDialog(
     profiles: List<PlaylistProfile>,
     initialProfile: PlaylistProfile? = null,
+    directTarget: DiscoveredFortressTv? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -77,7 +78,7 @@ fun SendToTvDialog(
     var selectedProfile by remember(sendable, initialProfile) {
         mutableStateOf(initialProfile?.takeIf { it.source !is ContentSource.LocalFile } ?: sendable.firstOrNull())
     }
-    var selectedTv by remember { mutableStateOf<DiscoveredFortressTv?>(null) }
+    var selectedTv by remember(directTarget) { mutableStateOf(directTarget) }
     var pin by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf(false) }
@@ -86,8 +87,8 @@ fun SendToTvDialog(
     var backupPassword by remember { mutableStateOf("") }
     var confirmBackupPassword by remember { mutableStateOf("") }
 
-    DisposableEffect(Unit) {
-        discovery.startDiscovery()
+    DisposableEffect(directTarget) {
+        if (directTarget == null) discovery.startDiscovery()
         onDispose { discovery.close() }
     }
     BackHandler(onBack = onDismiss)
@@ -129,6 +130,7 @@ fun SendToTvDialog(
                             }
                         }
                         if (mode == NativeTransferMode.SOURCE) {
+                            Text(strings.transferSourceExplanation, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(strings.transferChooseSource, fontWeight = FontWeight.SemiBold)
                             if (sendable.isEmpty()) {
                                 Text(strings.transferNoSendableSources, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -167,8 +169,18 @@ fun SendToTvDialog(
                             }
                         }
 
-                        Text(strings.transferAvailableTvs, fontWeight = FontWeight.SemiBold)
-                        if (devices.isEmpty()) {
+                        Text(
+                            if (directTarget != null) strings.transferConnectedViaQr else strings.transferAvailableTvs,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (directTarget != null) {
+                            SelectionRow(
+                                text = directTarget.displayName,
+                                selected = true,
+                                leadingIcon = true,
+                                onClick = {}
+                            )
+                        } else if (devices.isEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.width(20.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(10.dp))
@@ -187,15 +199,17 @@ fun SendToTvDialog(
                             }
                         }
 
-                        OutlinedTextField(
-                            value = pin,
-                            onValueChange = { value -> pin = value.filter(Char::isDigit).take(6); error = null },
-                            label = { Text(strings.transferEnterTvCode) },
-                            supportingText = { Text(strings.transferEnterTvCodeDesc) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        if (directTarget == null) {
+                            OutlinedTextField(
+                                value = pin,
+                                onValueChange = { value -> pin = value.filter(Char::isDigit).take(6); error = null },
+                                label = { Text(strings.transferEnterTvCode) },
+                                supportingText = { Text(strings.transferEnterTvCodeDesc) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         Button(
                             onClick = {
@@ -225,7 +239,8 @@ fun SendToTvDialog(
                                     }
                                 }
                             },
-                            enabled = !sending && selectedTv != null && pin.length == 6 &&
+                            enabled = !sending && selectedTv != null &&
+                                (selectedTv?.sessionToken != null || pin.length == 6) &&
                                 ((mode == NativeTransferMode.SOURCE && selectedProfile != null) ||
                                     (mode == NativeTransferMode.BACKUP && backupPassword.length >= 8 &&
                                         backupPassword == confirmBackupPassword)),

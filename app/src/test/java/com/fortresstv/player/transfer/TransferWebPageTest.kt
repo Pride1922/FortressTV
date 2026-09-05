@@ -36,6 +36,14 @@ class TransferWebPageTest {
     }
 
     @Test
+    fun htmlContainsNativeAppHandoff() {
+        assertTrue(html.contains("id=\"open-app\""))
+        assertTrue(html.contains("fortresstv://send"))
+        assertTrue(html.contains("encodeURIComponent(endpoint)"))
+        assertTrue(html.contains("encodeURIComponent(token)"))
+    }
+
+    @Test
     fun htmlContainsApiSourceEndpoint() {
         assertTrue(html.contains("/api/source"))
     }

@@ -15,7 +15,8 @@ data class DiscoveredFortressTv(
     val serviceName: String,
     val addresses: List<InetAddress>,
     val port: Int,
-    val protocolVersion: Int
+    val protocolVersion: Int,
+    val sessionToken: String? = null
 ) {
     val displayName: String = serviceName.removePrefix("FortressTV - ").ifBlank { serviceName }
 

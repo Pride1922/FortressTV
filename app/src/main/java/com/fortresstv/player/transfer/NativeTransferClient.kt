@@ -14,7 +14,7 @@ sealed interface NativeSendResult {
 object NativeTransferClient {
     fun sendSource(tv: DiscoveredFortressTv, profile: PlaylistProfile, pin: String): NativeSendResult {
         if (tv.protocolVersion != TRANSFER_PROTOCOL_VERSION) return NativeSendResult.Error("Unsupported protocol version")
-        if (!pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
+        if (tv.sessionToken == null && !pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
         val endpoint = tv.endpoint() ?: return NativeSendResult.Error("TV address unavailable")
         val payload = createNativeTransferPayload(profile)
             ?: return NativeSendResult.Error("Local files cannot be sent yet")
@@ -26,7 +26,7 @@ object NativeTransferClient {
                 connection.readTimeout = 10_000
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                connection.setRequestProperty("X-Fortress-Pin", pin)
+                applyAuthentication(connection, tv, pin)
                 connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
                 if (connection.responseCode in 200..299) NativeSendResult.Success
                 else NativeSendResult.Error("TV rejected the transfer (${connection.responseCode})")
@@ -38,7 +38,7 @@ object NativeTransferClient {
 
     fun sendBackup(tv: DiscoveredFortressTv, bytes: ByteArray, pin: String): NativeSendResult {
         if (tv.protocolVersion != TRANSFER_PROTOCOL_VERSION) return NativeSendResult.Error("Unsupported protocol version")
-        if (!pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
+        if (tv.sessionToken == null && !pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
         if (bytes.isEmpty() || bytes.size > LocalTransferServer.MAX_BACKUP_BYTES) {
             return NativeSendResult.Error("Invalid backup size")
         }
@@ -52,7 +52,7 @@ object NativeTransferClient {
                 connection.doOutput = true
                 connection.setFixedLengthStreamingMode(bytes.size)
                 connection.setRequestProperty("Content-Type", "application/octet-stream")
-                connection.setRequestProperty("X-Fortress-Pin", pin)
+                applyAuthentication(connection, tv, pin)
                 connection.setRequestProperty("X-Fortress-Filename", "fortresstv-transfer.ftv")
                 connection.outputStream.use { it.write(bytes) }
                 if (connection.responseCode in 200..299) NativeSendResult.Success
@@ -61,6 +61,12 @@ object NativeTransferClient {
                 connection.disconnect()
             }
         }.getOrElse { NativeSendResult.Error("Could not connect to the TV") }
+    }
+
+    private fun applyAuthentication(connection: HttpURLConnection, tv: DiscoveredFortressTv, pin: String) {
+        val token = tv.sessionToken
+        if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
+        else connection.setRequestProperty("X-Fortress-Pin", pin)
     }
 }
 
