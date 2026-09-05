@@ -265,6 +265,7 @@ interface Strings {
     val configureXmltv: String
     val changeXmltv: String
     val removeEpg: String
+    val removeEpgConfirmation: String
     val timeShift: String
     val timeShiftDesc: String
     val epgLoadedDays: String
@@ -620,6 +621,7 @@ object EnglishStrings : Strings {
     override val configureXmltv = "Configure XMLTV Guide"
     override val changeXmltv = "Change XMLTV Guide"
     override val removeEpg = "Remove EPG"
+    override val removeEpgConfirmation = "FortressTV will forget this EPG source and clear its local schedule cache. Playlists will not be affected."
     override val timeShift = "Time Shift (Hours)"
     override val timeShiftDesc = "Adjust this if programme times are offset from your local timezone."
     override val epgLoadedDays = "EPG Days to Load"
@@ -977,6 +979,7 @@ object PortugueseStrings : Strings {
     override val configureXmltv = "Configurar Guia XMLTV"
     override val changeXmltv = "Alterar Guia XMLTV"
     override val removeEpg = "Remover EPG"
+    override val removeEpgConfirmation = "A FortressTV irá esquecer esta fonte de EPG e limpar a programação guardada localmente. As listas não serão afetadas."
     override val timeShift = "Ajuste de Fuso Horário (Horas)"
     override val timeShiftDesc = "Ajuste este valor se os horários dos programas não coincidirem com o seu fuso horário local."
     override val epgLoadedDays = "Dias de EPG a Carregar"

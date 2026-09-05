@@ -12,11 +12,16 @@ sealed interface NativeSendResult {
 }
 
 object NativeTransferClient {
-    fun sendSource(tv: DiscoveredFortressTv, profile: PlaylistProfile, pin: String): NativeSendResult {
+    fun sendSource(
+        tv: DiscoveredFortressTv,
+        profile: PlaylistProfile,
+        pin: String,
+        epgUrl: String? = null
+    ): NativeSendResult {
         if (tv.protocolVersion != TRANSFER_PROTOCOL_VERSION) return NativeSendResult.Error("Unsupported protocol version")
         if (tv.sessionToken == null && !pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
         val endpoint = tv.endpoint() ?: return NativeSendResult.Error("TV address unavailable")
-        val payload = createNativeTransferPayload(profile)
+        val payload = createNativeTransferPayload(profile, epgUrl)
             ?: return NativeSendResult.Error("Local files cannot be sent yet")
         return runCatching {
             val connection = URL("$endpoint/api/source").openConnection() as HttpURLConnection
@@ -70,14 +75,14 @@ object NativeTransferClient {
     }
 }
 
-internal fun createNativeTransferPayload(profile: PlaylistProfile): String? =
+internal fun createNativeTransferPayload(profile: PlaylistProfile, epgUrl: String? = null): String? =
     when (val source = profile.source) {
             is ContentSource.RemoteUrl -> JSONObject().apply {
                 put("protocolVersion", TRANSFER_PROTOCOL_VERSION)
                 put("kind", "m3u")
                 put("name", profile.name)
                 put("url", source.value)
-                put("epgUrl", JSONObject.NULL)
+                put("epgUrl", epgUrl?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             }.toString()
             is ContentSource.Xtream -> JSONObject().apply {
                 put("protocolVersion", TRANSFER_PROTOCOL_VERSION)
@@ -86,7 +91,7 @@ internal fun createNativeTransferPayload(profile: PlaylistProfile): String? =
                 put("url", source.value)
                 put("username", source.username)
                 put("password", source.password)
-                put("epgUrl", JSONObject.NULL)
+                put("epgUrl", epgUrl?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             }.toString()
             is ContentSource.LocalFile -> null
     }

@@ -21,6 +21,14 @@ class NativeTransferClientTest {
     }
 
     @Test
+    fun `serializes current remote EPG with source`() {
+        val profile = PlaylistProfile("one", "Home", ContentSource.RemoteUrl("https://example.test/list.m3u", "Home"))
+        val json = JSONObject(createNativeTransferPayload(profile, "https://example.test/guide.xml")!!)
+
+        assertEquals("https://example.test/guide.xml", json.getString("epgUrl"))
+    }
+
+    @Test
     fun `serializes Xtream credentials without changing them`() {
         val profile = PlaylistProfile(
             "two",

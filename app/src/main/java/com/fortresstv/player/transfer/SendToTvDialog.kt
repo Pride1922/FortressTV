@@ -54,6 +54,7 @@ import com.fortresstv.player.BuildConfig
 import com.fortresstv.player.backup.BackupExportResult
 import com.fortresstv.player.backup.BackupManager
 import com.fortresstv.player.source.ContentSource
+import com.fortresstv.player.source.SourceSettingsStore
 import com.fortresstv.player.ui.LocalAppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,6 +74,9 @@ fun SendToTvDialog(
     val strings = LocalAppStrings.current
     val scope = rememberCoroutineScope()
     val sendable = remember(profiles) { profiles.filter { it.source !is ContentSource.LocalFile } }
+    val epgUrl = remember {
+        (SourceSettingsStore(context.applicationContext).epgSource() as? ContentSource.RemoteUrl)?.value
+    }
     val discovery = remember { TvNsdManager(context) }
     val devices by discovery.devices.collectAsState()
     var selectedProfile by remember(sendable, initialProfile) {
@@ -221,7 +225,7 @@ fun SendToTvDialog(
                                     val result = withContext(Dispatchers.IO) {
                                         if (mode == NativeTransferMode.SOURCE) {
                                             if (profile == null) NativeSendResult.Error("No source selected")
-                                            else NativeTransferClient.sendSource(tv, profile, pin)
+                                            else NativeTransferClient.sendSource(tv, profile, pin, epgUrl)
                                         } else {
                                             val output = ByteArrayOutputStream()
                                             when (BackupManager(context.applicationContext).exportBackup(

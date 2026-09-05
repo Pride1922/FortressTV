@@ -34,10 +34,13 @@ object TransferWebPage {
             appendLine("</head>")
             appendLine("<body>")
             appendLine("<main>")
-            appendLine("<h1>&#x1F3F0; FortressTV</h1>")
-            appendLine("<p class=\"sub\">Sending source to <strong>$safeDevice</strong></p>")
+            appendLine("<header class=\"brand\"><span class=\"brand-mark\">F</span><span>FortressTV</span></header>")
+            appendLine("<section class=\"hero\"><span class=\"eyebrow\">LOCAL TV TRANSFER &middot; TRANSFERÊNCIA LOCAL</span><h1>Send securely to your TV</h1><p>Transfer a playlist or encrypted backup directly over your home Wi-Fi.<br><span lang=\"pt-PT\">Envie uma lista ou cópia encriptada diretamente pela rede Wi-Fi de casa.</span></p></section>")
+            appendLine("<div class=\"connection\"><span class=\"status-dot\"></span><div><small>CONNECTED TV &middot; TV LIGADA</small><strong>$safeDevice</strong></div><span class=\"local-badge\">Local only</span></div>")
+            appendLine("<div class=\"privacy\"><span class=\"lock\">&#128274;</span><span><strong>Private connection &middot; Ligação privada</strong><small>No cloud servers. Your details stay inside your local network.<br><span lang=\"pt-PT\">Sem servidores na nuvem. Os seus dados permanecem na rede local.</span></small></span></div>")
             appendLine(JS_PIN_CHECK.replace("__PIN__", safePin))
             appendLine(FORM_HTML)
+            appendLine("<footer>FortressTV &middot; Direct local transfer<br><span>Transferência direta na rede local</span></footer>")
             appendLine("</main>")
             appendLine("</body>")
             appendLine("</html>")
@@ -147,6 +150,38 @@ object TransferWebPage {
         #status.ok  { background: #1a3a2a; color: #60d98a; display: block; }
         #status.err { background: #3a1a1a; color: #f07070; display: block; }
         #status.sending { background: #1c2240; color: #9090ff; display: block; }
+
+        /* FortressTV branded local-transfer shell */
+        :root { color-scheme: dark; --card:#111824; --line:#263449; --text:#f5f7fb; --muted:#9ba9bd; --cyan:#53d9e8; --blue:#4778ff; --green:#4ade9a; }
+        body { background:radial-gradient(circle at 50% -15%,#17345c 0,#0b1422 30%,#070b12 62%); color:var(--text); padding-top:28px; }
+        main { max-width:540px; }
+        .brand { display:flex; align-items:center; gap:10px; font-size:1.05rem; font-weight:800; margin-bottom:34px; letter-spacing:-.02em; }
+        .brand-mark { width:34px; height:34px; display:grid; place-items:center; border-radius:10px; color:#061019; font-size:1.15rem; background:linear-gradient(145deg,var(--cyan),#88f0d0); box-shadow:0 8px 28px #53d9e833; }
+        .hero { margin-bottom:22px; }
+        .eyebrow { color:var(--cyan); font-size:.72rem; font-weight:800; letter-spacing:.15em; }
+        h1 { font-size:clamp(1.85rem,7vw,2.45rem); line-height:1.08; letter-spacing:-.045em; margin:8px 0 10px; }
+        .hero p { color:var(--muted); line-height:1.55; font-size:.98rem; }
+        .connection { display:flex; align-items:center; gap:12px; padding:15px 16px; border:1px solid var(--line); border-radius:16px; background:#111a27dd; box-shadow:0 18px 55px #0005; margin-bottom:12px; }
+        .status-dot { width:11px; height:11px; border-radius:50%; background:var(--green); box-shadow:0 0 0 5px #4ade9a18; flex:none; }
+        .connection div { display:flex; flex-direction:column; min-width:0; flex:1; gap:2px; }
+        .connection small { color:var(--muted); font-size:.64rem; font-weight:800; letter-spacing:.1em; }
+        .connection strong { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .local-badge { color:var(--green); background:#4ade9a13; border:1px solid #4ade9a36; padding:6px 9px; border-radius:999px; font-size:.7rem; font-weight:800; white-space:nowrap; }
+        .privacy { display:flex; gap:12px; align-items:center; padding:13px 15px; color:#b8c7d9; background:#0c1722; border:1px solid #1c3443; border-radius:14px; margin-bottom:18px; }
+        .privacy span:last-child { display:flex; flex-direction:column; gap:2px; font-size:.8rem; }
+        .privacy small { color:#7f91a7; line-height:1.35; }
+        .transfer-card { padding:18px; border:1px solid var(--line); border-radius:20px; background:linear-gradient(160deg,#121b29,#0e151f); box-shadow:0 24px 70px #0006; }
+        .tabs { gap:6px; padding:5px; background:#080f18; border-radius:13px; }
+        .tab { background:transparent; color:var(--muted); border-radius:9px; }
+        .tab.active { background:#182334; border-color:#33445c; color:var(--text); box-shadow:0 5px 18px #0005; }
+        label { color:#aebbd0; }
+        input[type=text],input[type=password],input[type=url],input[type=number],input[type=file] { background:#09111b; border-color:var(--line); color:var(--text); }
+        input:focus { border-color:var(--cyan); box-shadow:0 0 0 3px #53d9e815; }
+        .btn { background:linear-gradient(135deg,var(--blue),#6557f5); box-shadow:0 10px 28px #4778ff36; }
+        .app-link { border-color:#53d9e866; background:#53d9e80d; color:#8eeaf3; }
+        footer { color:#64748a; text-align:center; font-size:.72rem; line-height:1.6; padding:24px 8px 0; }
+        footer span { color:#4d5d72; }
+        @media (max-width:420px) { .transfer-card { padding:14px; } .tab { font-size:.74rem; } .local-badge { display:none; } }
     """.trimIndent()
 
     // ------------------------------------------------------------------
@@ -290,6 +325,7 @@ object TransferWebPage {
 
     private val FORM_HTML = """
         <a id="open-app" class="app-link" href="#">Open FortressTV app / Abrir a app FortressTV</a>
+        <section class="transfer-card">
         <div class="tabs">
           <button class="tab active" data-panel="form-m3u">M3U Playlist</button>
           <button class="tab" data-panel="panel-xtream">Xtream Codes</button>
@@ -350,6 +386,7 @@ object TransferWebPage {
         </div>
 
         <div id="status"></div>
+        </section>
     """.trimIndent()
 
     private fun String.htmlEscape(): String = this

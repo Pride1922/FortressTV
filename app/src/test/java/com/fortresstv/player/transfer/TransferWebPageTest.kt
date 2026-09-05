@@ -44,6 +44,14 @@ class TransferWebPageTest {
     }
 
     @Test
+    fun htmlExplainsThePrivateLocalConnection() {
+        assertTrue(html.contains("Private connection"))
+        assertTrue(html.contains("Ligação privada"))
+        assertTrue(html.contains("No cloud servers"))
+        assertTrue(html.contains("transfer-card"))
+    }
+
+    @Test
     fun htmlContainsApiSourceEndpoint() {
         assertTrue(html.contains("/api/source"))
     }

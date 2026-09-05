@@ -1549,7 +1549,7 @@ private fun FortressTVApp(
             AlertDialog(
                 onDismissRequest = { showRemoveEpgConfirm = false },
                 title = { Text(strings.removeEpg) },
-                text = { Text("FortressTV will forget this EPG source and clear its local schedule cache. Playlists will not be affected.") },
+                text = { Text(strings.removeEpgConfirmation) },
                 confirmButton = {
                     TextButton(onClick = {
                         showRemoveEpgConfirm = false
@@ -1667,6 +1667,13 @@ private fun FortressTVApp(
                             )
                             loadXtreamProfile(profile, forceRefresh = true)
                         }
+                    }
+                    payload.epgUrl?.takeIf { it.isNotBlank() }?.let { transferredEpgUrl ->
+                        val transferredEpg = ContentSource.RemoteUrl(
+                            transferredEpgUrl.trim(),
+                            transferredEpgUrl.substringAfterLast('/').ifBlank { "EPG" }
+                        )
+                        loadEpg(transferredEpg, save = true, forceRefresh = true)
                     }
                 }
             )
@@ -7986,7 +7993,14 @@ private fun ChannelBrowser(
                             if (visibleChannels.isEmpty()) {
                                 item {
                                     Box(Modifier.fillParentMaxWidth().padding(30.dp), contentAlignment = Alignment.Center) {
-                                        Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (loading) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(36.dp),
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        } else {
+                                            Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
                             }
@@ -8017,7 +8031,14 @@ private fun ChannelBrowser(
                         if (visibleChannels.isEmpty()) {
                             item {
                                 Box(Modifier.fillParentMaxWidth().padding(30.dp), contentAlignment = Alignment.Center) {
-                                    Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (loading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(36.dp),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
@@ -8054,7 +8075,7 @@ private fun ChannelBrowser(
                                             return@onPreviewKeyEvent true
                                         }
                                         false
-                                    },
+                                     },
                                 sidebarFocusRequester = filterButtonFocusRequester,
                                 onToggleFavorite = { onToggleFavorite(channel) },
                                 onClick = { selectChannel(channel) }
@@ -8063,7 +8084,14 @@ private fun ChannelBrowser(
                         if (visibleChannels.isEmpty()) {
                             item {
                                 Box(Modifier.fillParentMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                                    Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (loading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(36.dp),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        Text(strings.noChannelsMatch, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
@@ -15188,6 +15216,8 @@ private fun TvReceiveSourceDialog(
     val context = LocalContext.current
     val isTv = LocalFormFactor.current.isTelevision
     val scope = rememberCoroutineScope()
+    val addTransferredSourceFocusRequester = remember { FocusRequester() }
+    val restoreTransferredBackupFocusRequester = remember { FocusRequester() }
 
     // Session state
     var sessionState by remember { mutableStateOf<TransferSessionState>(TransferSessionState.Waiting) }
@@ -15275,6 +15305,22 @@ private fun TvReceiveSourceDialog(
             delay(500) // allow the successful HTTP response to reach the sender
             runCatching { server.value?.stop() }
             advertiser.value?.close()
+        }
+    }
+
+    LaunchedEffect(sessionState, isTv) {
+        if (isTv) {
+            when (sessionState) {
+                is TransferSessionState.PendingConfirmation -> {
+                    delay(100)
+                    runCatching { addTransferredSourceFocusRequester.requestFocus() }
+                }
+                is TransferSessionState.PendingBackup -> {
+                    delay(100)
+                    runCatching { restoreTransferredBackupFocusRequester.requestFocus() }
+                }
+                else -> {}
+            }
         }
     }
 
@@ -15448,7 +15494,10 @@ private fun TvReceiveSourceDialog(
                             Spacer(Modifier.height(20.dp))
                             Button(
                                 onClick = { onSourceConfirmed(preview.payload) },
-                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(addTransferredSourceFocusRequester)
+                                    .tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
                             ) {
                                 Text(strings.transferAddSource)
                             }
@@ -15484,10 +15533,18 @@ private fun TvReceiveSourceDialog(
                             Spacer(Modifier.height(20.dp))
                             Button(
                                 onClick = { onBackupConfirmed(state.payload) },
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(restoreTransferredBackupFocusRequester)
+                                    .tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
                             ) { Text(strings.restoreFromBackup) }
                             Spacer(Modifier.height(8.dp))
-                            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                            TextButton(
+                                onClick = onDismiss,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .tvFocusHighlight(shape = ButtonDefaults.textShape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
+                            ) {
                                 Text(strings.cancel)
                             }
                             return@Column
