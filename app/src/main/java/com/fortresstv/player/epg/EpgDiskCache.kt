@@ -63,16 +63,14 @@ object EpgDiskCache {
         val manifest = readCurrentManifest(context, expectedFingerprint) ?: return null
         val zone = runCatching { java.time.ZoneId.of(manifest.timezoneId) }.getOrElse { java.time.ZoneId.systemDefault() }
         val currentTodayEpoch = java.time.LocalDate.now(zone).toEpochDay()
-        val targetDay = if (manifest.partitions.containsKey(currentTodayEpoch)) {
-            currentTodayEpoch
-        } else {
-            manifest.todayEpochDay
-        }
-        val todayDay = loadDayPartition(context, manifest, targetDay)
+        if (!manifest.partitions.containsKey(currentTodayEpoch)) return null
+        val todayDay = loadDayPartition(context, manifest, currentTodayEpoch) ?: return null
+        if (todayDay.programmes.isEmpty()) return null
         return EpgGuide(
             channels = manifest.channels,
-            programmes = todayDay?.programmes.orEmpty(),
-            manifest = manifest
+            programmes = todayDay.programmes,
+            manifest = manifest,
+            epochDay = currentTodayEpoch
         )
     }
 

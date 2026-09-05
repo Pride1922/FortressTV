@@ -50,10 +50,10 @@ class DefaultEpgRepository(
         if (manifest == null) return null
         val zone = runCatching { java.time.ZoneId.of(manifest.timezoneId) }.getOrElse { java.time.ZoneId.systemDefault() }
         val currentTodayEpoch = java.time.LocalDate.now(zone).toEpochDay()
-        return if (manifest.partitions.containsKey(currentTodayEpoch)) {
-            currentTodayEpoch
-        } else {
-            manifest.todayEpochDay
+        return when {
+            manifest.partitions.containsKey(currentTodayEpoch) -> currentTodayEpoch
+            manifest.partitions.isEmpty() && manifest.todayEpochDay == currentTodayEpoch -> currentTodayEpoch
+            else -> null
         }
     }
 
@@ -67,9 +67,26 @@ class DefaultEpgRepository(
         _manifest.value = guide?.manifest
         val todayEpoch = resolveActiveTodayEpoch(guide?.manifest)
         if (guide != null && todayEpoch != null && guide.programmes.isNotEmpty()) {
-            val todayDay = EpgDay(todayEpoch, guide.programmes)
-            pinnedTodayDay = todayDay
-            _today.value = todayDay
+            val guideDay = guide.epochDay ?: guide.manifest?.todayEpochDay
+            if (guideDay == null || guideDay == todayEpoch) {
+                val todayDay = EpgDay(todayEpoch, guide.programmes)
+                pinnedTodayDay = todayDay
+                _today.value = todayDay
+            } else {
+                // The programmes in guide belong to a different day (e.g. yesterday).
+                // Cache them under their real day instead of corrupting today's partition.
+                val loadedDay = EpgDay(guideDay, guide.programmes)
+                cachedDays[guideDay] = loadedDay
+                if (pinnedTodayDay?.epochDay != todayEpoch) {
+                    pinnedTodayDay = null
+                    _today.value = null
+                }
+            }
+        } else if (todayEpoch == null || guide?.programmes?.isEmpty() == true) {
+            if (pinnedTodayDay?.epochDay != todayEpoch) {
+                pinnedTodayDay = null
+                _today.value = null
+            }
         }
     }
 
@@ -133,7 +150,8 @@ class DefaultEpgRepository(
 
     override suspend fun preloadTomorrowNearMidnight() {
         val currentManifest = _manifest.value ?: return
-        val activeTodayEpoch = resolveActiveTodayEpoch(currentManifest) ?: currentManifest.todayEpochDay
+        val zone = runCatching { java.time.ZoneId.of(currentManifest.timezoneId) }.getOrElse { java.time.ZoneId.systemDefault() }
+        val activeTodayEpoch = resolveActiveTodayEpoch(currentManifest) ?: java.time.LocalDate.now(zone).toEpochDay()
         val tomorrowEpochDay = activeTodayEpoch + 1
         if (cachedDay(tomorrowEpochDay) == null && currentManifest.partitions.containsKey(tomorrowEpochDay)) {
             withContext(Dispatchers.IO) {

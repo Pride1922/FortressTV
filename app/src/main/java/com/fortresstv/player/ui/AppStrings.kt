@@ -369,6 +369,11 @@ interface Strings {
     val transferConfirmOnTv: String
     val transferSendFailed: String
     val transferNoSendableSources: String
+    val transferSourceTab: String
+    val transferBackupTab: String
+    val transferBackupExplanation: String
+    val transferBackupPasswordDesc: String
+    val transferBackupReceived: String
 }
 
 object EnglishStrings : Strings {
@@ -719,6 +724,11 @@ object EnglishStrings : Strings {
     override val transferConfirmOnTv = "Confirm the source on your TV to finish."
     override val transferSendFailed = "Could not send the source. Check the code and ensure both devices are on the same network."
     override val transferNoSendableSources = "No URL or Xtream sources are available to send."
+    override val transferSourceTab = "Source"
+    override val transferBackupTab = "Backup"
+    override val transferBackupExplanation = "Create and send an encrypted backup of this device to the TV."
+    override val transferBackupPasswordDesc = "You will enter this password again on the TV. Minimum 8 characters."
+    override val transferBackupReceived = "Encrypted backup received"
 }
 
 object PortugueseStrings : Strings {
@@ -1070,6 +1080,11 @@ object PortugueseStrings : Strings {
     override val transferConfirmOnTv = "Confirme a fonte na TV para concluir."
     override val transferSendFailed = "Não foi possível enviar a fonte. Verifique o código e confirme que os dispositivos estão na mesma rede."
     override val transferNoSendableSources = "Não existem fontes por URL ou Xtream disponíveis para enviar."
+    override val transferSourceTab = "Fonte"
+    override val transferBackupTab = "Cópia"
+    override val transferBackupExplanation = "Crie e envie para a TV uma cópia encriptada deste dispositivo."
+    override val transferBackupPasswordDesc = "Introduzirá novamente esta palavra-passe na TV. Mínimo de 8 caracteres."
+    override val transferBackupReceived = "Cópia encriptada recebida"
 }
 
 val LocalAppStrings = staticCompositionLocalOf<Strings> { EnglishStrings }

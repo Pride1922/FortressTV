@@ -44,16 +44,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.fortresstv.player.playlist.PlaylistProfile
+import com.fortresstv.player.BuildConfig
+import com.fortresstv.player.backup.BackupExportResult
+import com.fortresstv.player.backup.BackupManager
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.ui.LocalAppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+
+private enum class NativeTransferMode { SOURCE, BACKUP }
 
 @Composable
 fun SendToTvDialog(
@@ -75,6 +82,9 @@ fun SendToTvDialog(
     var sending by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var mode by remember { mutableStateOf(NativeTransferMode.SOURCE) }
+    var backupPassword by remember { mutableStateOf("") }
+    var confirmBackupPassword by remember { mutableStateOf("") }
 
     DisposableEffect(Unit) {
         discovery.startDiscovery()
@@ -110,18 +120,50 @@ fun SendToTvDialog(
                             Text(strings.transferConfirmOnTv, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     } else {
-                        Text(strings.transferChooseSource, fontWeight = FontWeight.SemiBold)
-                        if (sendable.isEmpty()) {
-                            Text(strings.transferNoSendableSources, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else {
-                            LazyColumn(Modifier.fillMaxWidth().height(110.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(sendable, key = { it.id }) { profile ->
-                                    SelectionRow(
-                                        text = profile.name,
-                                        selected = selectedProfile?.id == profile.id,
-                                        onClick = { selectedProfile = profile; error = null }
-                                    )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { mode = NativeTransferMode.SOURCE }, modifier = Modifier.weight(1f)) {
+                                Text(strings.transferSourceTab)
+                            }
+                            Button(onClick = { mode = NativeTransferMode.BACKUP }, modifier = Modifier.weight(1f)) {
+                                Text(strings.transferBackupTab)
+                            }
+                        }
+                        if (mode == NativeTransferMode.SOURCE) {
+                            Text(strings.transferChooseSource, fontWeight = FontWeight.SemiBold)
+                            if (sendable.isEmpty()) {
+                                Text(strings.transferNoSendableSources, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else {
+                                LazyColumn(Modifier.fillMaxWidth().height(110.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(sendable, key = { it.id }) { profile ->
+                                        SelectionRow(
+                                            text = profile.name,
+                                            selected = selectedProfile?.id == profile.id,
+                                            onClick = { selectedProfile = profile; error = null }
+                                        )
+                                    }
                                 }
+                            }
+                        } else {
+                            Text(strings.transferBackupExplanation, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedTextField(
+                                value = backupPassword,
+                                onValueChange = { backupPassword = it; error = null },
+                                label = { Text(strings.backupPassword) },
+                                supportingText = { Text(strings.transferBackupPasswordDesc) },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = confirmBackupPassword,
+                                onValueChange = { confirmBackupPassword = it; error = null },
+                                label = { Text(strings.confirmBackupPassword) },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (confirmBackupPassword.isNotEmpty() && backupPassword != confirmBackupPassword) {
+                                Text(strings.backupPasswordMismatch, color = MaterialTheme.colorScheme.error)
                             }
                         }
 
@@ -158,12 +200,23 @@ fun SendToTvDialog(
                         Button(
                             onClick = {
                                 val tv = selectedTv ?: return@Button
-                                val profile = selectedProfile ?: return@Button
+                                val profile = selectedProfile
                                 sending = true
                                 error = null
                                 scope.launch {
                                     val result = withContext(Dispatchers.IO) {
-                                        NativeTransferClient.sendSource(tv, profile, pin)
+                                        if (mode == NativeTransferMode.SOURCE) {
+                                            if (profile == null) NativeSendResult.Error("No source selected")
+                                            else NativeTransferClient.sendSource(tv, profile, pin)
+                                        } else {
+                                            val output = ByteArrayOutputStream()
+                                            when (BackupManager(context.applicationContext).exportBackup(
+                                                backupPassword.toCharArray(), output, BuildConfig.VERSION_NAME
+                                            )) {
+                                                is BackupExportResult.Success -> NativeTransferClient.sendBackup(tv, output.toByteArray(), pin)
+                                                is BackupExportResult.Error -> NativeSendResult.Error("Could not create backup")
+                                            }
+                                        }
                                     }
                                     sending = false
                                     when (result) {
@@ -172,7 +225,10 @@ fun SendToTvDialog(
                                     }
                                 }
                             },
-                            enabled = !sending && selectedProfile != null && selectedTv != null && pin.length == 6,
+                            enabled = !sending && selectedTv != null && pin.length == 6 &&
+                                ((mode == NativeTransferMode.SOURCE && selectedProfile != null) ||
+                                    (mode == NativeTransferMode.BACKUP && backupPassword.length >= 8 &&
+                                        backupPassword == confirmBackupPassword)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (sending) {

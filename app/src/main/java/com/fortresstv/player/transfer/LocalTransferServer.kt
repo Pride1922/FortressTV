@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *   GET  /              — embedded HTML setup page
  *   GET  /api/status    — JSON {"status": "waiting" | "consumed" | "locked"}
  *   POST /api/source    — JSON transfer payload; yields [TransferRequestResult]
+ *   POST /api/backup    — encrypted FortressTV backup bytes
  *
  * DNS-rebinding mitigation: the Host header is checked against the server's
  * own IP address.
@@ -80,6 +81,7 @@ class LocalTransferServer(
 
     companion object {
         const val MAX_JSON_BYTES = 64 * 1024   // 64 KB
+        const val MAX_BACKUP_BYTES = 10 * 1024 * 1024 // 10 MB
         const val MAX_BAD_ATTEMPTS = 5
     }
 
@@ -93,6 +95,7 @@ class LocalTransferServer(
                 session.method == Method.GET && session.uri == "/" -> serveIndex(session)
                 session.method == Method.GET && session.uri == "/api/status" -> serveStatus()
                 session.method == Method.POST && session.uri == "/api/source" -> serveSource(session)
+                session.method == Method.POST && session.uri == "/api/backup" -> serveBackup(session)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
             }
         } catch (_: Exception) {
@@ -192,6 +195,85 @@ class LocalTransferServer(
             is TransferRequestResult.ParseError -> jsonError(422, "Parse error: ${parseResult.detail}")
             else -> jsonError(500, "Unexpected error")
         }
+    }
+
+    // ------------------------------------------------------------------
+    // POST /api/backup
+    // ------------------------------------------------------------------
+
+    private fun serveBackup(session: IHTTPSession): Response {
+        if (!checkHost(session)) return dnsRebindingRejected()
+        if (locked.get()) return jsonError(429, "Too many attempts. Restart session on TV.")
+        if (consumed.get()) return jsonError(409, "Session already used. Restart session on TV.")
+
+        val contentLength = session.headers["content-length"]?.toLongOrNull() ?: -1L
+        if (contentLength > MAX_BACKUP_BYTES) {
+            publish(TransferRequestResult.PayloadTooLarge)
+            return jsonError(413, "Backup too large")
+        }
+
+        val authHeader = session.headers["authorization"]
+        val pinHeader = session.headers["x-fortress-pin"]
+        val authenticated = when {
+            authHeader != null && authHeader.startsWith("Bearer ") -> MessageDigest.isEqual(
+                sessionToken.toByteArray(Charsets.UTF_8),
+                authHeader.removePrefix("Bearer ").trim().toByteArray(Charsets.UTF_8)
+            )
+            pinHeader != null -> MessageDigest.isEqual(pinBytes, pinHeader.trim().toByteArray(Charsets.UTF_8))
+            else -> false
+        }
+        if (!authenticated) {
+            val attempts = badAttempts.incrementAndGet()
+            if (attempts >= MAX_BAD_ATTEMPTS) {
+                locked.set(true)
+                publish(TransferRequestResult.LockedOut)
+                return jsonError(403, "Locked. Too many failed attempts.")
+            }
+            publish(TransferRequestResult.BadPin)
+            return jsonError(401, "Invalid code. ${MAX_BAD_ATTEMPTS - attempts} attempt(s) remaining.")
+        }
+
+        if (contentLength < 0) return jsonError(411, "Content length required")
+        val bytes = readLimited(session, MAX_BACKUP_BYTES, contentLength.toInt())
+            ?: run {
+                publish(TransferRequestResult.PayloadTooLarge)
+                return jsonError(413, "Backup too large")
+            }
+        val magic = byteArrayOf(0x46, 0x54, 0x56, 0x42)
+        if (bytes.size < 5 || !bytes.copyOfRange(0, 4).contentEquals(magic)) {
+            val result = TransferRequestResult.ParseError("Invalid FortressTV backup")
+            publish(result)
+            return jsonError(422, "Invalid FortressTV backup")
+        }
+
+        val fileName = session.headers["x-fortress-filename"]
+            ?.substringAfterLast('/')?.substringAfterLast('\\')
+            ?.take(120)?.takeIf { it.endsWith(".ftv", ignoreCase = true) }
+            ?: "fortresstv-transfer.ftv"
+        val result = TransferRequestResult.AcceptedBackup(TransferBackupPayload(fileName, bytes))
+        consumed.set(true)
+        publish(result)
+        return jsonOk("{\"success\":true}")
+    }
+
+    private fun readLimited(session: IHTTPSession, limit: Int, expectedSize: Int): ByteArray? {
+        if (expectedSize !in 0..limit) return null
+        val output = java.io.ByteArrayOutputStream(minOf(expectedSize, 64 * 1024))
+        val buffer = ByteArray(16 * 1024)
+        var total = 0
+        while (total < expectedSize) {
+            val read = session.inputStream.read(buffer, 0, minOf(buffer.size, expectedSize - total))
+            if (read < 0) break
+            total += read
+            if (total > limit) return null
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray().takeIf { it.size == expectedSize }
+    }
+
+    private fun publish(result: TransferRequestResult) {
+        _state.value = result
+        onPayloadReceived(result)
     }
 
     // ------------------------------------------------------------------

@@ -105,6 +105,7 @@ object TransferWebPage {
         }
         input:focus { border-color: #6c63ff; }
         input::placeholder { color: #4a4a68; }
+        input[type=file] { width: 100%; padding: 14px; background: #1c1c28; border: 1.5px dashed #4a4a68; border-radius: 10px; color: #e8e8f0; }
 
         .btn {
           padding: 14px;
@@ -200,21 +201,37 @@ object TransferWebPage {
                 epgUrl: null
               });
             });
+            document.getElementById('form-backup').addEventListener('submit', function(e) {
+              e.preventDefault();
+              var file = document.getElementById('backup-file').files[0];
+              if (!file) return showError('Choose a FortressTV backup file.');
+              if (file.size > 10 * 1024 * 1024) return showError('Backup files must be 10 MB or smaller.');
+              sendBackup(file);
+            });
           });
+
+          function authHeaders() {
+            var headers = {};
+            var pin = pinRequired ? document.getElementById('pin-input').value.trim() : null;
+            if (pinRequired && !pin) return null;
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            if (pin) headers['X-Fortress-Pin'] = pin;
+            return headers;
+          }
+
+          function showError(message) {
+            var status = document.getElementById('status');
+            status.className = 'err';
+            status.textContent = message;
+          }
 
           function send(payload) {
             var status = document.getElementById('status');
-            var pin = pinRequired ? document.getElementById('pin-input').value.trim() : null;
-            if (pinRequired && !pin) {
-              status.className = 'err';
-              status.textContent = 'Please enter your 6-digit code.';
-              return;
-            }
+            var headers = authHeaders();
+            if (!headers) return showError('Please enter your 6-digit code.');
             status.className = 'sending';
             status.textContent = 'Sending\u2026';
-            var headers = { 'Content-Type': 'application/json' };
-            if (token) headers['Authorization'] = 'Bearer ' + token;
-            if (pin) headers['X-Fortress-Pin'] = pin;
+            headers['Content-Type'] = 'application/json';
             fetch('/api/source', {
               method: 'POST',
               headers: headers,
@@ -235,6 +252,25 @@ object TransferWebPage {
               status.textContent = 'Network error — check you are on the same Wi-Fi.';
             });
           }
+
+          function sendBackup(file) {
+            var headers = authHeaders();
+            if (!headers) return showError('Please enter your 6-digit code.');
+            headers['Content-Type'] = 'application/octet-stream';
+            headers['X-Fortress-Filename'] = 'fortresstv-transfer.ftv';
+            var status = document.getElementById('status');
+            status.className = 'sending';
+            status.textContent = 'Uploading encrypted backup\u2026';
+            fetch('/api/backup', { method: 'POST', headers: headers, body: file })
+              .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }); })
+              .then(function(res) {
+                if (res.ok) {
+                  status.className = 'ok';
+                  status.textContent = 'Done! Confirm and unlock the backup on your TV.';
+                  document.querySelectorAll('button[type=submit]').forEach(function(b) { b.disabled = true; });
+                } else showError(res.body.error || 'Error — please try again.');
+              }).catch(function() { showError('Network error — check you are on the same Wi-Fi.'); });
+          }
         })();
         </script>
     """.trimIndent()
@@ -246,11 +282,12 @@ object TransferWebPage {
 
     private val FORM_HTML = """
         <div class="tabs">
-          <button class="tab active" data-panel="panel-m3u">M3U Playlist</button>
+          <button class="tab active" data-panel="form-m3u">M3U Playlist</button>
           <button class="tab" data-panel="panel-xtream">Xtream Codes</button>
+          <button class="tab" data-panel="panel-backup">Backup</button>
         </div>
 
-        <form id="form-m3u" class="panel active" id="panel-m3u">
+        <form id="form-m3u" class="panel active">
           <div>
             <label for="m3u-name">Playlist name</label>
             <input id="m3u-name" type="text" placeholder="My Playlist" autocomplete="off">
@@ -285,6 +322,16 @@ object TransferWebPage {
               <input id="xt-pass" type="password" required autocomplete="current-password">
             </div>
             <button class="btn" type="submit">Add to TV</button>
+          </form>
+        </div>
+
+        <div class="panel" id="panel-backup">
+          <form id="form-backup" style="display:contents">
+            <div>
+              <label for="backup-file">Encrypted FortressTV backup (.ftv)</label>
+              <input id="backup-file" type="file" accept=".ftv,application/octet-stream" required>
+            </div>
+            <button class="btn" type="submit">Send backup to TV</button>
           </form>
         </div>
 

@@ -24,6 +24,13 @@ class TransferWebPageTest {
     }
 
     @Test
+    fun htmlContainsBackupUpload() {
+        assertTrue(html.contains("/api/backup"))
+        assertTrue(html.contains("type=\"file\""))
+        assertTrue(html.contains("10 * 1024 * 1024"))
+    }
+
+    @Test
     fun htmlContainsTokenExtractionJs() {
         assertTrue(html.contains("window.location.hash"))
     }

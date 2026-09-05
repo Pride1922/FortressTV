@@ -9,6 +9,7 @@ import org.junit.Test
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.Socket
 
 /**
  * Unit tests for [LocalTransferServer].
@@ -93,6 +94,23 @@ class LocalTransferServerTest {
         {"protocolVersion":1,"kind":"xtream","name":"Sports","url":"http://srv.example.com","username":"user","password":"pass","epgUrl":null}
     """.trimIndent()
 
+    private fun postBytes(path: String, bytes: ByteArray, pin: String): Pair<Int, String> {
+        val conn = URL("$baseUrl$path").openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setFixedLengthStreamingMode(bytes.size)
+        conn.setRequestProperty("Content-Type", "application/octet-stream")
+        conn.setRequestProperty("X-Fortress-Pin", pin)
+        conn.setRequestProperty("X-Fortress-Filename", "backup.ftv")
+        conn.outputStream.use { it.write(bytes) }
+        val code = conn.responseCode
+        val body = runCatching {
+            (if (code in 200..299) conn.inputStream else conn.errorStream).bufferedReader().readText()
+        }.getOrElse { "" }
+        conn.disconnect()
+        return code to body
+    }
+
     // ----------------------------------------------------------------
     // Tests — index page
     // ----------------------------------------------------------------
@@ -149,6 +167,39 @@ class LocalTransferServerTest {
         assertEquals(200, code)
         assertTrue(body.contains("true"))
         assertTrue(receivedResult is TransferRequestResult.Accepted)
+    }
+
+    @Test
+    fun validPinAcceptsEncryptedBackup() {
+        val bytes = byteArrayOf(0x46, 0x54, 0x56, 0x42, 0x01, 1, 2, 3)
+        val (code, _) = postBytes("/api/backup", bytes, server.sessionPin)
+        assertEquals(200, code)
+        val accepted = receivedResult as TransferRequestResult.AcceptedBackup
+        assertEquals("backup.ftv", accepted.payload.fileName)
+        assertTrue(bytes.contentEquals(accepted.payload.bytes))
+    }
+
+    @Test
+    fun invalidBackupHeaderIsRejected() {
+        val (code, _) = postBytes("/api/backup", "not a backup".toByteArray(), server.sessionPin)
+        assertEquals(422, code)
+        assertTrue(receivedResult is TransferRequestResult.ParseError)
+    }
+
+    @Test
+    fun oversizedBackupIsRejectedBeforeReadingBody() {
+        Socket("127.0.0.1", server.listeningPort).use { socket ->
+            socket.soTimeout = 5_000
+            socket.getOutputStream().bufferedWriter().apply {
+                write("POST /api/backup HTTP/1.1\r\n")
+                write("Host: 127.0.0.1:${server.listeningPort}\r\n")
+                write("X-Fortress-Pin: ${server.sessionPin}\r\n")
+                write("Content-Length: ${LocalTransferServer.MAX_BACKUP_BYTES + 1}\r\n\r\n")
+                flush()
+            }
+            val statusLine = socket.getInputStream().bufferedReader().readLine()
+            assertTrue(statusLine.contains("413"))
+        }
     }
 
     // ----------------------------------------------------------------

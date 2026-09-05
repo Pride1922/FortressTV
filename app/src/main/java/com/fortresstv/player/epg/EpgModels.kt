@@ -50,7 +50,8 @@ data class EpgDay(
 data class EpgGuide(
     val channels: Map<String, EpgChannel>,
     val programmes: Map<String, List<EpgProgramme>> = emptyMap(),
-    val manifest: EpgManifest? = null
+    val manifest: EpgManifest? = null,
+    val epochDay: Long? = null
 ) {
     private val resolutionCache = ConcurrentHashMap<String, String>()
 

@@ -219,6 +219,7 @@ import com.fortresstv.player.transfer.TransferPreview
 import com.fortresstv.player.transfer.TransferRequestResult
 import com.fortresstv.player.transfer.TransferSessionState
 import com.fortresstv.player.transfer.TransferSourcePayload
+import com.fortresstv.player.transfer.TransferBackupPayload
 import com.fortresstv.player.transfer.SendToTvDialog
 import com.fortresstv.player.transfer.TvNsdManager
 import com.fortresstv.player.transfer.sanitizeHostForDisplay
@@ -619,10 +620,24 @@ private fun FortressTVApp() {
         val baseFingerprint = SourceReader.fingerprint(context, source, "epg")
         val fingerprint = if (baseFingerprint != null) "$baseFingerprint#days=$loadedDays" else null
         if (allowCachedResult && fingerprint != null) {
-            EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { cached ->
-                stream.close()
-                epgRepository.setGuide(cached)
-                return@withContext cached
+            val manifest = EpgDiskCache.readCurrentManifest(context, fingerprint)
+            val zone = manifest?.let { runCatching { java.time.ZoneId.of(it.timezoneId) }.getOrNull() } ?: java.time.ZoneId.systemDefault()
+            val currentTodayEpoch = java.time.LocalDate.now(zone).toEpochDay()
+            val hasFullWindow = manifest != null &&
+                manifest.todayEpochDay == currentTodayEpoch &&
+                (0 until loadedDays).all { manifest.partitions.containsKey(currentTodayEpoch + it) }
+
+            if (hasFullWindow) {
+                EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { cached ->
+                    stream.close()
+                    epgRepository.setGuide(cached)
+                    return@withContext cached
+                }
+            } else if (manifest != null && manifest.partitions.containsKey(currentTodayEpoch)) {
+                EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { partialCached ->
+                    epgRepository.setGuide(partialCached)
+                    withContext(Dispatchers.Main) { epgGuide = partialCached }
+                }
             }
         }
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
@@ -971,7 +986,7 @@ private fun FortressTVApp() {
         val savedEpg = settings.epgSource()
         if (savedEpg is ContentSource.RemoteUrl) {
             val isEpgFresh = SourceReader.isCacheFresh(context, "epg", settings.lastEpgUpdate())
-            if (!isEpgFresh) {
+            if (!isEpgFresh || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()) {
                 scope.launch(Dispatchers.IO) {
                     runCatching {
                         val stream = SourceReader.fetchAndCache(context, savedEpg, "epg")
@@ -1115,6 +1130,9 @@ private fun FortressTVApp() {
                         is BackupRestoreResult.Success -> {
                             isRestoringBackup = false
                             showRestoreBackupPasswordDialog = false
+                            pendingRestoreUri?.takeIf {
+                                it.scheme == "file" && it.path == File(context.cacheDir, "incoming-transfer.ftv").absolutePath
+                            }?.path?.let { path -> runCatching { File(path).delete() } }
                             pendingRestoreUri = null
 
                             // Synchronize UI states with restored data
@@ -1447,6 +1465,9 @@ private fun FortressTVApp() {
         if (showRestoreBackupPasswordDialog && pendingRestoreUri != null) {
             RestoreBackupPasswordDialog(
                 onDismiss = {
+                    pendingRestoreUri?.takeIf {
+                        it.scheme == "file" && it.path == File(context.cacheDir, "incoming-transfer.ftv").absolutePath
+                    }?.path?.let { path -> runCatching { File(path).delete() } }
                     showRestoreBackupPasswordDialog = false
                     pendingRestoreUri = null
                     restoreErrorMessage = null
@@ -1569,6 +1590,21 @@ private fun FortressTVApp() {
         if (showTransferDialog) {
             TvReceiveSourceDialog(
                 onDismiss = { showTransferDialog = false },
+                onBackupConfirmed = { payload ->
+                    showTransferDialog = false
+                    scope.launch(Dispatchers.IO) {
+                        val file = File(context.cacheDir, "incoming-transfer.ftv")
+                        runCatching { file.writeBytes(payload.bytes) }
+                            .onSuccess {
+                                withContext(Dispatchers.Main) {
+                                    pendingRestoreUri = Uri.fromFile(file)
+                                    restoreErrorMessage = null
+                                    showRestoreBackupPasswordDialog = true
+                                }
+                            }
+                            .onFailure { file.delete() }
+                    }
+                },
                 onSourceConfirmed = { payload ->
                     showTransferDialog = false
                     val displayName = payload.name.ifBlank {
@@ -1926,10 +1962,18 @@ private fun ProgrammeGuideScreen(
     val guideLocale = remember(strings.languageTag) { Locale.forLanguageTag(strings.languageTag) }
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
+    var now by remember { mutableStateOf(Instant.now()) }
     val zone = remember { ZoneId.systemDefault() }
-    val today = remember { LocalDate.now(zone) }
+    val today = remember(now, zone) { now.atZone(zone).toLocalDate() }
     val dates = remember(today, epgLoadedDays) { List(epgLoadedDays.coerceIn(1, 7)) { today.plusDays(it.toLong()) } }
     var selectedDate by remember { mutableStateOf(today) }
+    var previousToday by remember { mutableStateOf(today) }
+    LaunchedEffect(today) {
+        if (selectedDate == previousToday) {
+            selectedDate = today
+        }
+        previousToday = today
+    }
     var selectedProgramme by remember { mutableStateOf<Pair<PlaylistChannel, EpgProgramme>?>(null) }
     var programmeFocusToRestore by remember { mutableStateOf<FocusRequester?>(null) }
 
@@ -1945,7 +1989,6 @@ private fun ProgrammeGuideScreen(
             programmeFocusToRestore = null
         }
     }
-    var now by remember { mutableStateOf(Instant.now()) }
     val horizontalState = rememberScrollState()
     var useWideTimelineWindow by remember { mutableStateOf(false) }
     var initialTimelinePositioned by remember { mutableStateOf(false) }
@@ -15108,6 +15151,7 @@ private fun WelcomePreview() = FortressTVTheme {
 @Composable
 private fun TvReceiveSourceDialog(
     onDismiss: () -> Unit,
+    onBackupConfirmed: (TransferBackupPayload) -> Unit,
     onSourceConfirmed: (TransferSourcePayload) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -15123,6 +15167,7 @@ private fun TvReceiveSourceDialog(
 
     // Server lifecycle
     val server = remember { mutableStateOf<LocalTransferServer?>(null) }
+    val advertiser = remember { mutableStateOf<TvNsdManager?>(null) }
 
     // Helper to get device IP (supports both Wi-Fi and Ethernet)
     fun getLocalIp(): String? = runCatching {
@@ -15143,7 +15188,7 @@ private fun TvReceiveSourceDialog(
         val deviceName = android.os.Build.MODEL
         val nsd = TvNsdManager(context)
         val srv = LocalTransferServer(deviceName) { result ->
-            when (result) {
+            scope.launch { when (result) {
                 is TransferRequestResult.Accepted -> {
                     val payload = result.payload
                     val preview = TransferPreview(
@@ -15159,15 +15204,18 @@ private fun TvReceiveSourceDialog(
                     )
                     sessionState = TransferSessionState.PendingConfirmation(preview)
                 }
+                is TransferRequestResult.AcceptedBackup ->
+                    sessionState = TransferSessionState.PendingBackup(result.payload)
                 is TransferRequestResult.LockedOut ->
                     sessionState = TransferSessionState.Error(strings.transferLockedOut)
                 is TransferRequestResult.BadPin -> { /* state stays Waiting, shown in status */ }
                 else -> { /* Expired / parse errors handled inline */ }
-            }
+            } }
         }
         runCatching { srv.start() }
         val port = srv.listeningPort
         nsd.advertise(port, deviceName)
+        advertiser.value = nsd
         val ip = getLocalIp() ?: "?.?.?.?"
         val url = "http://$ip:$port/#token=${srv.sessionToken}"
         serverUrl = "http://$ip:$port"
@@ -15175,6 +15223,7 @@ private fun TvReceiveSourceDialog(
         server.value = srv
         onDispose {
             nsd.close()
+            advertiser.value = null
             runCatching { srv.stop() }
             server.value = null
         }
@@ -15188,6 +15237,14 @@ private fun TvReceiveSourceDialog(
         }
         if (sessionState is TransferSessionState.Waiting) {
             sessionState = TransferSessionState.Error(strings.transferSessionExpired)
+        }
+    }
+
+    LaunchedEffect(sessionState) {
+        if (sessionState !is TransferSessionState.Waiting) {
+            delay(500) // allow the successful HTTP response to reach the sender
+            runCatching { server.value?.stop() }
+            advertiser.value?.close()
         }
     }
 
@@ -15370,6 +15427,37 @@ private fun TvReceiveSourceDialog(
                                 onClick = onDismiss,
                                 modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = ButtonDefaults.textShape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
                             ) {
+                                Text(strings.cancel)
+                            }
+                            return@Column
+                        }
+
+                        is TransferSessionState.PendingBackup -> {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text(strings.transferBackupReceived, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${state.payload.fileName} · ${state.payload.bytes.size / 1024} KB",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                strings.restoreModePrompt,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(20.dp))
+                            Button(
+                                onClick = { onBackupConfirmed(state.payload) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text(strings.restoreFromBackup) }
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                                 Text(strings.cancel)
                             }
                             return@Column
