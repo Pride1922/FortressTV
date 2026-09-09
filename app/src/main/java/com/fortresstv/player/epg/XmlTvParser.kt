@@ -7,6 +7,7 @@ import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
+import javax.xml.XMLConstants
 import javax.xml.parsers.SAXParserFactory
 
 object XmlTvParser {
@@ -18,9 +19,7 @@ object XmlTvParser {
         loadedDays: Int = DEFAULT_LOADED_DAYS
     ): EpgGuide {
         val handler = InMemXmlTvHandler(referenceTimeMillis, loadedDays.coerceIn(1, 7))
-        SAXParserFactory.newInstance().apply {
-            isNamespaceAware = false
-        }.newSAXParser().parse(input, handler)
+        secureSaxParserFactory().newSAXParser().parse(input, handler)
         return handler.guide()
     }
 
@@ -53,15 +52,23 @@ object XmlTvParser {
                 loadedDays = loadedDays.coerceIn(1, 7),
                 zone = zone
             )
-            SAXParserFactory.newInstance().apply {
-                isNamespaceAware = false
-            }.newSAXParser().parse(input, handler)
+            secureSaxParserFactory().newSAXParser().parse(input, handler)
 
             return session.commit(handler.channels)
         } catch (t: Throwable) {
             session.abort()
             throw t
         }
+    }
+
+    private fun secureSaxParserFactory(): SAXParserFactory = SAXParserFactory.newInstance().apply {
+        isNamespaceAware = false
+        isXIncludeAware = false
+        setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        setFeature("http://xml.org/sax/features/external-general-entities", false)
+        setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
     }
 
     private class StreamingXmlTvHandler(
@@ -265,4 +272,3 @@ object XmlTvParser {
         var category: String? = null
     )
 }
-

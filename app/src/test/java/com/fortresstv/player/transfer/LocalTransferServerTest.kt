@@ -72,7 +72,11 @@ class LocalTransferServerTest {
         if (host != null) conn.setRequestProperty("Host", host)
         conn.connectTimeout = 5_000
         conn.readTimeout = 5_000
-        val bytes = body.toByteArray(Charsets.UTF_8)
+        val requestBody = if (token != null) {
+            conn.setRequestProperty("X-Fortress-Encrypted", "v1")
+            TransferCrypto.encrypt(body, token)
+        } else body
+        val bytes = requestBody.toByteArray(Charsets.UTF_8)
         conn.setRequestProperty("Content-Length", bytes.size.toString())
         val out: OutputStream = conn.outputStream
         out.write(bytes)
@@ -87,11 +91,11 @@ class LocalTransferServerTest {
     }
 
     private fun validM3uPayload(name: String = "Test") = """
-        {"protocolVersion":1,"kind":"m3u","name":"$name","url":"http://example.com/pl.m3u","epgUrl":null}
+        {"protocolVersion":$TRANSFER_PROTOCOL_VERSION,"kind":"m3u","name":"$name","url":"http://example.com/pl.m3u","epgUrl":null}
     """.trimIndent()
 
     private fun validXtreamPayload() = """
-        {"protocolVersion":1,"kind":"xtream","name":"Sports","url":"http://srv.example.com","username":"user","password":"pass","epgUrl":null}
+        {"protocolVersion":$TRANSFER_PROTOCOL_VERSION,"kind":"xtream","name":"Sports","url":"http://srv.example.com","username":"user","password":"pass","epgUrl":null}
     """.trimIndent()
 
     private fun postBytes(path: String, bytes: ByteArray, pin: String): Pair<Int, String> {
@@ -162,11 +166,10 @@ class LocalTransferServerTest {
     // ----------------------------------------------------------------
 
     @Test
-    fun validPinAcceptsPayload() {
+    fun pinOnlySourceTransferIsRejectedBecauseItCannotProvideConfidentiality() {
         val (code, body) = post("/api/source", validM3uPayload(), pin = server.sessionPin)
-        assertEquals(200, code)
-        assertTrue(body.contains("true"))
-        assertTrue(receivedResult is TransferRequestResult.Accepted)
+        assertEquals(426, code)
+        assertTrue(body.contains("Secure QR pairing"))
     }
 
     @Test
@@ -304,14 +307,14 @@ class LocalTransferServerTest {
 
     @Test
     fun m3uMissingUrlReturns422() {
-        val payload = """{"protocolVersion":1,"kind":"m3u","name":"X","url":"","epgUrl":null}"""
+        val payload = """{"protocolVersion":$TRANSFER_PROTOCOL_VERSION,"kind":"m3u","name":"X","url":"","epgUrl":null}"""
         val (code, _) = post("/api/source", payload, token = server.sessionToken)
         assertEquals(422, code)
     }
 
     @Test
     fun xtreamMissingUsernameReturns422() {
-        val payload = """{"protocolVersion":1,"kind":"xtream","name":"X","url":"http://srv.com","username":"","password":"pass","epgUrl":null}"""
+        val payload = """{"protocolVersion":$TRANSFER_PROTOCOL_VERSION,"kind":"xtream","name":"X","url":"http://srv.com","username":"","password":"pass","epgUrl":null}"""
         val (code, _) = post("/api/source", payload, token = server.sessionToken)
         assertEquals(422, code)
     }
@@ -322,7 +325,7 @@ class LocalTransferServerTest {
 
     @Test
     fun unknownKindReturns422() {
-        val payload = """{"protocolVersion":1,"kind":"torrent","name":"X","url":"magnet:?xt=...","epgUrl":null}"""
+        val payload = """{"protocolVersion":$TRANSFER_PROTOCOL_VERSION,"kind":"torrent","name":"X","url":"magnet:?xt=...","epgUrl":null}"""
         val (code, _) = post("/api/source", payload, token = server.sessionToken)
         assertEquals(422, code)
     }

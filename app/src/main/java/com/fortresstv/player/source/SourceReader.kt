@@ -9,12 +9,15 @@ import java.io.FileInputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object SourceReader {
     const val CACHE_EXPIRY_MILLIS = 24 * 60 * 60 * 1000L // 24 hours
+    const val MAX_SOURCE_BYTES = 100L * 1024L * 1024L
 
     private fun cacheFile(context: Context, type: String): File {
         return File(context.filesDir, "cached_$type.dat")
@@ -45,15 +48,32 @@ object SourceReader {
             is ContentSource.RemoteUrl -> {
                 val targetFile = cacheFile(context, type)
                 val tempFile = File(context.filesDir, "temp_$type.dat")
-                retryTransientNetwork {
-                    openUrl(source.value).use { input ->
-                        tempFile.outputStream().use { output ->
-                            input.copyTo(output)
+                try {
+                    retryTransientNetwork {
+                        openUrl(source.value).use { input ->
+                            tempFile.outputStream().use { output ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                var total = 0L
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read < 0) break
+                                    total += read
+                                    require(total <= MAX_SOURCE_BYTES) { "Source exceeds the 100 MB safety limit" }
+                                    output.write(buffer, 0, read)
+                                }
+                            }
                         }
                     }
+                    Files.move(
+                        tempFile.toPath(),
+                        targetFile.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING
+                    )
+                } catch (failure: Throwable) {
+                    tempFile.delete()
+                    throw failure
                 }
-                if (targetFile.exists()) targetFile.delete()
-                tempFile.renameTo(targetFile)
                 BufferedInputStream(FileInputStream(targetFile))
             }
             is ContentSource.Xtream -> error("Xtream sources use the catalogue API")
@@ -113,6 +133,10 @@ object SourceReader {
         if (responseCode !in 200..299) {
             connection.disconnect()
             throw HttpStatusException(responseCode)
+        }
+        require(connection.contentLengthLong <= 0L || connection.contentLengthLong <= MAX_SOURCE_BYTES) {
+            connection.disconnect()
+            "Source exceeds the 100 MB safety limit"
         }
         return BufferedInputStream(connection.inputStream)
     }

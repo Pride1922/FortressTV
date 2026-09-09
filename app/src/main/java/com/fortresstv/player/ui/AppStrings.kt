@@ -266,6 +266,7 @@ interface Strings {
     val changeXmltv: String
     val removeEpg: String
     val removeEpgConfirmation: String
+    val battery: String
     val timeShift: String
     val timeShiftDesc: String
     val epgLoadedDays: String
@@ -324,6 +325,8 @@ interface Strings {
     val backupPasswordRequired: String
     val backupPasswordMismatch: String
     val backupPasswordMinLength: String
+    val backupWeakPasswordWarning: String
+    val backupWeakPasswordAcknowledge: String
     val backupCreatedSuccess: String
     fun backupRestoreSuccess(playlists: Int, favorites: Int): String
     val backupIncorrectPassword: String
@@ -345,6 +348,7 @@ interface Strings {
     val transferOrOpenUrl: String
     val transferPairingCode: String
     val transferSessionExpired: String
+    val transferServerStartFailed: String
     val transferWaiting: String
     val transferReceived: String
     val transferConfirmTitle: String
@@ -622,6 +626,7 @@ object EnglishStrings : Strings {
     override val changeXmltv = "Change XMLTV Guide"
     override val removeEpg = "Remove EPG"
     override val removeEpgConfirmation = "FortressTV will forget this EPG source and clear its local schedule cache. Playlists will not be affected."
+    override val battery = "Battery"
     override val timeShift = "Time Shift (Hours)"
     override val timeShiftDesc = "Adjust this if programme times are offset from your local timezone."
     override val epgLoadedDays = "EPG Days to Load"
@@ -680,7 +685,9 @@ object EnglishStrings : Strings {
     override val backupPasswordExplanation = "This password encrypts your playlist URLs, credentials, and settings using AES-256-GCM. Keep it safe to restore on another device."
     override val backupPasswordRequired = "Please enter a password"
     override val backupPasswordMismatch = "Passwords do not match"
-    override val backupPasswordMinLength = "Password must be at least 4 characters"
+    override val backupPasswordMinLength = "Password must be at least 8 characters"
+    override val backupWeakPasswordWarning = "This password may be easier to guess. The backup contains source addresses and may contain provider credentials."
+    override val backupWeakPasswordAcknowledge = "I understand and want to use this password"
     override val backupCreatedSuccess = "Backup created successfully"
     override fun backupRestoreSuccess(playlists: Int, favorites: Int) = "Restored $playlists ${if (playlists == 1) "playlist" else "playlists"} and $favorites ${if (favorites == 1) "favorite" else "favorites"}"
     override val backupIncorrectPassword = "Incorrect backup password"
@@ -702,6 +709,7 @@ object EnglishStrings : Strings {
     override val transferOrOpenUrl = "Or open this address in a browser:"
     override val transferPairingCode = "Pairing code:"
     override val transferSessionExpired = "Session expired. Please try again."
+    override val transferServerStartFailed = "Could not start local transfer. Check the network connection and try again."
     override val transferWaiting = "Waiting for connection…"
     override val transferReceived = "Source received — confirm below"
     override val transferConfirmTitle = "Confirm source"
@@ -980,6 +988,7 @@ object PortugueseStrings : Strings {
     override val changeXmltv = "Alterar Guia XMLTV"
     override val removeEpg = "Remover EPG"
     override val removeEpgConfirmation = "A FortressTV irá esquecer esta fonte de EPG e limpar a programação guardada localmente. As listas não serão afetadas."
+    override val battery = "Bateria"
     override val timeShift = "Ajuste de Fuso Horário (Horas)"
     override val timeShiftDesc = "Ajuste este valor se os horários dos programas não coincidirem com o seu fuso horário local."
     override val epgLoadedDays = "Dias de EPG a Carregar"
@@ -1039,7 +1048,9 @@ object PortugueseStrings : Strings {
     override val backupPasswordExplanation = "Esta palavra-passe encripta os URLs das listas, credenciais e definições com AES-256-GCM. Guarde-a num local seguro para restaurar noutro dispositivo."
     override val backupPasswordRequired = "Por favor introduza uma palavra-passe"
     override val backupPasswordMismatch = "As palavras-passe não coincidem"
-    override val backupPasswordMinLength = "A palavra-passe deve ter pelo menos 4 carateres"
+    override val backupPasswordMinLength = "A palavra-passe deve ter pelo menos 8 carateres"
+    override val backupWeakPasswordWarning = "Esta palavra-passe pode ser mais fácil de adivinhar. A cópia contém endereços das origens e pode conter credenciais do fornecedor."
+    override val backupWeakPasswordAcknowledge = "Compreendo e quero utilizar esta palavra-passe"
     override val backupCreatedSuccess = "Cópia de segurança criada com sucesso"
     override fun backupRestoreSuccess(playlists: Int, favorites: Int) = "Restauradas $playlists ${if (playlists == 1) "lista" else "listas"} e $favorites ${if (favorites == 1) "favorito" else "favoritos"}"
     override val backupIncorrectPassword = "Palavra-passe da cópia de segurança incorreta"
@@ -1061,6 +1072,7 @@ object PortugueseStrings : Strings {
     override val transferOrOpenUrl = "Ou abra este endereço num browser:"
     override val transferPairingCode = "Código de emparelhamento:"
     override val transferSessionExpired = "Sessão expirada. Por favor tente novamente."
+    override val transferServerStartFailed = "Não foi possível iniciar a transferência local. Verifique a ligação de rede e tente novamente."
     override val transferWaiting = "À espera de ligação…"
     override val transferReceived = "Fonte recebida — confirme abaixo"
     override val transferConfirmTitle = "Confirmar fonte"

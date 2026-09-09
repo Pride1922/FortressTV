@@ -100,6 +100,7 @@ class XtreamClient(
         if (!forceRefresh && cacheFile != null && cacheFile.exists() && cacheFile.length() > 0L &&
             System.currentTimeMillis() - cacheFile.lastModified() < 24 * 60 * 60 * 1000L
         ) {
+            require(cacheFile.length() <= MAX_RESPONSE_BYTES) { "Cached Xtream response exceeds the 64 MB safety limit" }
             return@withContext cacheFile.readText()
         }
         retryTransientNetwork {
@@ -118,7 +119,10 @@ class XtreamClient(
                 return try {
                     val code = connection.responseCode
                     if (code !in 200..299) throw HttpStatusException(code)
-                    connection.inputStream.bufferedReader().use { it.readText() }.also { response ->
+                    require(connection.contentLengthLong <= 0L || connection.contentLengthLong <= MAX_RESPONSE_BYTES) {
+                        "Xtream response exceeds the 64 MB safety limit"
+                    }
+                    connection.inputStream.use { input -> readUtf8Limited(input, MAX_RESPONSE_BYTES) }.also { response ->
                         if (cacheFile != null) {
                             val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
                             val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
@@ -144,6 +148,20 @@ class XtreamClient(
                 }
             }
         }
+    }
+
+    private fun readUtf8Limited(input: java.io.InputStream, limit: Long): String {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= limit) { "Xtream response exceeds the 64 MB safety limit" }
+            output.write(buffer, 0, read)
+        }
+        return output.toString(Charsets.UTF_8.name())
     }
 
     internal fun parseCategories(json: String): List<XtreamCategory> = JSONArray(json).objects().mapNotNull { item ->
@@ -321,6 +339,8 @@ class XtreamClient(
     private fun path(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
     companion object {
+        private const val MAX_RESPONSE_BYTES = 64L * 1024L * 1024L
+
         fun normalizeServerUrl(value: String): String {
             val trimmed = value.trim().substringBefore('?').removeSuffix("/player_api.php").trimEnd('/')
             val withScheme = if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {

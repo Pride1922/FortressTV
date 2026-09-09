@@ -5,6 +5,8 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
@@ -12,6 +14,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.BatteryManager
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -155,6 +158,7 @@ import com.fortresstv.player.backup.BackupRestoreResult
 import com.fortresstv.player.backup.BackupExportResult
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -303,6 +307,10 @@ import coil.request.ImageRequest
 import coil.size.Precision
 
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val PIP_DISMISS_CONFIRMATION_DELAY_MS = 1_500L
+    }
+
     var pictureInPictureMode by mutableStateOf(false)
         private set
 
@@ -312,6 +320,7 @@ class MainActivity : ComponentActivity() {
     private var onPictureInPictureDismissed: (() -> Unit)? = null
     private var isActivityResumed = false
     private var transferDeepLink by mutableStateOf<String?>(null)
+    private var foregroundGeneration by mutableIntStateOf(0)
 
     private val confirmPictureInPictureDismissed = Runnable {
         if (!isInPictureInPictureMode && !isActivityResumed && !hasWindowFocus()) {
@@ -364,10 +373,14 @@ class MainActivity : ComponentActivity() {
         pictureInPictureMode = isInPictureInPictureMode
         pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
         if (!isInPictureInPictureMode) {
-            // Android can delay onStop for several seconds after the PiP close button
-            // is pressed. Give an expanded PiP a moment to regain window focus; if it
-            // does not, stop playback without waiting for that delayed lifecycle event.
-            pictureInPictureHandler.postDelayed(confirmPictureInPictureDismissed, 200L)
+            // Expanding PiP can report "not in PiP" well before the activity regains
+            // focus (observed at roughly 700 ms on Xiaomi tablets). Give expansion a
+            // safe window to cancel this callback; a real dismissal remains stopped
+            // promptly even when the platform delays onStop.
+            pictureInPictureHandler.postDelayed(
+                confirmPictureInPictureDismissed,
+                PIP_DISMISS_CONFIRMATION_DELAY_MS
+            )
         }
     }
 
@@ -380,6 +393,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        foregroundGeneration++
         isActivityResumed = true
         pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
         UpdateManager.resumePendingInstall(this)
@@ -393,10 +407,9 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         isActivityResumed = false
-        if (!isInPictureInPictureMode) {
-            pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
-            onPictureInPictureDismissed?.invoke()
-        }
+        // Do not infer PiP dismissal from onStop: some vendors dispatch it while an
+        // expanded PiP is rebuilding its fullscreen window. The confirmation callback
+        // above distinguishes expansion (focus/resume returns) from an actual close.
     }
 
     override fun onDestroy() {
@@ -472,7 +485,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     FortressTVApp(
                         transferDeepLink = transferDeepLink,
-                        onTransferDeepLinkConsumed = { transferDeepLink = null }
+                        onTransferDeepLinkConsumed = { transferDeepLink = null },
+                        foregroundGeneration = foregroundGeneration
                     )
                 }
             }
@@ -500,7 +514,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun FortressTVApp(
     transferDeepLink: String?,
-    onTransferDeepLinkConsumed: () -> Unit
+    onTransferDeepLinkConsumed: () -> Unit,
+    foregroundGeneration: Int
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -543,6 +558,8 @@ private fun FortressTVApp(
     var epgTimeShiftHours by remember { mutableIntStateOf(0) }
     var epgLoadedDays by remember { mutableIntStateOf(3) }
     val epgRepository = remember { DefaultEpgRepository(context) }
+    var currentAppEpochDay by remember { mutableLongStateOf(LocalDate.now().toEpochDay()) }
+    var activeEpgEpochDay by remember { mutableLongStateOf(currentAppEpochDay) }
 
     var error by remember { mutableStateOf<String?>(null) }
     var retryLoad by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -595,7 +612,9 @@ private fun FortressTVApp(
 
     suspend fun parsePlaylist(stream: java.io.InputStream): Playlist = withContext(Dispatchers.Default) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        stream.bufferedReader().use { M3uParser.parse(it.readText()) }
+        SizeLimitedInputStream(stream, 100L * 1024L * 1024L, "Playlist").bufferedReader().use {
+            M3uParser.parse(it)
+        }
     }
 
     suspend fun parsePlaylistWithCache(
@@ -624,7 +643,10 @@ private fun FortressTVApp(
             val second = buffered.read()
             buffered.reset()
             val decompressed = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
-            XmlTvParser.parse(decompressed, loadedDays = loadedDays)
+            XmlTvParser.parse(
+                SizeLimitedInputStream(decompressed, 250L * 1024L * 1024L, "Decompressed EPG"),
+                loadedDays = loadedDays
+            )
         }
     }
 
@@ -665,7 +687,7 @@ private fun FortressTVApp(
             buffered.reset()
             val decompressed = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
             XmlTvParser.parseToDisk(
-                input = decompressed,
+                input = SizeLimitedInputStream(decompressed, 250L * 1024L * 1024L, "Decompressed EPG"),
                 context = context,
                 fingerprint = fingerprint.orEmpty(),
                 loadedDays = loadedDays
@@ -809,6 +831,54 @@ private fun FortressTVApp(
             withContext(Dispatchers.Main) {
                 loading = false
             }
+        }
+    }
+
+    fun advanceEpgWindow(source: ContentSource, epochDay: Long) {
+        scope.launch {
+            val cachedTodayGuide = withContext(Dispatchers.IO) {
+                val manifest = epgRepository.manifest.value
+                val day = epgRepository.loadDay(epochDay)
+                if (manifest != null && day != null) {
+                    EpgGuide(
+                        channels = manifest.channels,
+                        programmes = day.programmes,
+                        manifest = manifest,
+                        epochDay = epochDay
+                    )
+                } else null
+            }
+            if (cachedTodayGuide != null) {
+                epgRepository.setGuide(cachedTodayGuide)
+                epgGuide = cachedTodayGuide
+            }
+
+            when (source) {
+                is ContentSource.RemoteUrl -> loadEpg(source, save = false, forceRefresh = true)
+                is ContentSource.LocalFile -> if (cachedTodayGuide == null) {
+                    loadEpg(source, save = false, forceRefresh = false)
+                }
+                is ContentSource.Xtream -> Unit
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentAppEpochDay = LocalDate.now().toEpochDay()
+            delay(60_000)
+        }
+    }
+
+    LaunchedEffect(foregroundGeneration) {
+        currentAppEpochDay = LocalDate.now().toEpochDay()
+    }
+
+    LaunchedEffect(currentAppEpochDay) {
+        if (currentAppEpochDay != activeEpgEpochDay) {
+            activeEpgEpochDay = currentAppEpochDay
+            val source = withContext(Dispatchers.IO) { settings.epgSource() }
+            if (source != null) advanceEpgWindow(source, currentAppEpochDay)
         }
     }
 
@@ -5696,6 +5766,48 @@ private fun formatPlaybackTime(ms: Long): String {
 private const val LIVE_STALL_TIMEOUT_MILLIS = 12_000L
 private const val LIVE_STALL_MIN_PROGRESS_MILLIS = 1_000L
 private const val LIVE_STALL_MAX_RECOVERY_ATTEMPTS = 2
+internal const val NEXT_EPISODE_TRIGGER_REMAINING_MS = 45_000L
+internal const val NEXT_EPISODE_COUNTDOWN_SECONDS = 10
+
+internal fun shouldStartNextEpisodeCountdown(
+    positionMs: Long,
+    durationMs: Long,
+    autoPlayEnabled: Boolean,
+    dismissed: Boolean,
+    nextEpisodeAvailable: Boolean,
+    currentCountdown: Int
+): Boolean = autoPlayEnabled &&
+    !dismissed &&
+    nextEpisodeAvailable &&
+    currentCountdown < 0 &&
+    durationMs > NEXT_EPISODE_TRIGGER_REMAINING_MS &&
+    positionMs >= durationMs - NEXT_EPISODE_TRIGGER_REMAINING_MS
+
+private class SizeLimitedInputStream(
+    input: java.io.InputStream,
+    private val maxBytes: Long,
+    private val label: String
+) : java.io.FilterInputStream(input) {
+    private var bytesRead = 0L
+
+    override fun read(): Int {
+        val value = super.read()
+        if (value >= 0) record(1)
+        return value
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val allowed = minOf(length.toLong(), maxBytes - bytesRead + 1L).coerceAtLeast(1L).toInt()
+        val count = super.read(buffer, offset, allowed)
+        if (count > 0) record(count)
+        return count
+    }
+
+    private fun record(count: Int) {
+        bytesRead += count
+        if (bytesRead > maxBytes) throw java.io.IOException("$label exceeds the safety limit")
+    }
+}
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
@@ -5728,8 +5840,9 @@ private fun VodPlayerDialog(
     var controlsVisible by remember { mutableStateOf(true) }
     var autoPlayNext by remember { mutableStateOf(true) }
     var autoPlayCountdown by remember(request.key) { mutableIntStateOf(-1) }
+    var autoPlayCountdownDismissed by remember(request.key) { mutableStateOf(false) }
 
-    var currentPositionMs by remember(request.key) { mutableLongStateOf(0L) }
+    var currentPositionMs by remember(request.key) { mutableLongStateOf(initialPositionMs.coerceAtLeast(0L)) }
     var totalDurationMs by remember(request.key) { mutableLongStateOf(0L) }
     var isPlaying by remember(request.key) { mutableStateOf(true) }
     var isDraggingSlider by remember { mutableStateOf(false) }
@@ -5809,6 +5922,14 @@ private fun VodPlayerDialog(
             if (eps.isNotEmpty() && request.season == null) {
                 selectedDrawerSeason = eps.firstNotNullOfOrNull { it.season } ?: 1
             }
+        }
+    }
+
+    LaunchedEffect(request.key, loadNextEpisode) {
+        if (loadNextEpisode != null && nextEpisode == null && !loadingNextEpisode) {
+            loadingNextEpisode = true
+            nextEpisode = runCatching { loadNextEpisode() }.getOrNull()
+            loadingNextEpisode = false
         }
     }
 
@@ -5906,8 +6027,8 @@ private fun VodPlayerDialog(
         }
     }
 
-    LaunchedEffect(autoPlayCountdown, nextEpisode) {
-        if (autoPlayCountdown > 0) {
+    LaunchedEffect(autoPlayCountdown, nextEpisode, isPlaying) {
+        if (autoPlayCountdown > 0 && isPlaying) {
             delay(1000)
             autoPlayCountdown--
             if (autoPlayCountdown == 0) {
@@ -5915,6 +6036,20 @@ private fun VodPlayerDialog(
                     onPlayNext(next)
                 }
             }
+        }
+    }
+
+    LaunchedEffect(currentPositionMs, totalDurationMs, nextEpisode, autoPlayNext, autoPlayCountdownDismissed, isPlaying) {
+        if (isPlaying && shouldStartNextEpisodeCountdown(
+                positionMs = currentPositionMs,
+                durationMs = totalDurationMs,
+                autoPlayEnabled = autoPlayNext,
+                dismissed = autoPlayCountdownDismissed,
+                nextEpisodeAvailable = nextEpisode != null,
+                currentCountdown = autoPlayCountdown
+            )
+        ) {
+            autoPlayCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS
         }
     }
 
@@ -5946,9 +6081,6 @@ private fun VodPlayerDialog(
                             val next = runCatching { loadNextEpisode() }.getOrNull()
                             loadingNextEpisode = false
                             nextEpisode = next
-                            if (next != null && autoPlayNext) {
-                                autoPlayCountdown = 5
-                            }
                         }
                     }
                 }
@@ -6132,6 +6264,11 @@ private fun VodPlayerDialog(
                             }
                         }
 
+                        if (!isTv) {
+                            BatteryStatusBadge(contentDescription = strings.battery)
+                            Spacer(Modifier.width(if (isCompact) 6.dp else 8.dp))
+                        }
+
                         if (request.kind == VodProgressKind.EPISODE || loadAllEpisodes != null) {
                             Surface(
                                 onClick = { showEpisodesDrawer = true },
@@ -6212,7 +6349,15 @@ private fun VodPlayerDialog(
 
                         if (loadNextEpisode != null) {
                             Surface(
-                                onClick = { autoPlayNext = !autoPlayNext },
+                                onClick = {
+                                    autoPlayNext = !autoPlayNext
+                                    if (!autoPlayNext) {
+                                        autoPlayCountdown = -1
+                                        autoPlayCountdownDismissed = true
+                                    } else {
+                                        autoPlayCountdownDismissed = false
+                                    }
+                                },
                                 shape = if (isCompact) CircleShape else RoundedCornerShape(20.dp),
                                 color = if (autoPlayNext) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.6f),
                                 border = BorderStroke(1.dp, if (autoPlayNext) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.2f)),
@@ -6538,6 +6683,7 @@ private fun VodPlayerDialog(
                                 OutlinedButton(
                                     onClick = {
                                         autoPlayCountdown = -1
+                                        autoPlayCountdownDismissed = true
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) {
@@ -6555,7 +6701,7 @@ private fun VodPlayerDialog(
                             }
                         }
                     }
-                } else if (autoPlayCountdown <= 0) {
+                } else if (playbackState == Player.STATE_ENDED) {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.surface,
@@ -8970,6 +9116,55 @@ private fun VideoSurface(
     }
 }
 
+@Composable
+private fun BatteryStatusBadge(contentDescription: String) {
+    val context = LocalContext.current
+    var percentage by remember { mutableIntStateOf(-1) }
+
+    DisposableEffect(context) {
+        fun update(intent: Intent?) {
+            val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+            percentage = if (level >= 0 && scale > 0) ((level * 100f) / scale).toInt().coerceIn(0, 100) else -1
+        }
+
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) = update(intent)
+        }
+        update(context.registerReceiver(null, filter))
+        context.registerReceiver(receiver, filter)
+        onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
+
+    if (percentage >= 0) {
+        val tint = when {
+            percentage <= 15 -> Color(0xFFFF6B6B)
+            percentage <= 30 -> Color(0xFFFFC15A)
+            else -> Color.White
+        }
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color.Black.copy(alpha = 0.6f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    Icons.Default.BatteryFull,
+                    contentDescription = contentDescription,
+                    tint = tint,
+                    modifier = Modifier.size(17.dp)
+                )
+                Text("$percentage%", color = tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
 /**
  * Adds the remote-only focus policy for fullscreen controls. Touch controls keep
  * their normal click and gesture behavior, while TV controls gain explicit
@@ -9469,6 +9664,9 @@ private fun FullscreenPlayer(
                             horizontalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (!isTv) {
+                                BatteryStatusBadge(contentDescription = strings.battery)
+                            }
                             Surface(
                                 onClick = { showSleepTimerDialog = true },
                                 shape = if (isCompact && sleepTimerRemainingText == null && sleepTimerMinutes != -1) CircleShape else RoundedCornerShape(20.dp),
@@ -14752,6 +14950,7 @@ private fun CreateBackupDialog(
     var confirmPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var weakPasswordAcknowledged by remember { mutableStateOf(false) }
 
     fun hideKeyboard() {
         runCatching { focusRequester.requestFocus() }
@@ -14832,6 +15031,7 @@ private fun CreateBackupDialog(
                         onValueChange = {
                             password = it
                             errorMessage = null
+                            weakPasswordAcknowledged = false
                         },
                         label = { Text(strings.backupPassword) },
                         singleLine = true,
@@ -14863,8 +15063,9 @@ private fun CreateBackupDialog(
                                 hideKeyboard()
                                 when {
                                     password.isBlank() -> errorMessage = strings.backupPasswordRequired
-                                    password.length < 4 -> errorMessage = strings.backupPasswordMinLength
+                                    password.length < 8 -> errorMessage = strings.backupPasswordMinLength
                                     password != confirmPassword -> errorMessage = strings.backupPasswordMismatch
+                                    isWeakBackupPassword(password) && !weakPasswordAcknowledged -> errorMessage = strings.backupWeakPasswordWarning
                                     else -> onConfirm(password)
                                 }
                             }
@@ -14877,6 +15078,25 @@ private fun CreateBackupDialog(
                             color = MaterialTheme.colorScheme.error,
                             fontSize = 12.sp
                         )
+                    }
+
+                    if (password.length >= 8 && isWeakBackupPassword(password)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { weakPasswordAcknowledged = !weakPasswordAcknowledged },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = weakPasswordAcknowledged,
+                                onCheckedChange = { weakPasswordAcknowledged = it }
+                            )
+                            Text(
+                                strings.backupWeakPasswordAcknowledge,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(4.dp))
@@ -14900,8 +15120,9 @@ private fun CreateBackupDialog(
                                 hideKeyboard()
                                 when {
                                     password.isBlank() -> errorMessage = strings.backupPasswordRequired
-                                    password.length < 4 -> errorMessage = strings.backupPasswordMinLength
+                                    password.length < 8 -> errorMessage = strings.backupPasswordMinLength
                                     password != confirmPassword -> errorMessage = strings.backupPasswordMismatch
+                                    isWeakBackupPassword(password) && !weakPasswordAcknowledged -> errorMessage = strings.backupWeakPasswordWarning
                                     else -> onConfirm(password)
                                 }
                             }
@@ -14913,6 +15134,17 @@ private fun CreateBackupDialog(
             }
         }
     }
+}
+
+private fun isWeakBackupPassword(password: String): Boolean {
+    if (password.length < 12) return true
+    val characterClasses = listOf(
+        password.any(Char::isLowerCase),
+        password.any(Char::isUpperCase),
+        password.any(Char::isDigit),
+        password.any { !it.isLetterOrDigit() }
+    ).count { it }
+    return characterClasses < 3
 }
 
 @Composable
@@ -15272,15 +15504,20 @@ private fun TvReceiveSourceDialog(
                 else -> { /* Expired / parse errors handled inline */ }
             } }
         }
-        runCatching { srv.start() }
-        val port = srv.listeningPort
-        nsd.advertise(port, deviceName)
-        advertiser.value = nsd
-        val ip = getLocalIp() ?: "?.?.?.?"
-        val url = "http://$ip:$port/#token=${srv.sessionToken}"
-        serverUrl = "http://$ip:$port"
-        sessionPin = srv.sessionPin
-        server.value = srv
+        val startResult = runCatching { srv.start() }
+        if (startResult.isSuccess && srv.listeningPort > 0) {
+            val port = srv.listeningPort
+            nsd.advertise(port, deviceName)
+            advertiser.value = nsd
+            val ip = getLocalIp() ?: "?.?.?.?"
+            serverUrl = "http://$ip:$port"
+            sessionPin = srv.sessionPin
+            server.value = srv
+        } else {
+            runCatching { srv.stop() }
+            nsd.close()
+            sessionState = TransferSessionState.Error(strings.transferServerStartFailed)
+        }
         onDispose {
             nsd.close()
             advertiser.value = null

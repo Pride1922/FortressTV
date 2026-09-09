@@ -146,11 +146,6 @@ class LocalTransferServer(
             return jsonError(413, "Payload too large")
         }
 
-        val bodyBytes = ByteArray(MAX_JSON_BYTES)
-        val read = runCatching { session.inputStream.read(bodyBytes, 0, MAX_JSON_BYTES) }.getOrElse { -1 }
-        if (read < 0) return jsonError(400, "Empty body")
-        val bodyStr = bodyBytes.copyOf(read).toString(Charsets.UTF_8)
-
         // Authenticate
         val authHeader = session.headers["authorization"]
         val pinHeader = session.headers["x-fortress-pin"]
@@ -179,6 +174,20 @@ class LocalTransferServer(
             _state.value = result
             onPayloadReceived(result)
             return jsonError(401, "Invalid code. ${MAX_BAD_ATTEMPTS - attempts} attempt(s) remaining.")
+        }
+
+        if (authHeader == null || session.headers["x-fortress-encrypted"] != "v1") {
+            return jsonError(426, "Secure QR pairing is required for source transfer")
+        }
+
+        val expectedSize = contentLength.takeIf { it > 0L }?.toInt()
+            ?: return jsonError(411, "Content length required")
+        val bodyBytes = readLimited(session, MAX_JSON_BYTES, expectedSize)
+            ?: return jsonError(413, "Payload too large or incomplete")
+        val bodyStr = runCatching {
+            TransferCrypto.decrypt(bodyBytes.toString(Charsets.UTF_8), sessionToken)
+        }.getOrElse {
+            return jsonError(422, "Invalid encrypted transfer")
         }
 
         // Parse payload

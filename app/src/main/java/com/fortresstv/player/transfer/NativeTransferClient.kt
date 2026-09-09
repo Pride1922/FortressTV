@@ -19,10 +19,12 @@ object NativeTransferClient {
         epgUrl: String? = null
     ): NativeSendResult {
         if (tv.protocolVersion != TRANSFER_PROTOCOL_VERSION) return NativeSendResult.Error("Unsupported protocol version")
-        if (tv.sessionToken == null && !pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
+        val token = tv.sessionToken
+            ?: return NativeSendResult.Error("Scan the TV QR code to send source credentials securely")
         val endpoint = tv.endpoint() ?: return NativeSendResult.Error("TV address unavailable")
-        val payload = createNativeTransferPayload(profile, epgUrl)
+        val plainPayload = createNativeTransferPayload(profile, epgUrl)
             ?: return NativeSendResult.Error("Local files cannot be sent yet")
+        val payload = TransferCrypto.encrypt(plainPayload, token)
         return runCatching {
             val connection = URL("$endpoint/api/source").openConnection() as HttpURLConnection
             try {
@@ -31,6 +33,7 @@ object NativeTransferClient {
                 connection.readTimeout = 10_000
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("X-Fortress-Encrypted", "v1")
                 applyAuthentication(connection, tv, pin)
                 connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
                 if (connection.responseCode in 200..299) NativeSendResult.Success

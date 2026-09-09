@@ -37,7 +37,7 @@ object TransferWebPage {
             appendLine("<header class=\"brand\"><span class=\"brand-mark\">F</span><span>FortressTV</span></header>")
             appendLine("<section class=\"hero\"><span class=\"eyebrow\">LOCAL TV TRANSFER &middot; TRANSFERÊNCIA LOCAL</span><h1>Send securely to your TV</h1><p>Transfer a playlist or encrypted backup directly over your home Wi-Fi.<br><span lang=\"pt-PT\">Envie uma lista ou cópia encriptada diretamente pela rede Wi-Fi de casa.</span></p></section>")
             appendLine("<div class=\"connection\"><span class=\"status-dot\"></span><div><small>CONNECTED TV &middot; TV LIGADA</small><strong>$safeDevice</strong></div><span class=\"local-badge\">Local only</span></div>")
-            appendLine("<div class=\"privacy\"><span class=\"lock\">&#128274;</span><span><strong>Private connection &middot; Ligação privada</strong><small>No cloud servers. Your details stay inside your local network.<br><span lang=\"pt-PT\">Sem servidores na nuvem. Os seus dados permanecem na rede local.</span></small></span></div>")
+            appendLine("<div class=\"privacy\"><span class=\"lock\">&#128274;</span><span><strong>Encrypted local transfer &middot; Transferência local encriptada</strong><small>QR-paired source details are encrypted before transmission.<br><span lang=\"pt-PT\">Os dados da origem são encriptados antes da transmissão após o emparelhamento por QR.</span></small></span></div>")
             appendLine(JS_PIN_CHECK.replace("__PIN__", safePin))
             appendLine(FORM_HTML)
             appendLine("<footer>FortressTV &middot; Direct local transfer<br><span>Transferência direta na rede local</span></footer>")
@@ -268,17 +268,49 @@ object TransferWebPage {
             status.textContent = message;
           }
 
-          function send(payload) {
+          function bytesToBase64(bytes) {
+            var binary = '';
+            bytes.forEach(function(value) { binary += String.fromCharCode(value); });
+            return btoa(binary);
+          }
+
+          async function encryptPayload(payload) {
+            var encoder = new TextEncoder();
+            var material = encoder.encode('FortressTV local source transfer v1\u0000' + token.toLowerCase());
+            var keyBytes = await crypto.subtle.digest('SHA-256', material);
+            var key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+            var iv = crypto.getRandomValues(new Uint8Array(12));
+            var cipherText = await crypto.subtle.encrypt(
+              { name: 'AES-GCM', iv: iv, tagLength: 128 },
+              key,
+              encoder.encode(JSON.stringify(payload))
+            );
+            return JSON.stringify({
+              version: 1,
+              iv: bytesToBase64(iv),
+              ciphertext: bytesToBase64(new Uint8Array(cipherText))
+            });
+          }
+
+          async function send(payload) {
             var status = document.getElementById('status');
+            if (!token) return showError('Scan the QR code shown on the TV to send source details securely.');
             var headers = authHeaders();
             if (!headers) return showError('Please enter your 6-digit code.');
             status.className = 'sending';
             status.textContent = 'Sending\u2026';
             headers['Content-Type'] = 'application/json';
+            headers['X-Fortress-Encrypted'] = 'v1';
+            var encryptedBody;
+            try {
+              encryptedBody = await encryptPayload(payload);
+            } catch (_) {
+              return showError('Use “Open FortressTV app” above for encrypted source transfer. / Use “Abrir a app FortressTV” acima para transferir a origem de forma encriptada.');
+            }
             fetch('/api/source', {
               method: 'POST',
               headers: headers,
-              body: JSON.stringify(payload)
+              body: encryptedBody
             }).then(function(r) {
               return r.json().then(function(j) { return { ok: r.ok, body: j }; });
             }).then(function(res) {

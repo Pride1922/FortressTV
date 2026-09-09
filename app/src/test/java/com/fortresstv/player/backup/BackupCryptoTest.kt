@@ -5,6 +5,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import javax.crypto.Cipher
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.PBEKeySpec
+import javax.crypto.spec.SecretKeySpec
 
 class BackupCryptoTest {
 
@@ -15,9 +22,19 @@ class BackupCryptoTest {
 
         val encrypted = BackupCrypto.encryptToBytes(originalData, password)
         assertTrue(encrypted.size > originalData.size)
+        assertEquals(2, encrypted[4].toInt())
 
         val decrypted = BackupCrypto.decryptFromBytes(encrypted, password)
         assertArrayEquals(originalData, decrypted)
+    }
+
+    @Test
+    fun restoresLegacyVersionOneBackup() {
+        val originalData = "Legacy FortressTV backup".toByteArray()
+        val password = "LegacyPassword".toCharArray()
+        val legacyBackup = createLegacyVersionOneBackup(originalData, password)
+
+        assertArrayEquals(originalData, BackupCrypto.decryptFromBytes(legacyBackup, password))
     }
 
     @Test
@@ -56,5 +73,28 @@ class BackupCryptoTest {
             BackupCrypto.decryptFromBytes(garbage, password)
         }
         assertTrue(ex.message!!.contains("Header mismatch") || ex.message!!.contains("short"))
+    }
+
+    private fun createLegacyVersionOneBackup(data: ByteArray, password: CharArray): ByteArray {
+        val salt = ByteArray(16) { it.toByte() }
+        val iv = ByteArray(12) { (it + 16).toByte() }
+        val spec = PBEKeySpec(password, salt, 100_000, 256)
+        val key = SecretKeySpec(
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded,
+            "AES"
+        )
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+        val encrypted = cipher.doFinal(data)
+        return ByteArrayOutputStream().also { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.write(byteArrayOf(0x46, 0x54, 0x56, 0x42))
+                output.writeByte(1)
+                output.write(salt)
+                output.write(iv)
+                output.writeInt(encrypted.size)
+                output.write(encrypted)
+            }
+        }.toByteArray()
     }
 }

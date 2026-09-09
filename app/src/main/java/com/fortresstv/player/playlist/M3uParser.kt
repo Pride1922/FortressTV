@@ -1,14 +1,20 @@
 package com.fortresstv.player.playlist
 
 object M3uParser {
+    private const val MAX_CHANNELS = 250_000
+    private const val MAX_LINE_CHARS = 1024 * 1024
     private val attributePattern = Regex("""([\w-]+)\s*=\s*"([^"]*)"""")
 
-    fun parse(content: String): Playlist {
+    fun parse(content: String): Playlist = parse(content.reader())
+
+    fun parse(reader: java.io.Reader): Playlist {
         val channels = mutableListOf<PlaylistChannel>()
         var pendingInfo: ChannelInfo? = null
         var pendingGroup: String? = null
 
-        content.lineSequence().forEach { rawLine ->
+        val lines = (reader as? java.io.BufferedReader ?: reader.buffered()).lineSequence()
+        lines.forEach { rawLine ->
+            require(rawLine.length <= MAX_LINE_CHARS) { "Playlist line exceeds the 1 MB safety limit" }
             val line = rawLine.trim().removePrefix("\uFEFF")
             when {
                 line.startsWith("#EXTINF:", ignoreCase = true) -> {
@@ -21,6 +27,7 @@ object M3uParser {
                 }
 
                 line.isNotEmpty() && !line.startsWith('#') -> {
+                    require(channels.size < MAX_CHANNELS) { "Playlist exceeds the 250,000 channel safety limit" }
                     val info = pendingInfo ?: ChannelInfo(name = line)
                     val channel = PlaylistChannel(
                         position = channels.size,

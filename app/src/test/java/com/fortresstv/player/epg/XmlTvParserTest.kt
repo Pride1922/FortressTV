@@ -3,8 +3,18 @@ package com.fortresstv.player.epg
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.junit.Assert.assertThrows
 
 class XmlTvParserTest {
+    @Test
+    fun rejectsDoctypeAndExternalEntities() {
+        val xml = """<!DOCTYPE tv [<!ENTITY local SYSTEM "file:///etc/passwd">]>
+            <tv><channel id="bad"><display-name>&local;</display-name></channel></tv>"""
+
+        assertThrows(Exception::class.java) {
+            XmlTvParser.parse(xml.byteInputStream())
+        }
+    }
     @Test
     fun parsesChannelAndProgrammeByExactId() {
         val xml = """

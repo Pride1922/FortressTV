@@ -45,9 +45,9 @@ class TransferWebPageTest {
 
     @Test
     fun htmlExplainsThePrivateLocalConnection() {
-        assertTrue(html.contains("Private connection"))
-        assertTrue(html.contains("Ligação privada"))
-        assertTrue(html.contains("No cloud servers"))
+        assertTrue(html.contains("Encrypted local transfer"))
+        assertTrue(html.contains("Transferência local encriptada"))
+        assertTrue(html.contains("encrypted before transmission"))
         assertTrue(html.contains("transfer-card"))
     }
 

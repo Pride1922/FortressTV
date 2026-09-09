@@ -21,11 +21,12 @@ class UnsupportedBackupVersionException(val fileVersion: Int) : Exception("Unsup
 
 object BackupCrypto {
     private val MAGIC_HEADER = byteArrayOf(0x46, 0x54, 0x56, 0x42) // "FTVB"
-    private const val FILE_VERSION = 1
+    private const val CURRENT_FILE_VERSION = 2
     private const val SALT_SIZE = 16
     private const val IV_SIZE = 12
     private const val KEY_SIZE_BITS = 256
-    private const val PBKDF2_ITERATIONS = 100_000
+    private const val V1_PBKDF2_ITERATIONS = 100_000
+    private const val V2_PBKDF2_ITERATIONS = 600_000
     private const val TAG_SIZE_BITS = 128
 
     private val secureRandom = SecureRandom()
@@ -34,14 +35,14 @@ object BackupCrypto {
         val salt = ByteArray(SALT_SIZE).apply { secureRandom.nextBytes(this) }
         val iv = ByteArray(IV_SIZE).apply { secureRandom.nextBytes(this) }
 
-        val secretKey = deriveKey(passwordChars, salt)
+        val secretKey = deriveKey(passwordChars, salt, V2_PBKDF2_ITERATIONS)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(TAG_SIZE_BITS, iv))
         val cipherText = cipher.doFinal(plainTextBytes)
 
         val dataOut = DataOutputStream(outputStream)
         dataOut.write(MAGIC_HEADER)
-        dataOut.writeByte(FILE_VERSION)
+        dataOut.writeByte(CURRENT_FILE_VERSION)
         dataOut.write(salt)
         dataOut.write(iv)
         dataOut.writeInt(cipherText.size)
@@ -70,7 +71,7 @@ object BackupCrypto {
         }
 
         val version = dataIn.readByte().toInt()
-        if (version != FILE_VERSION) {
+        if (version !in 1..CURRENT_FILE_VERSION) {
             throw UnsupportedBackupVersionException(version)
         }
 
@@ -87,7 +88,8 @@ object BackupCrypto {
         val cipherText = ByteArray(cipherTextLength)
         dataIn.readFully(cipherText)
 
-        val secretKey = deriveKey(passwordChars, salt)
+        val iterations = if (version == 1) V1_PBKDF2_ITERATIONS else V2_PBKDF2_ITERATIONS
+        val secretKey = deriveKey(passwordChars, salt, iterations)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(TAG_SIZE_BITS, iv))
 
@@ -104,8 +106,8 @@ object BackupCrypto {
         return decrypt(ByteArrayInputStream(encryptedBytes), passwordChars)
     }
 
-    private fun deriveKey(passwordChars: CharArray, salt: ByteArray): SecretKeySpec {
-        val spec = PBEKeySpec(passwordChars, salt, PBKDF2_ITERATIONS, KEY_SIZE_BITS)
+    private fun deriveKey(passwordChars: CharArray, salt: ByteArray, iterations: Int): SecretKeySpec {
+        val spec = PBEKeySpec(passwordChars, salt, iterations, KEY_SIZE_BITS)
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
         val keyBytes = factory.generateSecret(spec).encoded
         return SecretKeySpec(keyBytes, "AES")

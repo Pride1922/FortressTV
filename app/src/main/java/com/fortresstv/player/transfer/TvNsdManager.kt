@@ -131,7 +131,7 @@ class TvNsdManager(context: Context) {
                     listOfNotNull(serviceInfo.host)
                 }
                 val protocol = serviceInfo.attributes["protocol"]
-                    ?.toString(Charsets.UTF_8)?.toIntOrNull() ?: TRANSFER_PROTOCOL_VERSION
+                    ?.toString(Charsets.UTF_8)?.toIntOrNull() ?: 1
                 if (addresses.isNotEmpty() && serviceInfo.port > 0) {
                     synchronized(found) {
                         found[serviceInfo.serviceName] = DiscoveredFortressTv(

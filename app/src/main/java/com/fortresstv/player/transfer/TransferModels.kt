@@ -6,7 +6,7 @@ import com.fortresstv.player.playlist.PlaylistProfile
 // Protocol version
 // ---------------------------------------------------------------------------
 
-const val TRANSFER_PROTOCOL_VERSION = 1
+const val TRANSFER_PROTOCOL_VERSION = 2
 
 // ---------------------------------------------------------------------------
 // Incoming payload from phone/browser
