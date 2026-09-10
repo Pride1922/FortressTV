@@ -28,6 +28,14 @@ class DirectTransferLinkTest {
     }
 
     @Test
+    fun acceptsSeparateBackupKeyAndRejectsMalformedKeys() {
+        val prefix = "fortresstv://send?endpoint=http%3A%2F%2F192.168.1.50%3A8080&token=$token"
+        val key = "ab".repeat(32)
+        assertEquals(key, DirectTransferLink.parse("$prefix&backupKey=$key")?.backupKey)
+        assertNull(DirectTransferLink.parse("$prefix&backupKey=invalid"))
+    }
+
+    @Test
     fun rejectsHttpsEndpoint() {
         assertNull(DirectTransferLink.parse(
             "fortresstv://send?endpoint=https%3A%2F%2F192.168.1.50%3A8080&token=$token"

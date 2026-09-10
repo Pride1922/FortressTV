@@ -24,6 +24,10 @@ Never rename the published APK. Nextcloud must overwrite `fortresstv.apk` so the
 
 - Preserve user changes and do not overwrite unrelated work.
 - Use `rg` for repository searches and `apply_patch` for manual file edits.
+- Infer routine implementation details from the repository and continue through verification. Ask a focused question only when the answer would materially change the product behavior or expand the authorized scope.
+- Keep responses concise and lead with the result. Use lists or tables only when they make sequential or comparative information clearer.
+- Calibrate verification to the change. Run the required checks once after the implementation is stable; repeat or broaden them only after further changes, failures, or unresolved risk.
+- Delegate independent work to subagents only when the user requests delegation or the active agent instructions explicitly allow it.
 - Do not commit, push, install to a device, publish an APK, or modify OTA metadata unless the user explicitly requests that action.
 - Never put playlist URLs, credentials, tokens, signing passwords, private EPG links, or provider data in Git, logs, tests, screenshots, or documentation.
 - Keep `keystore.properties` and signing material private and untracked.
@@ -102,4 +106,3 @@ Only release when explicitly requested.
 9. Report the version, version code, commit, APK path, size, and SHA-256.
 
 Do not install or push a release to a tablet unless the user separately requests it.
-

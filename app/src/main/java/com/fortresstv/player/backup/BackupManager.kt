@@ -41,7 +41,8 @@ class BackupManager(
             activePlaylistId = sourceSettingsStore.getActivePlaylistId(),
             preferredAudioLanguage = sourceSettingsStore.preferredAudioLanguage(),
             preferredSubtitleLanguage = sourceSettingsStore.preferredSubtitleLanguage(),
-            subtitleFallbackEnglish = sourceSettingsStore.subtitleFallbackEnglish()
+            subtitleFallbackEnglish = sourceSettingsStore.subtitleFallbackEnglish(),
+            epgLoadedDays = sourceSettingsStore.epgLoadedDays()
         )
 
         val hiddenCategories = mutableMapOf<String, Set<String>>()
@@ -131,6 +132,7 @@ class BackupManager(
             sourceSettingsStore.clearEpg()
         }
         sourceSettingsStore.saveEpgTimeShiftHours(s.epgTimeShiftHours)
+        sourceSettingsStore.saveEpgLoadedDays(s.epgLoadedDays)
 
         // 2. Playlists
         val existingPlaylists = if (merge) sourceSettingsStore.getPlaylists() else emptyList()
@@ -142,8 +144,11 @@ class BackupManager(
         }
 
         // Save playlists
-        combinedPlaylists.forEach { profile ->
-            sourceSettingsStore.savePlaylistProfile(profile)
+        if (merge) {
+            combinedPlaylists.forEach(sourceSettingsStore::savePlaylistProfile)
+        } else {
+            sourceSettingsStore.replacePlaylists(combinedPlaylists)
+            userLibraryStore.clearForRestore()
         }
 
         if (s.activePlaylistId != null && combinedPlaylists.any { it.id == s.activePlaylistId }) {
@@ -220,6 +225,7 @@ class BackupManager(
                 put("preferredAudioLanguage", payload.settings.preferredAudioLanguage)
                 put("preferredSubtitleLanguage", payload.settings.preferredSubtitleLanguage)
                 put("subtitleFallbackEnglish", payload.settings.subtitleFallbackEnglish)
+                put("epgLoadedDays", payload.settings.epgLoadedDays)
 
                 if (payload.settings.epgSource != null) {
                     val epgObj = JSONObject().apply {
@@ -335,7 +341,8 @@ class BackupManager(
                 activePlaylistId = if (settingsObj.isNull("activePlaylistId")) null else settingsObj.optString("activePlaylistId"),
                 preferredAudioLanguage = settingsObj.optString("preferredAudioLanguage", "default"),
                 preferredSubtitleLanguage = settingsObj.optString("preferredSubtitleLanguage", "off"),
-                subtitleFallbackEnglish = settingsObj.optBoolean("subtitleFallbackEnglish", true)
+                subtitleFallbackEnglish = settingsObj.optBoolean("subtitleFallbackEnglish", true),
+                epgLoadedDays = settingsObj.optInt("epgLoadedDays", 3).coerceIn(1, 7)
             )
 
             // Playlists

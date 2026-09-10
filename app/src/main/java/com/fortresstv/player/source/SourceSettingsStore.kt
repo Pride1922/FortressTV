@@ -78,6 +78,7 @@ class SourceSettingsStore(context: Context) {
         list
     }.getOrElse { emptyList() }
 
+    @Synchronized
     fun savePlaylistProfile(profile: PlaylistProfile) {
         val current = getPlaylists().toMutableList()
         val index = current.indexOfFirst { it.id == profile.id }
@@ -90,6 +91,12 @@ class SourceSettingsStore(context: Context) {
         if (getActivePlaylistId() == null) {
             setActivePlaylistId(profile.id)
         }
+    }
+
+    fun replacePlaylists(profiles: List<PlaylistProfile>) {
+        savePlaylistsList(profiles)
+        clearSource("playlist")
+        preferences.edit().remove("active_playlist_id").apply()
     }
 
     fun deletePlaylistProfile(id: String) {

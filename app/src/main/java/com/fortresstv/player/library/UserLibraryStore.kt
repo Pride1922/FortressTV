@@ -8,6 +8,10 @@ import com.fortresstv.player.xtream.XtreamSeries
 class UserLibraryStore(context: Context) {
     private val preferences = context.getSharedPreferences("fortress_user_library", Context.MODE_PRIVATE)
 
+    fun clearForRestore() {
+        preferences.edit().clear().apply()
+    }
+
     fun favoriteChannelIds(): Set<String> =
         preferences.getStringSet(KEY_FAVORITE_CHANNELS, emptySet()).orEmpty().toSet()
 

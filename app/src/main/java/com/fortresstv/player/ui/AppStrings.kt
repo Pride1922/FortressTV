@@ -321,6 +321,11 @@ interface Strings {
     val backupPassword: String
     val enterBackupPassword: String
     val confirmBackupPassword: String
+    val showPassword: String
+    val transferPairedBackup: String
+    val transferPairedRestore: String
+    val transferScanWithApp: String
+    val hidePassword: String
     val backupPasswordExplanation: String
     val backupPasswordRequired: String
     val backupPasswordMismatch: String
@@ -381,6 +386,7 @@ interface Strings {
     val transferBackupExplanation: String
     val transferBackupPasswordDesc: String
     val transferBackupReceived: String
+    val transferQrRequiredForSource: String
 }
 
 object EnglishStrings : Strings {
@@ -682,6 +688,11 @@ object EnglishStrings : Strings {
     override val backupPassword = "Backup Password"
     override val enterBackupPassword = "Enter backup password"
     override val confirmBackupPassword = "Confirm backup password"
+    override val showPassword = "Show password"
+    override val transferPairedBackup = "Send playlists, EPG settings, preferences and your library. QR pairing encrypts the backup automatically; no password typing is needed on the TV. Local source files must be selected again on the receiving device."
+    override val transferPairedRestore = "Replace this device’s playlists, settings, favourites and watch progress with the backup from your phone?"
+    override val transferScanWithApp = "Scan with your phone to open FortressTV and send a backup. Both devices must be on the same local network."
+    override val hidePassword = "Hide password"
     override val backupPasswordExplanation = "This password encrypts your playlist URLs, credentials, and settings using AES-256-GCM. Keep it safe to restore on another device."
     override val backupPasswordRequired = "Please enter a password"
     override val backupPasswordMismatch = "Passwords do not match"
@@ -743,6 +754,7 @@ object EnglishStrings : Strings {
     override val transferBackupExplanation = "Send an encrypted full backup containing sources, settings, favourites, and viewing data."
     override val transferBackupPasswordDesc = "You will enter this password again on the TV. Minimum 8 characters."
     override val transferBackupReceived = "Encrypted backup received"
+    override val transferQrRequiredForSource = "Sending an individual source requires scanning the TV's QR code to protect your credentials. Switch to 'Full backup' to push using only the 6-digit code."
 }
 
 object PortugueseStrings : Strings {
@@ -1045,6 +1057,11 @@ object PortugueseStrings : Strings {
     override val backupPassword = "Palavra-passe da cópia de segurança"
     override val enterBackupPassword = "Introduza a palavra-passe"
     override val confirmBackupPassword = "Confirme a palavra-passe"
+    override val showPassword = "Mostrar palavra-passe"
+    override val transferPairedBackup = "Envie listas, definições de EPG, preferências e a sua biblioteca. O emparelhamento por QR encripta a cópia automaticamente, sem introduzir uma palavra-passe na TV. Os ficheiros locais das origens têm de ser selecionados novamente no dispositivo de destino."
+    override val transferPairedRestore = "Substituir as listas, definições, favoritos e progresso de visualização deste dispositivo pela cópia do telemóvel?"
+    override val transferScanWithApp = "Leia o código com o telemóvel para abrir o FortressTV e enviar uma cópia. Ambos os dispositivos têm de estar na mesma rede local."
+    override val hidePassword = "Ocultar palavra-passe"
     override val backupPasswordExplanation = "Esta palavra-passe encripta os URLs das listas, credenciais e definições com AES-256-GCM. Guarde-a num local seguro para restaurar noutro dispositivo."
     override val backupPasswordRequired = "Por favor introduza uma palavra-passe"
     override val backupPasswordMismatch = "As palavras-passe não coincidem"
@@ -1106,6 +1123,7 @@ object PortugueseStrings : Strings {
     override val transferBackupExplanation = "Envie uma cópia completa encriptada com fontes, definições, favoritos e dados de visualização."
     override val transferBackupPasswordDesc = "Introduzirá novamente esta palavra-passe na TV. Mínimo de 8 caracteres."
     override val transferBackupReceived = "Cópia encriptada recebida"
+    override val transferQrRequiredForSource = "O envio de uma origem individual requer a leitura do código QR na TV para proteger as suas credenciais. Mude para 'Cópia completa' para enviar apenas com o código de 6 dígitos."
 }
 
 val LocalAppStrings = staticCompositionLocalOf<Strings> { EnglishStrings }

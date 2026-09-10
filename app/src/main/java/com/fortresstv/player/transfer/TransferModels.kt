@@ -36,7 +36,11 @@ data class TransferPreview(
     val payload: TransferSourcePayload
 )
 
-data class TransferBackupPayload(val fileName: String, val bytes: ByteArray)
+data class TransferBackupPayload(
+    val fileName: String,
+    val bytes: ByteArray,
+    val pairingPassword: String? = null
+)
 
 // ---------------------------------------------------------------------------
 // Session lifecycle

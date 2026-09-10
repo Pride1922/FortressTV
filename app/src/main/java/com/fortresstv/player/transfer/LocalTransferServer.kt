@@ -49,6 +49,9 @@ class LocalTransferServer(
     /** Hex token embedded in QR URL fragment: #token=<hex> */
     val sessionToken: String
 
+    // Shared only through the QR code, never through HTTP headers or discovery.
+    val backupKey: String = ByteArray(32).also { SecureRandom().nextBytes(it) }.toHex()
+
     /** 6-digit numeric PIN for manual URL entry */
     val sessionPin: String
 
@@ -259,7 +262,13 @@ class LocalTransferServer(
             ?.substringAfterLast('/')?.substringAfterLast('\\')
             ?.take(120)?.takeIf { it.endsWith(".ftv", ignoreCase = true) }
             ?: "fortresstv-transfer.ftv"
-        val result = TransferRequestResult.AcceptedBackup(TransferBackupPayload(fileName, bytes))
+        val pairedBackup = session.headers["x-fortress-backup-pairing"] == "v1"
+        if (pairedBackup && authHeader?.startsWith("Bearer ") != true) {
+            return jsonError(401, "QR pairing required")
+        }
+        val result = TransferRequestResult.AcceptedBackup(
+            TransferBackupPayload(fileName, bytes, if (pairedBackup) backupKey else null)
+        )
         consumed.set(true)
         publish(result)
         return jsonOk("{\"success\":true}")

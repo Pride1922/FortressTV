@@ -15,7 +15,8 @@ data class BackupSettings(
     val activePlaylistId: String?,
     val preferredAudioLanguage: String = "default",
     val preferredSubtitleLanguage: String = "off",
-    val subtitleFallbackEnglish: Boolean = true
+    val subtitleFallbackEnglish: Boolean = true,
+    val epgLoadedDays: Int = 3
 )
 
 data class BackupLibrary(

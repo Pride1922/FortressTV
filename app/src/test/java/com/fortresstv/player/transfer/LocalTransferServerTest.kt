@@ -36,6 +36,24 @@ class LocalTransferServerTest {
         server.stop()
     }
 
+    @Test
+    fun pairedBackupRoundTripsWithoutSendingItsPassword() {
+        val plain = "{\"settings\":\"test\"}".toByteArray()
+        val output = java.io.ByteArrayOutputStream()
+        com.fortresstv.player.backup.BackupCrypto.encrypt(plain, server.backupKey.toCharArray(), output)
+        val target = DiscoveredFortressTv(
+            "Test TV", listOf(java.net.InetAddress.getByName("127.0.0.1")),
+            server.listeningPort, TRANSFER_PROTOCOL_VERSION, server.sessionToken, server.backupKey
+        )
+        assertEquals(NativeSendResult.Success, NativeTransferClient.sendBackup(target, output.toByteArray(), ""))
+        val payload = (receivedResult as TransferRequestResult.AcceptedBackup).payload
+        assertEquals(server.backupKey, payload.pairingPassword)
+        org.junit.Assert.assertArrayEquals(plain, com.fortresstv.player.backup.BackupCrypto.decrypt(
+            payload.bytes.inputStream(), payload.pairingPassword!!.toCharArray()
+        ))
+        assertTrue(NativeTransferClient.sendBackup(target, output.toByteArray(), "") is NativeSendResult.Error)
+    }
+
     // ----------------------------------------------------------------
     // Helpers
     // ----------------------------------------------------------------

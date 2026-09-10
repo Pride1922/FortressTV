@@ -140,3 +140,40 @@ be validated without compromising those behaviours.
 Before publishing, test fast vertical flings with EPG and logos loaded, open and scroll the
 programme guide, change guide days, open the fullscreen channel drawer, and confirm that
 playback is not interrupted while browsing.
+
+### RC3 automated profile (2026-09-09)
+
+Profiled `1.0.0-RC3` (`versionCode 28`, commit `7f105675`) on the Android 16 POCO
+`25099RP08G`. The tablet started at 28.0 C and finished at 30.0 C with no reported thermal
+throttling. The configured installation and caches were preserved. Each valid macrobenchmark
+used five iterations.
+
+| Scenario | Result | P50 | P95 | P99 | P95 overrun | Gate |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Cold startup | 552.8 ms median | - | - | - | - | Pass (<650 ms) |
+| Warm startup | 159.1 ms median | - | - | - | - | Pass (<225 ms) |
+| Channel-list fling | Valid | 4.3 ms | 6.6 ms | 9.8 ms | 0.6 ms | Pass |
+| EPG open | Valid | 3.3 ms | 10.8 ms | 15.9 ms | 7.8 ms | Pass |
+| EPG single fling | Valid | 4.8 ms | 11.0 ms | 19.7 ms | 5.2 ms | Pass |
+| EPG vertical stress | Valid | 4.9 ms | 10.3 ms | 15.0 ms | 4.6 ms | Pass |
+| EPG horizontal stress | Valid | 5.9 ms | 14.2 ms | 25.3 ms | 9.7 ms | Pass |
+| Movies open, controlled rerun | Valid | 4.3 ms | 15.8 ms | 22.6 ms | 12.7 ms | Pass |
+| Series open | Valid | 4.0 ms | 18.2 ms | 22.2 ms | 13.4 ms | Pass |
+| Movies grid fling | No rendered frames | - | - | - | - | Not measured |
+| Series grid fling | No rendered frames | - | - | - | - | Not measured |
+
+The first Movies-open group measured 20.5 ms P95. Its required controlled rerun measured
+15.8 ms P95, below the 17.3 ms catalogue baseline, so the first result is treated as run
+variance. Both catalogue fling scenarios reached a non-scrollable grid state and produced no
+RenderThread slices; these are invalid measurements rather than application failures.
+
+The settled app process immediately after restoring and launching the signed RC3 release used
+220,283 KB total PSS and 350,212 KB total RSS. This is a reference point only, not a leak result.
+A playback channel must be selected before the planned 60-minute memory soak, channel-switch,
+and fullscreen/PiP stress checks can be completed.
+
+Automated profile verdict: **PASS WITH COVERAGE GAPS**. All valid startup and frame-timing
+measurements passed the absolute RC3 gates. Remaining release evidence is the hands-on playback
+and PiP stress pass, the long memory soak, and catalogue fling timing with sufficiently large
+visible Movies and Series grids. The controlled Movies rerun traces are stored under
+`macrobenchmark/build/outputs/manual/rc3-2026-09-09/`.

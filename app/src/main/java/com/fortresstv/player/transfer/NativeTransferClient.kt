@@ -62,6 +62,7 @@ object NativeTransferClient {
                 connection.setRequestProperty("Content-Type", "application/octet-stream")
                 applyAuthentication(connection, tv, pin)
                 connection.setRequestProperty("X-Fortress-Filename", "fortresstv-transfer.ftv")
+                if (tv.backupKey != null) connection.setRequestProperty("X-Fortress-Backup-Pairing", "v1")
                 connection.outputStream.use { it.write(bytes) }
                 if (connection.responseCode in 200..299) NativeSendResult.Success
                 else NativeSendResult.Error("TV rejected the transfer (${connection.responseCode})")

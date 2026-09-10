@@ -2,12 +2,14 @@ package com.fortresstv.player.epg
 
 import android.content.Context
 import org.xml.sax.Attributes
+import org.xml.sax.InputSource
+import org.xml.sax.SAXException
+import org.xml.sax.ext.DefaultHandler2
 import org.xml.sax.helpers.DefaultHandler
 import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
-import javax.xml.XMLConstants
 import javax.xml.parsers.SAXParserFactory
 
 object XmlTvParser {
@@ -19,7 +21,7 @@ object XmlTvParser {
         loadedDays: Int = DEFAULT_LOADED_DAYS
     ): EpgGuide {
         val handler = InMemXmlTvHandler(referenceTimeMillis, loadedDays.coerceIn(1, 7))
-        secureSaxParserFactory().newSAXParser().parse(input, handler)
+        parseXml(input, handler)
         return handler.guide()
     }
 
@@ -52,7 +54,7 @@ object XmlTvParser {
                 loadedDays = loadedDays.coerceIn(1, 7),
                 zone = zone
             )
-            secureSaxParserFactory().newSAXParser().parse(input, handler)
+            parseXml(input, handler)
 
             return session.commit(handler.channels)
         } catch (t: Throwable) {
@@ -61,14 +63,24 @@ object XmlTvParser {
         }
     }
 
-    private fun secureSaxParserFactory(): SAXParserFactory = SAXParserFactory.newInstance().apply {
-        isNamespaceAware = false
-        isXIncludeAware = false
-        setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        setFeature("http://xml.org/sax/features/external-general-entities", false)
-        setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-        setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+    private fun parseXml(input: InputStream, handler: DefaultHandler) {
+        // Android's Expat factory does not implement XInclude configuration or
+        // Xerces-specific features. Use the SAX features it supports, and reject
+        // every DTD before declarations or entities can be processed.
+        val reader = SAXParserFactory.newInstance().apply {
+            isNamespaceAware = false
+        }.newSAXParser().xmlReader
+        reader.setFeature("http://xml.org/sax/features/external-general-entities", false)
+        reader.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        reader.setProperty("http://xml.org/sax/properties/lexical-handler", object : DefaultHandler2() {
+            override fun startDTD(name: String?, publicId: String?, systemId: String?) {
+                throw SAXException("DOCTYPE is not allowed in XMLTV")
+            }
+        })
+        reader.setEntityResolver { _, _ -> throw SAXException("External entities are not allowed in XMLTV") }
+        reader.contentHandler = handler
+        reader.errorHandler = handler
+        reader.parse(InputSource(input))
     }
 
     private class StreamingXmlTvHandler(

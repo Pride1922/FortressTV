@@ -23,7 +23,8 @@ class BackupManagerTest {
             parentalPin = "1234",
             epgSource = ContentSource.RemoteUrl("https://example.com/epg.xml", "My EPG"),
             epgTimeShiftHours = 2,
-            activePlaylistId = "profile-1"
+            activePlaylistId = "profile-1",
+            epgLoadedDays = 5
         )
 
         val playlists = listOf(
@@ -107,6 +108,7 @@ class BackupManagerTest {
         assertEquals(payload.settings.parentalControlEnabled, decoded.settings.parentalControlEnabled)
         assertEquals(payload.settings.parentalPin, decoded.settings.parentalPin)
         assertEquals(payload.settings.epgTimeShiftHours, decoded.settings.epgTimeShiftHours)
+        assertEquals(5, decoded.settings.epgLoadedDays)
         assertEquals(payload.settings.activePlaylistId, decoded.settings.activePlaylistId)
 
         assertEquals(2, decoded.playlists.size)

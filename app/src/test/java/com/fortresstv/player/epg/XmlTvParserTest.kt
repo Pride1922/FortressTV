@@ -11,7 +11,16 @@ class XmlTvParserTest {
         val xml = """<!DOCTYPE tv [<!ENTITY local SYSTEM "file:///etc/passwd">]>
             <tv><channel id="bad"><display-name>&local;</display-name></channel></tv>"""
 
-        assertThrows(Exception::class.java) {
+        assertThrows(org.xml.sax.SAXException::class.java) {
+            XmlTvParser.parse(xml.byteInputStream())
+        }
+    }
+
+    @Test
+    fun rejectsInternalEntityDeclarations() {
+        val xml = """<!DOCTYPE tv [<!ENTITY title "Expanded title">]>
+            <tv><channel id="test"><display-name>&title;</display-name></channel></tv>"""
+        assertThrows(org.xml.sax.SAXException::class.java) {
             XmlTvParser.parse(xml.byteInputStream())
         }
     }

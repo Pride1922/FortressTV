@@ -1248,11 +1248,15 @@ private fun FortressTVApp(
                             // Clear existing cache memory and trigger reload
                             loadedPlaylists.clear()
                             xtreamCatalogs.clear()
-                            val nextActive = settings.getActivePlaylist()
-                            activeProfile = nextActive
-                            if (nextActive != null) {
-                                if (nextActive.source is ContentSource.Xtream) loadXtreamProfile(nextActive, forceRefresh = true)
-                                else loadPlaylistProfile(nextActive, forceRefresh = true)
+                            playlist = null
+                            epgGuide = null
+                            playlistRetryJobs.values.forEach { it.cancel() }
+                            playlistRetryJobs.clear()
+                            val enabledProfiles = allPlaylists.filter { it.enabled }.sortedBy { it.order }
+                            activeProfile = enabledProfiles.firstOrNull()
+                            enabledProfiles.forEach { profile ->
+                                if (profile.source is ContentSource.Xtream) loadXtreamProfile(profile, forceRefresh = true)
+                                else loadPlaylistProfile(profile, forceRefresh = true)
                             }
                             val savedEpg = settings.epgSource()
                             if (savedEpg != null) {
@@ -1267,14 +1271,17 @@ private fun FortressTVApp(
                         }
                         is BackupRestoreResult.InvalidPassword -> {
                             isRestoringBackup = false
+                            showRestoreBackupPasswordDialog = true
                             restoreErrorMessage = strings.backupIncorrectPassword
                         }
                         is BackupRestoreResult.InvalidFormat -> {
                             isRestoringBackup = false
+                            showRestoreBackupPasswordDialog = true
                             restoreErrorMessage = strings.backupCorruptFile
                         }
                         is BackupRestoreResult.Error -> {
                             isRestoringBackup = false
+                            showRestoreBackupPasswordDialog = true
                             restoreErrorMessage = strings.backupFailed(result.message)
                         }
                     }
@@ -1668,8 +1675,7 @@ private fun FortressTVApp(
                     addPlaylistFilePicker.launch(arrayOf("audio/x-mpegurl", "application/x-mpegURL", "text/*", "*/*"))
                 },
                   onSendFromPhone = {
-                    if (formFactor.isTelevision) showTransferDialog = true
-                    else showSendToTvDialog = true
+                    showTransferDialog = true
                   }
               )
           }
@@ -1699,7 +1705,11 @@ private fun FortressTVApp(
                                 withContext(Dispatchers.Main) {
                                     pendingRestoreUri = Uri.fromFile(file)
                                     restoreErrorMessage = null
-                                    showRestoreBackupPasswordDialog = true
+                                    if (payload.pairingPassword != null) {
+                                        executeRestore(payload.pairingPassword, merge = false)
+                                    } else {
+                                        showRestoreBackupPasswordDialog = true
+                                    }
                                 }
                             }
                             .onFailure { file.delete() }
@@ -13278,8 +13288,8 @@ private fun AddPlaylistDialog(
                     Spacer(Modifier.height(10.dp))
                     SourceMethodCard(
                         icon = Icons.Default.PhoneAndroid,
-                        title = if (isTv) strings.transferSendFromPhone else strings.transferSendToTv,
-                        description = if (isTv) strings.transferSendFromPhoneDesc else strings.transferSendToTvDesc,
+                        title = strings.transferSendFromPhone,
+                        description = strings.transferSendFromPhoneDesc,
                         onClick = {
                             onDismiss()
                             onSendFromPhone()
@@ -14949,6 +14959,7 @@ private fun CreateBackupDialog(
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var weakPasswordAcknowledged by remember { mutableStateOf(false) }
 
@@ -15041,7 +15052,7 @@ private fun CreateBackupDialog(
                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(
                                     if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = null,
+                                    contentDescription = if (passwordVisible) strings.hidePassword else strings.showPassword,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -15056,7 +15067,16 @@ private fun CreateBackupDialog(
                         },
                         label = { Text(strings.confirmBackupPassword) },
                         singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                                Icon(
+                                    if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (confirmPasswordVisible) strings.hidePassword else strings.showPassword,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
                             onDone = {
@@ -15603,7 +15623,8 @@ private fun TvReceiveSourceDialog(
                             // QR Code
                             val qrBitmap = remember(serverUrl) {
                                 val fullUrl = if (serverUrl.isNotBlank())
-                                    "$serverUrl/#token=${server.value?.sessionToken.orEmpty()}"
+                                    "fortresstv://send?endpoint=${java.net.URLEncoder.encode(serverUrl, "UTF-8")}" +
+                                        "&token=${server.value?.sessionToken.orEmpty()}&backupKey=${server.value?.backupKey.orEmpty()}"
                                 else null
                                 fullUrl?.let {
                                     com.fortresstv.player.transfer.QrCodeGenerator.generateImageBitmap(it, 400)
@@ -15628,7 +15649,7 @@ private fun TvReceiveSourceDialog(
                             }
                             Spacer(Modifier.height(16.dp))
                             Text(
-                                strings.transferScanQr,
+                                strings.transferScanWithApp,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -15763,7 +15784,7 @@ private fun TvReceiveSourceDialog(
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                strings.restoreModePrompt,
+                                if (state.payload.pairingPassword != null) strings.transferPairedRestore else strings.restoreModePrompt,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
                             )
@@ -15774,7 +15795,7 @@ private fun TvReceiveSourceDialog(
                                     .fillMaxWidth()
                                     .focusRequester(restoreTransferredBackupFocusRequester)
                                     .tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
-                            ) { Text(strings.restoreFromBackup) }
+                            ) { Text(if (state.payload.pairingPassword != null) strings.restoreModeReplace else strings.restoreFromBackup) }
                             Spacer(Modifier.height(8.dp))
                             TextButton(
                                 onClick = onDismiss,
