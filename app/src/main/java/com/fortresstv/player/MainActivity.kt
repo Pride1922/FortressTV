@@ -5785,8 +5785,10 @@ internal fun shouldStartNextEpisodeCountdown(
     autoPlayEnabled: Boolean,
     dismissed: Boolean,
     nextEpisodeAvailable: Boolean,
-    currentCountdown: Int
+    currentCountdown: Int,
+    stopAtEnd: Boolean = false
 ): Boolean = autoPlayEnabled &&
+    !stopAtEnd &&
     !dismissed &&
     nextEpisodeAvailable &&
     currentCountdown < 0 &&
@@ -6016,12 +6018,15 @@ private fun VodPlayerDialog(
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
 
-    LaunchedEffect(sleepTimerEndEpochMs, sleepTimerMinutes) {
+    // Episodes replace the player, but must retain the original timer deadline.
+    LaunchedEffect(player, sleepTimerEndEpochMs, sleepTimerMinutes) {
         val targetEpoch = sleepTimerEndEpochMs
         if (targetEpoch != null) {
             while (true) {
                 val remainingMs = targetEpoch - System.currentTimeMillis()
                 if (remainingMs <= 0L) {
+                    autoPlayNext = false
+                    autoPlayCountdown = -1
                     Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
                     player.pause()
                     onDismiss()
@@ -6037,7 +6042,11 @@ private fun VodPlayerDialog(
         }
     }
 
-    LaunchedEffect(autoPlayCountdown, nextEpisode, isPlaying) {
+    LaunchedEffect(autoPlayCountdown, nextEpisode, isPlaying, sleepTimerMinutes) {
+        if (sleepTimerMinutes == -1) {
+            autoPlayCountdown = -1
+            return@LaunchedEffect
+        }
         if (autoPlayCountdown > 0 && isPlaying) {
             delay(1000)
             autoPlayCountdown--
@@ -6049,14 +6058,15 @@ private fun VodPlayerDialog(
         }
     }
 
-    LaunchedEffect(currentPositionMs, totalDurationMs, nextEpisode, autoPlayNext, autoPlayCountdownDismissed, isPlaying) {
+    LaunchedEffect(currentPositionMs, totalDurationMs, nextEpisode, autoPlayNext, autoPlayCountdownDismissed, isPlaying, sleepTimerMinutes) {
         if (isPlaying && shouldStartNextEpisodeCountdown(
                 positionMs = currentPositionMs,
                 durationMs = totalDurationMs,
                 autoPlayEnabled = autoPlayNext,
                 dismissed = autoPlayCountdownDismissed,
                 nextEpisodeAvailable = nextEpisode != null,
-                currentCountdown = autoPlayCountdown
+                currentCountdown = autoPlayCountdown,
+                stopAtEnd = sleepTimerMinutes == -1
             )
         ) {
             autoPlayCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS
@@ -9318,7 +9328,7 @@ private fun FullscreenPlayer(
             controlsVisible = false
         }
     }
-    LaunchedEffect(sleepTimerEndEpochMs, sleepTimerMinutes) {
+    LaunchedEffect(player, sleepTimerEndEpochMs, sleepTimerMinutes) {
         val targetEpoch = sleepTimerEndEpochMs
         if (targetEpoch != null) {
             while (true) {

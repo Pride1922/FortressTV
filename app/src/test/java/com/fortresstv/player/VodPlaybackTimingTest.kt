@@ -6,6 +6,20 @@ import org.junit.Test
 
 class VodPlaybackTimingTest {
     @Test
+    fun endOfEpisodeSleepTimerPreventsEarlyAutoplay() {
+        val duration = 30 * 60_000L
+        for (remaining in listOf(45_000L, 30_000L, 1L, 0L)) {
+            assertFalse(shouldStartNextEpisodeCountdown(
+                duration - remaining, duration, true, false, true, -1, stopAtEnd = true
+            ))
+        }
+        // Turning the timer off allows the normal countdown again.
+        assertTrue(shouldStartNextEpisodeCountdown(
+            duration - 30_000L, duration, true, false, true, -1, stopAtEnd = false
+        ))
+    }
+
+    @Test
     fun nextEpisodeCountdownStartsAtFortyFiveSecondsRemaining() {
         val duration = 30 * 60_000L
         assertFalse(shouldStartNextEpisodeCountdown(duration - 45_001L, duration, true, false, true, -1))
