@@ -44,4 +44,21 @@ class PlaybackResilienceTest {
         assert(stable.minBufferMs > automatic.minBufferMs)
         assert(stable.targetLiveOffsetMs!! > automatic.targetLiveOffsetMs!!)
     }
+
+    @Test
+    fun readyFreezeRequiresActiveVideoAndNetwork() {
+        assertEquals(true, ReadyFreezePolicy.shouldRecover(true, true, true, 12_000))
+        assertEquals(false, ReadyFreezePolicy.shouldRecover(false, true, true, 30_000))
+        assertEquals(false, ReadyFreezePolicy.shouldRecover(true, false, true, 30_000))
+        assertEquals(false, ReadyFreezePolicy.shouldRecover(true, true, false, 30_000))
+        assertEquals(false, ReadyFreezePolicy.shouldRecover(true, true, true, 11_999))
+    }
+
+    @Test
+    fun readyFreezeNoticeRequiresActiveVideoAndSustainedPause() {
+        assertEquals(true, ReadyFreezePolicy.shouldShowNotice(true, true, 3_500))
+        assertEquals(false, ReadyFreezePolicy.shouldShowNotice(false, true, 5_000))
+        assertEquals(false, ReadyFreezePolicy.shouldShowNotice(true, false, 5_000))
+        assertEquals(false, ReadyFreezePolicy.shouldShowNotice(true, true, 3_499))
+    }
 }

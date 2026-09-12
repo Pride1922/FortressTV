@@ -189,6 +189,7 @@ interface Strings {
     val aspectFit: String
     val playbackError: String
     val buildingPlaybackBuffer: String
+    val reconnecting: String
     val resumePlayback: String
     val resumePlaybackDescription: String
     val resume: String
@@ -226,11 +227,10 @@ interface Strings {
 
     val videoQuality: String
     val qualityAuto: String
-    val subtitleDelay: String
-    val subtitleDelayReset: String
+    val qualityAdaptive: String
     val goLive: String
-    val bufferBooster: String
-    val bufferBoosterDesc: String
+    fun liveBehind(seconds: Long): String
+    val liveSynchronized: String
     val streamResilience: String
 
     val audioAndSubtitlesDefaults: String
@@ -347,6 +347,11 @@ interface Strings {
     val ffmpegAttribution: String
     val viewSourceCode: String
     val appVersion: String
+    val noSourcesConfigured: String
+    val addSourceGettingStarted: String
+    fun versionLabel(version: String, code: Int): String
+    fun installedVersion(version: String): String
+    val directUrlPrivacyHint: String
     val checkForUpdates: String
     val checkingForUpdates: String
     val updateAvailable: String
@@ -622,6 +627,7 @@ object EnglishStrings : Strings {
     override val aspectFit = "Aspect: Fit"
     override val playbackError = "Unable to play this channel."
     override val buildingPlaybackBuffer = "Connection is unstable — building buffer…"
+    override val reconnecting = "Reconnecting…"
     override val resumePlayback = "Continue watching?"
     override val resumePlaybackDescription = "Resume from where you stopped or restart from the beginning."
     override val resume = "Resume"
@@ -659,11 +665,10 @@ object EnglishStrings : Strings {
 
     override val videoQuality = "Video Quality"
     override val qualityAuto = "Auto"
-    override val subtitleDelay = "Subtitle Delay"
-    override val subtitleDelayReset = "Reset"
+    override val qualityAdaptive = "Adaptive bitrate (ABR)"
     override val goLive = "Go Live"
-    override val bufferBooster = "Buffer Booster"
-    override val bufferBoosterDesc = "Increases stream buffer to 60s for unstable networks"
+    override fun liveBehind(seconds: Long) = "${seconds}s behind broadcast"
+    override val liveSynchronized = "Synchronized with live broadcast"
     override val streamResilience = "Stream Resilience"
 
     override val audioAndSubtitlesDefaults = "Audio & Subtitles Defaults"
@@ -780,6 +785,11 @@ object EnglishStrings : Strings {
     override val ffmpegAttribution = "FortressTV uses FFmpeg 6.0 under the LGPL v2.1 or later to decode otherwise unsupported MPEG audio. The corresponding source, licence, and build instructions are available from the public download link below."
     override val viewSourceCode = "View source and licences"
     override val appVersion = "Version 1.0.0"
+    override val noSourcesConfigured = "No sources configured"
+    override val addSourceGettingStarted = "Add your M3U / M3U8 URL or Xtream Codes server to get started."
+    override fun versionLabel(version: String, code: Int) = "Version $version ($code) · Pride1922"
+    override fun installedVersion(version: String) = "Installed: v$version"
+    override val directUrlPrivacyHint = "Enter a direct HTTP or HTTPS URL. It will be encrypted on this device."
 
     override val checkForUpdates = "Check for Updates"
     override val checkingForUpdates = "Checking for updates..."
@@ -1057,6 +1067,7 @@ object PortugueseStrings : Strings {
     override val aspectFit = "Proporção: Ajustar"
     override val playbackError = "Não foi possível reproduzir este canal."
     override val buildingPlaybackBuffer = "Ligação instável — a preparar a memória de reprodução…"
+    override val reconnecting = "A restabelecer ligação…"
     override val resumePlayback = "Continuar a ver?"
     override val resumePlaybackDescription = "Continue a partir de onde parou ou recomece do início."
     override val resume = "Continuar"
@@ -1094,11 +1105,10 @@ object PortugueseStrings : Strings {
 
     override val videoQuality = "Qualidade de vídeo"
     override val qualityAuto = "Automático"
-    override val subtitleDelay = "Atraso das legendas"
-    override val subtitleDelayReset = "Repor"
+    override val qualityAdaptive = "Taxa de bits adaptativa (ABR)"
     override val goLive = "Ir para Direto"
-    override val bufferBooster = "Reforço de Buffer"
-    override val bufferBoosterDesc = "Aumenta o buffer para 60s para ligações instáveis"
+    override fun liveBehind(seconds: Long) = "${seconds}s atrás da emissão"
+    override val liveSynchronized = "Sincronizado com a emissão em direto"
     override val streamResilience = "Resiliência do fluxo"
 
     override val audioAndSubtitlesDefaults = "Predefinições de Áudio e Legendas"
@@ -1215,6 +1225,11 @@ object PortugueseStrings : Strings {
     override val ffmpegAttribution = "O FortressTV utiliza o FFmpeg 6.0 sob a licença LGPL v2.1 ou posterior para descodificar áudio MPEG não suportado pelo dispositivo. O código-fonte correspondente, a licença e as instruções de compilação estão disponíveis através da ligação pública abaixo."
     override val viewSourceCode = "Ver código-fonte e licenças"
     override val appVersion = "Versão 1.0.0"
+    override val noSourcesConfigured = "Nenhuma fonte configurada"
+    override val addSourceGettingStarted = "Adicione o URL M3U / M3U8 ou o servidor Xtream Codes para começar."
+    override fun versionLabel(version: String, code: Int) = "Versão $version ($code) · Pride1922"
+    override fun installedVersion(version: String) = "Instalada: v$version"
+    override val directUrlPrivacyHint = "Introduza um URL HTTP ou HTTPS direto. Será encriptado neste dispositivo."
 
     override val checkForUpdates = "Verificar Atualizações"
     override val checkingForUpdates = "A verificar atualizações..."

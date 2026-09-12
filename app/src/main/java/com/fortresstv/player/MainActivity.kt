@@ -245,6 +245,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.isActive
 import com.fortresstv.player.playlist.M3uParser
 import com.fortresstv.player.playlist.Playlist
 import com.fortresstv.player.playlist.PlaylistChannel
@@ -260,6 +261,8 @@ import com.fortresstv.player.player.LocalPlaybackMode
 import com.fortresstv.player.player.PlaybackContentType
 import com.fortresstv.player.player.PlaybackMode
 import com.fortresstv.player.player.PlaybackTransferProgress
+import com.fortresstv.player.player.PlaybackFrameProgress
+import com.fortresstv.player.player.ReadyFreezePolicy
 import com.fortresstv.player.player.StallDecision
 import com.fortresstv.player.player.StallRecoveryPolicy
 import com.fortresstv.player.player.isPlaybackNetworkAvailable
@@ -4040,6 +4043,11 @@ private fun LibraryNavigationItem(
 
 private data class CatalogMovie(val catalog: XtreamCatalog, val movie: XtreamMovie)
 private data class CatalogSeries(val catalog: XtreamCatalog, val series: XtreamSeries)
+private data class HomeSearchResults(
+    val channels: List<PlaylistChannel> = emptyList(),
+    val movies: List<CatalogMovie> = emptyList(),
+    val series: List<CatalogSeries> = emptyList()
+)
 private data class CatalogCategory(
     val sourceId: String,
     val sourceName: String,
@@ -7946,8 +7954,6 @@ private fun PlayerControlsDrawer(
     val closeFocusRequester = remember { FocusRequester() }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    var subtitleDelayMs by remember { mutableLongStateOf(0L) }
-    var isBufferBoosterActive by remember { mutableStateOf(false) }
 
     val selectedSubtitle = subtitleTracks.firstOrNull { it.isSelected }
     val isAutoVideo = remember(player.trackSelectionParameters) {
@@ -8219,85 +8225,6 @@ private fun PlayerControlsDrawer(
                             }
                         }
 
-                        // Subtitle Delay Calibration (when subtitles are on)
-                        if (selectedSubtitle != null) {
-                            Spacer(Modifier.height(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = Color.White.copy(alpha = 0.04f),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            strings.subtitleDelay,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 13.sp,
-                                            color = Color.White
-                                        )
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
-                                        ) {
-                                            Text(
-                                                "${if (subtitleDelayMs > 0) "+" else ""}${String.format(Locale.ROOT, "%.1f", subtitleDelayMs / 1000f)}s",
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp,
-                                                style = TabularDigitsTextStyle,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Slider(
-                                        value = subtitleDelayMs.toFloat(),
-                                        onValueChange = {
-                                            subtitleDelayMs = (it / 100f).toLong() * 100L
-                                        },
-                                        valueRange = -5000f..5000f,
-                                        steps = 99,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        listOf(
-                                            "-500ms" to -500L,
-                                            "-100ms" to -100L,
-                                            strings.subtitleDelayReset to 0L,
-                                            "+100ms" to 100L,
-                                            "+500ms" to 500L
-                                        ).forEach { (chipLabel, delta) ->
-                                            Surface(
-                                                onClick = {
-                                                    subtitleDelayMs = if (delta == 0L) 0L else (subtitleDelayMs + delta).coerceIn(-5000L, 5000L)
-                                                },
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = if (delta == 0L) MaterialTheme.colorScheme.primaryContainer else Color.White.copy(alpha = 0.08f),
-                                                contentColor = if (delta == 0L) MaterialTheme.colorScheme.onPrimaryContainer else Color.White.copy(alpha = 0.8f),
-                                                modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp), scaleOnFocus = 1.08f)
-                                            ) {
-                                                Text(
-                                                    chipLabel,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     1 -> {
@@ -8334,7 +8261,7 @@ private fun PlayerControlsDrawer(
                                         fontSize = 13.sp
                                     )
                                     Text(
-                                        "Adaptive Bitrate (ABR)",
+                                        strings.qualityAdaptive,
                                         color = Color.White.copy(alpha = 0.5f),
                                         fontSize = 11.sp
                                     )
@@ -8428,7 +8355,7 @@ private fun PlayerControlsDrawer(
                                             color = Color.White
                                         )
                                         Text(
-                                            if (isDrifted) "${liveOffsetMs / 1000}s behind broadcast" else "Synchronized with live broadcast",
+                                            if (isDrifted) strings.liveBehind(liveOffsetMs / 1000) else strings.liveSynchronized,
                                             color = Color.White.copy(alpha = 0.6f),
                                             fontSize = 11.sp,
                                             style = TabularDigitsTextStyle
@@ -8452,46 +8379,6 @@ private fun PlayerControlsDrawer(
                             }
                         }
 
-                        Surface(
-                            onClick = {
-                                isBufferBoosterActive = !isBufferBoosterActive
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isBufferBoosterActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f),
-                            border = BorderStroke(1.dp, if (isBufferBoosterActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
-                            modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Bolt,
-                                    contentDescription = null,
-                                    tint = if (isBufferBoosterActive) Color(0xFFFFB800) else Color.White.copy(alpha = 0.6f),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        strings.bufferBooster,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        strings.bufferBoosterDesc,
-                                        color = Color.White.copy(alpha = 0.6f),
-                                        fontSize = 11.sp
-                                    )
-                                }
-                                Switch(
-                                    checked = isBufferBoosterActive,
-                                    onCheckedChange = { isBufferBoosterActive = it },
-                                    modifier = Modifier.padding(start = 8.dp)
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -8655,36 +8542,36 @@ private fun HomeScreen(
     val isSearching = searchQuery.trim().isNotEmpty()
     val searchTrimmed = searchQuery.trim()
 
-    val searchMatchingChannels = remember(channels, searchTrimmed) {
-        if (!isSearching) emptyList()
-        else channels.searchChannels(searchTrimmed).take(25)
-    }
-
-    val searchMatchingMovies = remember(catalogs, searchTrimmed, hideAdultContent) {
-        if (!isSearching) emptyList()
-        else {
-            catalogs.flatMap { catalog ->
+    var searchResults by remember { mutableStateOf(HomeSearchResults()) }
+    LaunchedEffect(channels, catalogs, searchTrimmed, hideAdultContent) {
+        if (!isSearching) {
+            searchResults = HomeSearchResults()
+            return@LaunchedEffect
+        }
+        searchResults = HomeSearchResults()
+        delay(200)
+        searchResults = withContext(Dispatchers.Default) {
+            val matchingChannels = channels.searchChannels(searchTrimmed).take(25)
+            val matchingMovies = catalogs.asSequence().flatMap { catalog ->
                 val categoryNames = catalog.movieCategories.associate { it.id to it.name }
-                catalog.movies.filter {
+                catalog.movies.asSequence().filter {
                     it.name.contains(searchTrimmed, ignoreCase = true) &&
                         (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
                 }.map { CatalogMovie(catalog, it) }
-            }.take(25)
-        }
-    }
-
-    val searchMatchingSeries = remember(catalogs, searchTrimmed, hideAdultContent) {
-        if (!isSearching) emptyList()
-        else {
-            catalogs.flatMap { catalog ->
+            }.take(25).toList()
+            val matchingSeries = catalogs.asSequence().flatMap { catalog ->
                 val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
-                catalog.series.filter {
+                catalog.series.asSequence().filter {
                     it.name.contains(searchTrimmed, ignoreCase = true) &&
                         (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
                 }.map { CatalogSeries(catalog, it) }
-            }.take(25)
+            }.take(25).toList()
+            HomeSearchResults(matchingChannels, matchingMovies, matchingSeries)
         }
     }
+    val searchMatchingChannels = searchResults.channels
+    val searchMatchingMovies = searchResults.movies
+    val searchMatchingSeries = searchResults.series
 
     Column(
         Modifier
@@ -8720,7 +8607,7 @@ private fun HomeScreen(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).focusRequester(contentFocusRequester),
                     decorationBox = { innerTextField ->
                         if (searchQuery.isEmpty()) {
                             Text(
@@ -10573,8 +10460,9 @@ private fun PlayerPanel(
     val lifecycleOwner = activity as? LifecycleOwner
     val playbackMode = LocalPlaybackMode.current
     val liveTransferProgress = remember { PlaybackTransferProgress() }
+    val liveFrameProgress = remember { PlaybackFrameProgress(android.os.SystemClock.elapsedRealtime()) }
     val player = remember(playbackMode) {
-        FortressPlayerFactory.create(context, PlaybackContentType.LIVE, playbackMode, liveTransferProgress).apply {
+        FortressPlayerFactory.create(context, PlaybackContentType.LIVE, playbackMode, liveTransferProgress, liveFrameProgress).apply {
             playWhenReady = true
         }
     }
@@ -10585,6 +10473,7 @@ private fun PlayerPanel(
 
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var isFreezeReconnecting by remember { mutableStateOf(false) }
     var consecutiveStallRecoveries by remember(channel.streamUrl) { mutableIntStateOf(0) }
     var manualFullscreen by rememberSaveable { mutableStateOf(autoEnterFullscreen) }
     var landscapeFullscreenDismissed by rememberSaveable(isPortrait) { mutableStateOf(false) }
@@ -10595,10 +10484,12 @@ private fun PlayerPanel(
 
     LaunchedEffect(liveNetworkGeneration) {
         if (liveNetworkGeneration > 0 && player.currentMediaItem != null &&
-            (player.playbackState == Player.STATE_BUFFERING || player.playerError != null)
+            (player.playbackState == Player.STATE_BUFFERING || player.playerError != null || isFreezeReconnecting)
         ) {
             delay(750)
             playbackError = null
+            isFreezeReconnecting = false
+            liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
             player.prepare()
             player.play()
         }
@@ -10636,13 +10527,21 @@ private fun PlayerPanel(
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
+                if (state == Player.STATE_BUFFERING) {
+                    isFreezeReconnecting = false
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) consecutiveStallRecoveries = 0
+                if (isPlaying) {
+                    consecutiveStallRecoveries = 0
+                    liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
+                    isFreezeReconnecting = false
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                isFreezeReconnecting = false
                 if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
                     playbackError = null
                     player.seekToDefaultPosition()
@@ -10691,6 +10590,8 @@ private fun PlayerPanel(
             currentTrackedChannel = channel
         }
         playbackError = null
+        isFreezeReconnecting = false
+        liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
         player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
         player.prepare()
         player.play()
@@ -10746,6 +10647,51 @@ private fun PlayerPanel(
         }
     }
 
+    LaunchedEffect(player, channel.streamUrl) {
+        while (isActive) {
+            delay(1_000L)
+            if (playbackError != null || !player.playWhenReady || playbackState == Player.STATE_BUFFERING) {
+                isFreezeReconnecting = false
+                continue
+            }
+            val hasVideo = player.currentTracks.isTypeSelected(C.TRACK_TYPE_VIDEO)
+            val millisSinceLastFrame = android.os.SystemClock.elapsedRealtime() - liveFrameProgress.lastFrameRealtimeMs
+            val isPlaying = player.isPlaying
+            val networkAvailable = context.isPlaybackNetworkAvailable()
+
+            val showNotice = ReadyFreezePolicy.shouldShowNotice(
+                isPlaying = isPlaying,
+                hasVideo = hasVideo,
+                millisSinceLastFrame = millisSinceLastFrame
+            )
+            isFreezeReconnecting = showNotice
+
+            if (ReadyFreezePolicy.shouldRecover(
+                isPlaying = isPlaying,
+                hasVideo = hasVideo,
+                networkAvailable = networkAvailable,
+                millisSinceLastFrame = millisSinceLastFrame
+            )) {
+                if (consecutiveStallRecoveries >= 3) {
+                    playbackError = strings.playbackError
+                    isFreezeReconnecting = false
+                    player.stop()
+                } else {
+                    consecutiveStallRecoveries++
+                    val backoffMs = 1_000L shl (consecutiveStallRecoveries - 1).coerceAtMost(3)
+                    Log.w("FortressTV.Player", "Recovering frozen ready live playback; no frames for ${millisSinceLastFrame}ms attempt=$consecutiveStallRecoveries")
+                    delay(backoffMs)
+                    if (!context.isPlaybackNetworkAvailable()) continue
+                    liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
+                    player.stop()
+                    player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+                    player.prepare()
+                    player.play()
+                }
+            }
+        }
+    }
+
     if (compactPreview && !fullscreen) {
         Box(modifier.fillMaxSize()) {
             VideoSurface(
@@ -10761,6 +10707,7 @@ private fun PlayerPanel(
                     player.prepare()
                     player.play()
                 },
+                isReconnecting = isFreezeReconnecting,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -10788,6 +10735,7 @@ private fun PlayerPanel(
                     player.prepare()
                     player.play()
                 },
+                isReconnecting = isFreezeReconnecting,
                 inPictureInPicture = inPictureInPicture
             )
         }
@@ -10827,6 +10775,7 @@ private fun PlayerPanel(
                             player.prepare()
                             player.play()
                         },
+                        isReconnecting = isFreezeReconnecting,
                         modifier = Modifier.fillMaxSize()
                     )
                     if (isTv && isVideoFocused) {
@@ -11011,6 +10960,7 @@ private fun PlayerPanel(
                 player.prepare()
                 player.play()
             },
+            isReconnecting = isFreezeReconnecting,
             inPictureInPicture = inPictureInPicture
         )
     }
@@ -11029,6 +10979,7 @@ private fun VideoSurface(
     onControlsVisibilityChanged: ((Boolean) -> Unit)? = null,
     onRetry: () -> Unit,
     showTrackSettings: Boolean = false,
+    isReconnecting: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
@@ -11137,7 +11088,7 @@ private fun VideoSurface(
             },
             modifier = Modifier.fillMaxSize()
         )
-        if (playbackState == Player.STATE_BUFFERING) {
+        if (playbackState == Player.STATE_BUFFERING || isReconnecting) {
             Column(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -11145,11 +11096,15 @@ private fun VideoSurface(
             ) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 AnimatedVisibility(
-                    visible = isProlongedBuffering,
+                    visible = isProlongedBuffering || isReconnecting,
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
-                    Text(strings.buildingPlaybackBuffer, color = Color.White, fontSize = 12.sp)
+                    Text(
+                        if (isReconnecting) strings.reconnecting else strings.buildingPlaybackBuffer,
+                        color = Color.White,
+                        fontSize = 12.sp
+                    )
                 }
             }
         }
@@ -11310,6 +11265,7 @@ private fun FullscreenPlayer(
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
     onRetry: () -> Unit,
+    isReconnecting: Boolean = false,
     inPictureInPicture: Boolean
 ) {
     val context = LocalContext.current
@@ -11564,6 +11520,7 @@ private fun FullscreenPlayer(
                 onFullscreen = onExit,
                 onToggleControls = { controlsVisible = !controlsVisible },
                 onRetry = onRetry,
+                isReconnecting = isReconnecting,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -14517,9 +14474,9 @@ private fun PlaylistsTab(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("No sources configured", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(strings.noSourcesConfigured, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("Add your M3U / M3U8 URL or Xtream Codes server to get started.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(strings.addSourceGettingStarted, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
             }
         } else {
@@ -15501,7 +15458,7 @@ private fun AboutTab() {
             Spacer(Modifier.width(10.dp))
             Column {
                 Text(strings.appName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · Pride1922", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                Text(strings.versionLabel(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
         }
 
@@ -15543,7 +15500,7 @@ private fun AboutTab() {
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(strings.checkForUpdates, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        Text("Installed: v${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                        Text(strings.installedVersion(BuildConfig.VERSION_NAME), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     }
                     if (downloadProgress < 0f && updateInfo == null) {
                         FilledTonalButton(
@@ -16581,7 +16538,7 @@ private fun SourceUrlDialog(
         title = { Text(title) },
         text = {
             Column {
-                Text("Enter a direct HTTP or HTTPS URL. It will be encrypted on this device.")
+                Text(strings.directUrlPrivacyHint)
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = value,

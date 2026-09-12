@@ -33,6 +33,7 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import java.io.IOException
 import kotlin.math.min
 
@@ -69,6 +70,33 @@ class PlaybackTransferProgress {
     fun record(bytes: Long) {
         if (bytes > 0) bytesObserved += bytes
     }
+}
+
+class PlaybackFrameProgress(initialRealtimeMs: Long) {
+    @Volatile
+    var lastFrameRealtimeMs: Long = initialRealtimeMs
+        private set
+
+    fun recordFrame(realtimeMs: Long) {
+        lastFrameRealtimeMs = realtimeMs
+    }
+}
+
+object ReadyFreezePolicy {
+    fun shouldRecover(
+        isPlaying: Boolean,
+        hasVideo: Boolean,
+        networkAvailable: Boolean,
+        millisSinceLastFrame: Long,
+        freezeThresholdMs: Long = 12_000L
+    ): Boolean = isPlaying && hasVideo && networkAvailable && millisSinceLastFrame >= freezeThresholdMs
+
+    fun shouldShowNotice(
+        isPlaying: Boolean,
+        hasVideo: Boolean,
+        millisSinceLastFrame: Long,
+        noticeThresholdMs: Long = 3_500L
+    ): Boolean = isPlaying && hasVideo && millisSinceLastFrame >= noticeThresholdMs
 }
 
 object PlaybackProfiles {
@@ -228,7 +256,8 @@ object FortressPlayerFactory {
         context: Context,
         type: PlaybackContentType,
         mode: PlaybackMode,
-        transferProgress: PlaybackTransferProgress? = null
+        transferProgress: PlaybackTransferProgress? = null,
+        frameProgress: PlaybackFrameProgress? = null
     ): ExoPlayer {
         val profile = PlaybackProfiles.forContent(type, mode)
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -271,7 +300,14 @@ object FortressPlayerFactory {
             .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(trackSelector)
             .build()
-            .apply { addAnalyticsListener(PlaybackDiagnosticsListener(type, mode, transferProgress)) }
+            .apply {
+                addAnalyticsListener(PlaybackDiagnosticsListener(type, mode, transferProgress))
+                if (frameProgress != null) {
+                    setVideoFrameMetadataListener { _, _, _, _ ->
+                        frameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
+                    }
+                }
+            }
     }
 
     fun mediaItem(url: String, type: PlaybackContentType, mode: PlaybackMode): MediaItem {
