@@ -196,4 +196,29 @@ class OpenSubtitlesClientTest {
         assertTrue(client.parseSearchResults("{}").isEmpty())
         assertTrue(client.parseSearchResults("""{"data":[]}""").isEmpty())
     }
+
+    @Test
+    fun stripBomRemovesLeadingUtf8ByteOrderMark() {
+        val client = OpenSubtitlesClient(apiKey = "dummy_key")
+        assertEquals("Hello world", client.stripBom("\uFEFFHello world"))
+        assertEquals("Hello world", client.stripBom("Hello world"))
+    }
+
+    @Test
+    fun readStreamDecodesPlainTextAndGzipCompressedStreams() {
+        val client = OpenSubtitlesClient(apiKey = "dummy_key")
+        val expected = "1\n00:00:01,000 --> 00:00:04,000\nOlá Mundo!\n"
+
+        // Plain text stream
+        val plainStream = expected.byteInputStream(Charsets.UTF_8)
+        assertEquals(expected, client.readStream(plainStream))
+
+        // Gzipped stream
+        val byteOut = java.io.ByteArrayOutputStream()
+        java.util.zip.GZIPOutputStream(byteOut).use { gz ->
+            gz.write(expected.toByteArray(Charsets.UTF_8))
+        }
+        val gzStream = java.io.ByteArrayInputStream(byteOut.toByteArray())
+        assertEquals(expected, client.readStream(gzStream))
+    }
 }

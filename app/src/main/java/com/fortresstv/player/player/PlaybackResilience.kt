@@ -21,6 +21,7 @@ import androidx.media3.common.ParserException
 import androidx.media3.common.VideoSize
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -252,8 +253,9 @@ object FortressPlayerFactory {
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
             .setUserAgent("FortressTV")
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(httpFactory)
+            .setDataSourceFactory(dataSourceFactory)
             .setLoadErrorHandlingPolicy(FortressLoadErrorHandlingPolicy())
         val trackSelector = DefaultTrackSelector(context).apply {
             if (profile.maxVideoBitrate != null) {

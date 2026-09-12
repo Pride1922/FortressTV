@@ -6566,6 +6566,7 @@ private fun VodPlayerDialog(
     val scope = rememberCoroutineScope()
     val subtitleCache = remember { SubtitleDiskCache(context.applicationContext) }
     var attachedSubtitles by remember(request.key) { mutableStateOf<List<Pair<OpenSubtitlesItem, java.io.File>>>(emptyList()) }
+    var pendingSubtitleOverrideLabel by remember(request.key) { mutableStateOf<String?>(null) }
     var showOpenSubtitlesSearchDialog by remember { mutableStateOf(false) }
 
     val playbackMode = LocalPlaybackMode.current
@@ -6827,6 +6828,32 @@ private fun VodPlayerDialog(
             }
             override fun onTracksChanged(tracks: Tracks) {
                 currentTracks = tracks
+                val pendingLabel = pendingSubtitleOverrideLabel
+                if (pendingLabel != null) {
+                    var targetGroup: Tracks.Group? = null
+                    var targetIndex = -1
+                    for (group in tracks.groups) {
+                        if (group.type == C.TRACK_TYPE_TEXT) {
+                            for (i in 0 until group.length) {
+                                val format = group.getTrackFormat(i)
+                                if (format.label == pendingLabel || format.label?.startsWith("OpenSubtitles") == true) {
+                                    targetGroup = group
+                                    targetIndex = i
+                                    break
+                                }
+                            }
+                        }
+                        if (targetGroup != null) break
+                    }
+                    if (targetGroup != null) {
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .setOverrideForType(TrackSelectionOverride(targetGroup.mediaTrackGroup, targetIndex))
+                            .build()
+                        pendingSubtitleOverrideLabel = null
+                    }
+                }
             }
             override fun onPlayerError(error: PlaybackException) { playbackError = error.message ?: strings.playbackError }
         }
@@ -6845,6 +6872,8 @@ private fun VodPlayerDialog(
         userManuallySelectedTracks = true
         val updated = attachedSubtitles.filter { it.first.fileId != item.fileId } + (item to file)
         attachedSubtitles = updated
+        val label = "OpenSubtitles · ${item.release}"
+        pendingSubtitleOverrideLabel = label
         val currentPos = player.currentPosition
         val wasPlaying = player.playWhenReady
         val newMediaItem = MediaItem.Builder()
@@ -6865,6 +6894,7 @@ private fun VodPlayerDialog(
         player.playWhenReady = wasPlaying
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredTextLanguage(item.language)
             .build()
     }
@@ -8525,6 +8555,7 @@ private fun PlaybackTrackDropdown(
 
 @UnstableApi
 private fun localizedPlaybackTrackLabel(track: PlaybackTrackItem, strings: Strings): String = when {
+    track.label.startsWith("OpenSubtitles") -> track.label
     TrackLanguageMatcher.matchesLanguage(track.language, track.label, "pt") -> strings.langPortuguese
     TrackLanguageMatcher.matchesLanguage(track.language, track.label, "en") -> strings.langEnglish
     TrackLanguageMatcher.matchesLanguage(track.language, track.label, "es") -> strings.langSpanish

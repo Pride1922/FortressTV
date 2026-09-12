@@ -248,11 +248,23 @@ class OpenSubtitlesClient(
         return results
     }
 
-    private fun readStream(stream: java.io.InputStream): String {
-        return BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+    internal fun readStream(stream: java.io.InputStream): String {
+        val pushback = java.io.PushbackInputStream(stream, 2)
+        val head = ByteArray(2)
+        val read = pushback.read(head)
+        if (read > 0) {
+            pushback.unread(head, 0, read)
+        }
+        val isGzip = read == 2 && head[0] == 0x1f.toByte() && head[1] == 0x8b.toByte()
+        val effectiveStream = if (isGzip) {
+            java.util.zip.GZIPInputStream(pushback)
+        } else {
+            pushback
+        }
+        return BufferedReader(InputStreamReader(effectiveStream, Charsets.UTF_8)).use { it.readText() }
     }
 
-    private fun stripBom(content: String): String {
+    internal fun stripBom(content: String): String {
         return if (content.startsWith("\uFEFF")) content.substring(1) else content
     }
 
