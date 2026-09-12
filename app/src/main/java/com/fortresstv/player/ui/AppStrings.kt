@@ -30,10 +30,24 @@ interface Strings {
     val sources: String
     val categories: String
     val uncategorized: String
+    val navHome: String
     val navLiveTv: String
     val navMovies: String
     val navSeries: String
     val navFavorites: String
+    val homeContinueWatching: String
+    val homeNextUp: String
+    val homeFavoriteChannelsNow: String
+    val homeRecentChannels: String
+    val homeUnifiedSearchPlaceholder: String
+    val homeChannelsCategory: String
+    val homeMoviesCategory: String
+    val homeSeriesCategory: String
+    val homeNothingFound: String
+    val homeStartupScreen: String
+    val homeStartupScreenHome: String
+    val homeStartupScreenLiveTv: String
+    val homeNoContent: String
     val comingSoon: String
     val moviesComingSoon: String
     val seriesComingSoon: String
@@ -431,10 +445,24 @@ object EnglishStrings : Strings {
     override val sources = "Sources"
     override val categories = "Categories"
     override val uncategorized = "Uncategorized"
+    override val navHome = "Home"
     override val navLiveTv = "Live TV"
     override val navMovies = "Movies"
     override val navSeries = "Series"
     override val navFavorites = "Favorites"
+    override val homeContinueWatching = "Continue Watching"
+    override val homeNextUp = "Next Up"
+    override val homeFavoriteChannelsNow = "Favorites On Now"
+    override val homeRecentChannels = "Recently Watched Channels"
+    override val homeUnifiedSearchPlaceholder = "Search channels, movies and series..."
+    override val homeChannelsCategory = "Channels"
+    override val homeMoviesCategory = "Movies"
+    override val homeSeriesCategory = "Series"
+    override val homeNothingFound = "No results found"
+    override val homeStartupScreen = "Startup Screen"
+    override val homeStartupScreenHome = "Home"
+    override val homeStartupScreenLiveTv = "Live TV"
+    override val homeNoContent = "Your media dashboard will appear here as you watch channels, movies, and series."
     override val comingSoon = "Coming next"
     override val moviesComingSoon = "Your movie library will appear here when a VOD source is configured."
     override val seriesComingSoon = "Your series, seasons and episodes will appear here when a VOD source is configured."
@@ -834,10 +862,24 @@ object PortugueseStrings : Strings {
     override val sources = "Fontes"
     override val categories = "Categorias"
     override val uncategorized = "Sem categoria"
+    override val navHome = "Início"
     override val navLiveTv = "TV em direto"
     override val navMovies = "Filmes"
     override val navSeries = "Séries"
     override val navFavorites = "Favoritos"
+    override val homeContinueWatching = "Continuar a ver"
+    override val homeNextUp = "A seguir"
+    override val homeFavoriteChannelsNow = "Favoritos em direto"
+    override val homeRecentChannels = "Canais vistos recentemente"
+    override val homeUnifiedSearchPlaceholder = "Pesquisar canais, filmes e séries..."
+    override val homeChannelsCategory = "Canais"
+    override val homeMoviesCategory = "Filmes"
+    override val homeSeriesCategory = "Séries"
+    override val homeNothingFound = "Nenhum resultado encontrado"
+    override val homeStartupScreen = "Ecrã inicial"
+    override val homeStartupScreenHome = "Início"
+    override val homeStartupScreenLiveTv = "TV em direto"
+    override val homeNoContent = "O seu painel aparecerá aqui à medida que vê canais, filmes e séries."
     override val comingSoon = "Brevemente"
     override val moviesComingSoon = "A sua biblioteca de filmes aparecerá aqui quando configurar uma fonte VOD."
     override val seriesComingSoon = "As suas séries, temporadas e episódios aparecerão aqui quando configurar uma fonte VOD."

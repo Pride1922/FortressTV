@@ -112,6 +112,7 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -274,6 +275,7 @@ import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceReader
 import com.fortresstv.player.source.isTransientNetworkFailure
 import com.fortresstv.player.source.SourceSettingsStore
+import com.fortresstv.player.source.StartupDestination
 import com.fortresstv.player.library.VodProgressEntry
 import com.fortresstv.player.library.VodProgressKind
 import com.fortresstv.player.library.VodProgressStore
@@ -594,6 +596,7 @@ private fun FortressTVApp(
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
+    var startupDestination by remember { mutableStateOf(settings.startupDestination()) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
     var playbackMode by remember { mutableStateOf(PlaybackMode.AUTO) }
@@ -1298,6 +1301,7 @@ private fun FortressTVApp(
                             playlists = allPlaylists
                             val newLang = AppLanguage.fromCode(settings.getLanguage())
                             appLanguage = newLang
+                            startupDestination = settings.startupDestination()
                             playChannelsFullscreen = settings.playChannelsFullscreen()
                             autoPictureInPicture = settings.autoPictureInPicture()
                             playbackMode = settings.playbackMode()
@@ -1407,6 +1411,7 @@ private fun FortressTVApp(
                 FortressLibrary(
                     playlist = playlist!!,
                     activeProfile = activeProfile!!,
+                    startupDestination = startupDestination,
                     enabledSourceCount = playlists.count { it.enabled && it.role.contributesLiveTv() },
                     enabledSources = playlists
                         .filter { it.enabled && it.role.contributesLiveTv() }
@@ -1476,6 +1481,11 @@ private fun FortressTVApp(
                 activeProfile = activeProfile,
                 appLanguage = appLanguage,
                 onLanguageChanged = ::onLanguageChanged,
+                startupDestination = startupDestination,
+                onStartupDestinationChanged = { destination ->
+                    startupDestination = destination
+                    scope.launch(Dispatchers.IO) { settings.setStartupDestination(destination) }
+                },
                 playChannelsFullscreen = playChannelsFullscreen,
                 onPlayChannelsFullscreenChanged = { enabled ->
                     playChannelsFullscreen = enabled
@@ -3318,7 +3328,7 @@ fun isAdultContent(name: String?, groupOrCategory: String?): Boolean {
     return ADULT_CONTENT_PATTERNS.any { pattern -> text.contains(pattern) }
 }
 
-private enum class LibraryDestination { LIVE_TV, MOVIES, SERIES, FAVORITES }
+private enum class LibraryDestination { HOME, LIVE_TV, MOVIES, SERIES, FAVORITES }
 
 private data class VodPlaybackRequest(
     val key: String,
@@ -3340,6 +3350,7 @@ private data class VodPlaybackRequest(
 private fun FortressLibrary(
     playlist: Playlist,
     activeProfile: PlaylistProfile,
+    startupDestination: StartupDestination = StartupDestination.HOME,
     enabledSourceCount: Int,
     enabledSources: List<PlaylistProfile>,
     epgGuide: EpgGuide?,
@@ -3386,7 +3397,14 @@ private fun FortressLibrary(
     }
     val libraryConfiguration = LocalConfiguration.current
     val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
-    var destination by remember { mutableStateOf(LibraryDestination.LIVE_TV) }
+    var destination by rememberSaveable {
+        mutableStateOf(
+            when (startupDestination) {
+                StartupDestination.HOME -> LibraryDestination.HOME
+                StartupDestination.LIVE_TV -> LibraryDestination.LIVE_TV
+            }
+        )
+    }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
     var globalSidebarExpanded by remember { mutableStateOf(false) }
@@ -3394,6 +3412,7 @@ private fun FortressLibrary(
     val movieGridState = rememberLazyGridState()
     val seriesGridState = rememberLazyGridState()
     val destinations = listOf(
+        Triple(LibraryDestination.HOME, strings.navHome, Icons.Default.Home),
         Triple(LibraryDestination.LIVE_TV, strings.navLiveTv, Icons.Default.LiveTv),
         Triple(LibraryDestination.MOVIES, strings.navMovies, Icons.Default.Movie),
         Triple(LibraryDestination.SERIES, strings.navSeries, Icons.Default.VideoLibrary),
@@ -3456,6 +3475,67 @@ private fun FortressLibrary(
         )
         Box(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.background)) {
             when (destination) {
+                LibraryDestination.HOME -> HomeScreen(
+                    channels = effectivePlaylist.channels,
+                    catalogs = xtreamCatalogs,
+                    profiles = xtreamProfiles,
+                    contentFocusRequester = contentFocusRequester,
+                    epgGuide = epgGuide,
+                    epgTimeShiftHours = epgTimeShiftHours,
+                    favoriteChannelIds = favoriteChannelIds,
+                    recentChannelIds = recentChannelIds,
+                    followedSeriesIds = followedSeriesIds,
+                    watchedItemIds = watchedItemIds,
+                    movieWatchlistIds = movieWatchlistIds,
+                    progressEntries = progressEntries,
+                    hideAdultContent = hideAdultContent,
+                    onContinueWatching = { entry ->
+                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
+                    },
+                    onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
+                    onToggleMovieWatchlist = onToggleMovieWatchlist,
+                    onToggleMovieWatched = { sourceId, movie ->
+                        val key = movie.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        if (willBeWatched) progressEntries = progressStore.remove(key)
+                        onToggleMovieWatched(sourceId, movie)
+                    },
+                    onToggleSeriesFollow = onToggleSeriesFollow,
+                    onToggleEpisodeWatched = { sourceId, ep ->
+                        val key = ep.libraryId(sourceId)
+                        val willBeWatched = key !in watchedItemIds
+                        if (willBeWatched) progressEntries = progressStore.remove(key)
+                        onToggleEpisodeWatched(sourceId, ep)
+                    },
+                    onPlayMovie = { catalog, movie ->
+                        val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
+                        if (source != null) {
+                            vodPlayback = VodPlaybackRequest(
+                                key = movie.libraryId(catalog.sourceId), kind = VodProgressKind.MOVIE,
+                                sourceId = catalog.sourceId, itemId = movie.id.toString(), title = movie.name,
+                                posterUrl = movie.posterUrl, containerExtension = movie.containerExtension,
+                                streamUrl = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            )
+                        }
+                    },
+                    onPlayEpisode = { catalog, series, episode, url ->
+                        vodPlayback = VodPlaybackRequest(
+                            key = "episode:${catalog.sourceId}:${episode.id}", kind = VodProgressKind.EPISODE,
+                            sourceId = catalog.sourceId, itemId = episode.id, seriesId = series.id,
+                            seriesName = series.name,
+                            title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
+                            posterUrl = episode.posterUrl ?: series.coverUrl, containerExtension = episode.containerExtension,
+                            season = episode.season, episode = episode.episodeNumber, streamUrl = url
+                        )
+                    },
+                    onWatchChannel = { channel ->
+                        requestedChannel = channel
+                        destination = LibraryDestination.LIVE_TV
+                    },
+                    onNavigateToDestination = { target ->
+                        destination = target
+                    }
+                )
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
                     playlist = effectivePlaylist,
                     activeProfile = activeProfile,
@@ -7480,6 +7560,538 @@ private fun LibraryPlaceholder(title: String, message: String) {
     }
 }
 
+@Composable
+private fun HomeScreen(
+    channels: List<PlaylistChannel>,
+    catalogs: List<XtreamCatalog>,
+    profiles: List<PlaylistProfile>,
+    contentFocusRequester: FocusRequester,
+    epgGuide: EpgGuide?,
+    epgTimeShiftHours: Int,
+    favoriteChannelIds: Set<String>,
+    recentChannelIds: List<String>,
+    followedSeriesIds: Set<String>,
+    watchedItemIds: Set<String>,
+    movieWatchlistIds: Set<String>,
+    progressEntries: List<VodProgressEntry>,
+    hideAdultContent: Boolean,
+    onContinueWatching: (VodProgressEntry) -> Unit,
+    onRemoveContinueWatching: (VodProgressEntry) -> Unit,
+    onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
+    onToggleMovieWatched: (String, XtreamMovie) -> Unit,
+    onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
+    onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
+    onPlayEpisode: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
+    onWatchChannel: (PlaylistChannel) -> Unit,
+    onNavigateToDestination: (LibraryDestination) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val isTv = LocalFormFactor.current.isTelevision
+
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
+    var selectedSeries by remember { mutableStateOf<CatalogSeries?>(null) }
+
+    var scheduleNow by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(epgGuide) {
+        while (true) {
+            scheduleNow = Instant.now()
+            delay(60_000)
+        }
+    }
+
+    val favoriteChannels = remember(channels, favoriteChannelIds) {
+        channels.filter { it.libraryId() in favoriteChannelIds }
+    }
+
+    val recentChannelsList = remember(channels, recentChannelIds) {
+        recentChannelIds.mapNotNull { id -> channels.firstOrNull { it.libraryId() == id } }
+    }
+
+    val followedSeries = remember(catalogs, followedSeriesIds, hideAdultContent) {
+        catalogs.flatMap { catalog ->
+            val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+            catalog.series.filter {
+                it.libraryId(catalog.sourceId) in followedSeriesIds &&
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+            }.map { CatalogSeries(catalog, it) }
+        }
+    }
+
+    val isSearching = searchQuery.trim().isNotEmpty()
+    val searchTrimmed = searchQuery.trim()
+
+    val searchMatchingChannels = remember(channels, searchTrimmed) {
+        if (!isSearching) emptyList()
+        else channels.searchChannels(searchTrimmed).take(25)
+    }
+
+    val searchMatchingMovies = remember(catalogs, searchTrimmed, hideAdultContent) {
+        if (!isSearching) emptyList()
+        else {
+            catalogs.flatMap { catalog ->
+                val categoryNames = catalog.movieCategories.associate { it.id to it.name }
+                catalog.movies.filter {
+                    it.name.contains(searchTrimmed, ignoreCase = true) &&
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                }.map { CatalogMovie(catalog, it) }
+            }.take(25)
+        }
+    }
+
+    val searchMatchingSeries = remember(catalogs, searchTrimmed, hideAdultContent) {
+        if (!isSearching) emptyList()
+        else {
+            catalogs.flatMap { catalog ->
+                val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+                catalog.series.filter {
+                    it.name.contains(searchTrimmed, ignoreCase = true) &&
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                }.map { CatalogSeries(catalog, it) }
+            }.take(25)
+        }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 20.dp, vertical = 14.dp)
+    ) {
+        // Top Search Bar
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.02f else 1.0f)
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                BasicTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { innerTextField ->
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                strings.homeUnifiedSearchPlaceholder,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                fontSize = 14.sp
+                            )
+                        }
+                        innerTextField()
+                    }
+                )
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(
+                        onClick = { searchQuery = "" },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Clear,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        if (isSearching) {
+            val totalResults = searchMatchingChannels.size + searchMatchingMovies.size + searchMatchingSeries.size
+            if (totalResults == 0) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            strings.homeNothingFound,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp)
+                ) {
+                    if (searchMatchingChannels.isNotEmpty()) {
+                        item {
+                            Text(
+                                "${strings.homeChannelsCategory} (${searchMatchingChannels.size})",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(searchMatchingChannels, key = { "search:channel:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                                    Surface(
+                                        onClick = { onWatchChannel(channel) },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                                        modifier = Modifier
+                                            .width(200.dp)
+                                            .height(64.dp)
+                                            .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(36.dp))
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                channel.name,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (searchMatchingMovies.isNotEmpty()) {
+                        item {
+                            Text(
+                                "${strings.homeMoviesCategory} (${searchMatchingMovies.size})",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(searchMatchingMovies, key = { "search:movie:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+                                    val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                    VodPosterCard(
+                                        title = entry.movie.name,
+                                        posterUrl = entry.movie.posterUrl,
+                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                        isWatched = libraryId in watchedItemIds,
+                                        progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
+                                        onClick = { selectedMovie = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (searchMatchingSeries.isNotEmpty()) {
+                        item {
+                            Text(
+                                "${strings.homeSeriesCategory} (${searchMatchingSeries.size})",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(searchMatchingSeries, key = { "search:series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                                    VodPosterCard(
+                                        title = entry.series.name,
+                                        posterUrl = entry.series.coverUrl,
+                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        onClick = { selectedSeries = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty()
+            if (!hasContent) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+                        modifier = Modifier.widthIn(max = 480.dp)
+                    ) {
+                        Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            ShieldMark(Modifier.size(64.dp))
+                            Spacer(Modifier.height(14.dp))
+                            Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                strings.homeNoContent,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                fontSize = 14.sp
+                            )
+                            Spacer(Modifier.height(18.dp))
+                            Button(onClick = { onNavigateToDestination(LibraryDestination.LIVE_TV) }) {
+                                Icon(Icons.Default.LiveTv, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(strings.navLiveTv)
+                            }
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(22.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp)
+                ) {
+                    if (progressEntries.isNotEmpty()) {
+                        item {
+                            ContinueWatchingRow(
+                                entries = progressEntries,
+                                onClick = onContinueWatching,
+                                onRemove = onRemoveContinueWatching
+                            )
+                        }
+                    }
+
+                    if (favoriteChannels.isNotEmpty()) {
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(22.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.homeFavoriteChannelsNow,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "(${favoriteChannels.size})",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(favoriteChannels, key = { "fav_now:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                                    val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgTimeShiftHours) {
+                                        epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)
+                                    }
+                                    val currentProg = snapshot?.current
+                                    val nextProg = snapshot?.next
+                                    val shiftMillis = epgTimeShiftHours * 3_600_000L
+                                    val adjustedStart = currentProg?.startEpochMilli?.plus(shiftMillis)
+                                    val adjustedStop = currentProg?.stopEpochMilli?.plus(shiftMillis)
+                                    val progProgress = if (adjustedStart != null && adjustedStop != null && adjustedStop > adjustedStart) {
+                                        ((scheduleNow.toEpochMilli() - adjustedStart).toFloat() /
+                                            (adjustedStop - adjustedStart).toFloat()).coerceIn(0f, 1f)
+                                    } else null
+
+                                    Surface(
+                                        onClick = { onWatchChannel(channel) },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                        modifier = Modifier
+                                            .width(240.dp)
+                                            .height(116.dp)
+                                            .tvFocusHighlight(shape = RoundedCornerShape(14.dp), scaleOnFocus = 1.04f)
+                                    ) {
+                                        Column(Modifier.fillMaxSize().padding(12.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(36.dp))
+                                                Spacer(Modifier.width(10.dp))
+                                                Text(
+                                                    channel.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Spacer(Modifier.weight(1f))
+                                            Text(
+                                                currentProg?.title ?: "",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
+                                            )
+                                            if (progProgress != null) {
+                                                Spacer(Modifier.height(4.dp))
+                                                LinearProgressIndicator(
+                                                    progress = { progProgress },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(3.dp)
+                                                        .clip(RoundedCornerShape(1.5.dp)),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                                )
+                                            }
+                                            if (nextProg != null) {
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    nextProg.title,
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (recentChannelsList.isNotEmpty()) {
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Replay, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.homeRecentChannels,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(recentChannelsList, key = { "recent:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                                    Surface(
+                                        onClick = { onWatchChannel(channel) },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                                        modifier = Modifier
+                                            .width(180.dp)
+                                            .height(64.dp)
+                                            .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(36.dp))
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                channel.name,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (followedSeries.isNotEmpty()) {
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.homeNextUp,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(followedSeries, key = { "home_series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                                    VodPosterCard(
+                                        title = entry.series.name,
+                                        posterUrl = entry.series.coverUrl,
+                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        onClick = { selectedSeries = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    selectedMovie?.let { entry ->
+        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        val client = source?.let {
+            remember(entry.catalog.sourceId, it) {
+                XtreamClient(context.applicationContext, entry.catalog.sourceId, it)
+            }
+        }
+        val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+        MovieDetailsDialog(
+            movie = entry.movie,
+            client = client,
+            sourceName = entry.catalog.sourceName.takeIf { catalogs.size > 1 },
+            isWatchlisted = libraryId in movieWatchlistIds,
+            isWatched = libraryId in watchedItemIds,
+            onDismiss = { selectedMovie = null },
+            onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
+            onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
+            onWatch = {
+                selectedMovie = null
+                onPlayMovie(entry.catalog, entry.movie)
+            }
+        )
+    }
+
+    selectedSeries?.let { entry ->
+        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        if (source != null) {
+            SeriesEpisodesDialog(
+                series = entry.series,
+                sourceId = entry.catalog.sourceId,
+                client = remember(entry.catalog.sourceId, source) {
+                    XtreamClient(context.applicationContext, entry.catalog.sourceId, source)
+                },
+                isFollowed = entry.series.libraryId(entry.catalog.sourceId) in followedSeriesIds,
+                watchedItemIds = watchedItemIds,
+                progressEntries = progressEntries,
+                onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
+                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
+                onDismiss = { selectedSeries = null },
+                onPlay = { episode, url -> onPlayEpisode(entry.catalog, entry.series, episode, url) }
+            )
+        }
+    }
+}
+
 private enum class FavoriteSection { CHANNELS, MOVIES, SERIES }
 
 @Composable
@@ -11389,6 +12001,8 @@ private fun SettingsDialog(
     activeProfile: PlaylistProfile?,
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
+    startupDestination: StartupDestination = StartupDestination.HOME,
+    onStartupDestinationChanged: (StartupDestination) -> Unit = {},
     playChannelsFullscreen: Boolean,
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
@@ -11604,6 +12218,8 @@ private fun SettingsDialog(
                                 0 -> GeneralTab(
                                     appLanguage = appLanguage,
                                     onLanguageChanged = onLanguageChanged,
+                                    startupDestination = startupDestination,
+                                    onStartupDestinationChanged = onStartupDestinationChanged,
                                     playChannelsFullscreen = playChannelsFullscreen,
                                     onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                     autoPictureInPicture = autoPictureInPicture,
@@ -11716,6 +12332,8 @@ private fun SettingsDialog(
                             0 -> GeneralTab(
                                 appLanguage = appLanguage,
                                 onLanguageChanged = onLanguageChanged,
+                                startupDestination = startupDestination,
+                                onStartupDestinationChanged = onStartupDestinationChanged,
                                 playChannelsFullscreen = playChannelsFullscreen,
                                 onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                 autoPictureInPicture = autoPictureInPicture,
@@ -12002,6 +12620,8 @@ private fun SettingsDropdownPickerRow(
 private fun GeneralTab(
     appLanguage: AppLanguage,
     onLanguageChanged: (AppLanguage) -> Unit,
+    startupDestination: StartupDestination = StartupDestination.HOME,
+    onStartupDestinationChanged: (StartupDestination) -> Unit = {},
     playChannelsFullscreen: Boolean,
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
@@ -12069,6 +12689,21 @@ private fun GeneralTab(
                     }
                 }
             }
+        }
+
+        // Startup Group
+        if (!subtitlesOnly) SettingsGroup(title = strings.homeStartupScreen) {
+            SettingsDropdownPickerRow(
+                title = strings.homeStartupScreen,
+                subtitle = "",
+                icon = Icons.Default.Home,
+                selectedValue = startupDestination.persistedValue,
+                options = listOf(
+                    StartupDestination.HOME.persistedValue to strings.homeStartupScreenHome,
+                    StartupDestination.LIVE_TV.persistedValue to strings.homeStartupScreenLiveTv
+                ),
+                onValueSelected = { onStartupDestinationChanged(StartupDestination.fromPersisted(it)) }
+            )
         }
 
         // Playback Group

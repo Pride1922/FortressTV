@@ -15,6 +15,18 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+enum class StartupDestination(val persistedValue: String) {
+    HOME("home"),
+    LIVE_TV("live_tv");
+
+    companion object {
+        fun fromPersisted(value: String?): StartupDestination = when (value) {
+            "live_tv" -> LIVE_TV
+            else -> HOME
+        }
+    }
+}
+
 class SourceSettingsStore(context: Context) {
     private val preferences = context.getSharedPreferences("fortress_sources", Context.MODE_PRIVATE)
 
@@ -197,6 +209,13 @@ class SourceSettingsStore(context: Context) {
 
     fun setPlayChannelsFullscreen(enabled: Boolean) {
         preferences.edit().putBoolean("play_channels_fullscreen", enabled).apply()
+    }
+
+    fun startupDestination(): StartupDestination =
+        StartupDestination.fromPersisted(preferences.getString("startup_destination", "home"))
+
+    fun setStartupDestination(destination: StartupDestination) {
+        preferences.edit().putString("startup_destination", destination.persistedValue).apply()
     }
 
     fun autoPictureInPicture(): Boolean =
