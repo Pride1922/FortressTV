@@ -139,4 +139,56 @@ object TrackLanguageMatcher {
         }
         return null
     }
+
+    fun extractVideoTracks(currentTracks: Tracks?): List<PlaybackVideoTrackItem> {
+        val list = mutableListOf<PlaybackVideoTrackItem>()
+        currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_VIDEO }?.forEach { group ->
+            for (i in 0 until group.length) {
+                if (group.isTrackSupported(i)) {
+                    val format = group.getTrackFormat(i)
+                    val width = format.width
+                    val height = format.height
+                    val bitrate = format.bitrate
+                    val frameRate = format.frameRate
+                    val resLabel = if (height > 0) "${height}p" else if (width > 0) "${width}w" else ""
+                    val bitLabel = if (bitrate > 0) {
+                        val mbps = bitrate / 1_000_000f
+                        if (mbps >= 1f) String.format(Locale.ROOT, "%.1f Mbps", mbps)
+                        else "${bitrate / 1_000} kbps"
+                    } else ""
+                    val label = listOfNotNull(resLabel.takeIf { it.isNotBlank() }, bitLabel.takeIf { it.isNotBlank() })
+                        .joinToString(" · ")
+                        .ifBlank { "Track ${list.size + 1}" }
+                    list.add(
+                        PlaybackVideoTrackItem(
+                            id = "video_${group.mediaTrackGroup.id}_$i",
+                            label = label,
+                            width = width,
+                            height = height,
+                            bitrate = bitrate,
+                            frameRate = frameRate,
+                            isSelected = group.isTrackSelected(i),
+                            group = group,
+                            trackIndex = i
+                        )
+                    )
+                }
+            }
+        }
+        return list.sortedByDescending { it.height.takeIf { h -> h > 0 } ?: it.bitrate }
+    }
 }
+
+@UnstableApi
+data class PlaybackVideoTrackItem(
+    val id: String,
+    val label: String,
+    val width: Int,
+    val height: Int,
+    val bitrate: Int,
+    val frameRate: Float,
+    val isSelected: Boolean,
+    val group: Tracks.Group,
+    val trackIndex: Int
+)
+

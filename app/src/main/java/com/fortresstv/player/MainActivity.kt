@@ -264,6 +264,7 @@ import com.fortresstv.player.player.StallRecoveryPolicy
 import com.fortresstv.player.player.isPlaybackNetworkAvailable
 import com.fortresstv.player.player.rememberPlaybackNetworkGeneration
 import com.fortresstv.player.player.PlaybackTrackItem
+import com.fortresstv.player.player.PlaybackVideoTrackItem
 import com.fortresstv.player.player.TrackLanguageMatcher
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.epg.EpgProgramme
@@ -6760,6 +6761,7 @@ private fun VodPlayerDialog(
 
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
+    val videoTracks = remember(currentTracks) { extractVideoTracks(currentTracks) }
 
     LaunchedEffect(autoPlayCountdown, nextEpisode, isPlaying, sleepTimerMinutes) {
         if (sleepTimerMinutes == -1) {
@@ -6795,6 +6797,7 @@ private fun VodPlayerDialog(
     }
 
     val mainActivity = context as? MainActivity
+    val inPictureInPicture = mainActivity?.pictureInPictureMode == true
     DisposableEffect(player) {
         val unregisterSleepTimerPlayer = sleepTimerActivity?.registerSleepTimerPlayer(player, onDismiss)
         val pictureInPictureDismissedListener = {
@@ -7741,11 +7744,18 @@ private fun VodPlayerDialog(
                 }
             }
 
-            if (showTracksDialog) {
-                PlaybackTracksDialog(
+            AnimatedVisibility(
+                visible = showTracksDialog && !inPictureInPicture,
+                enter = slideInHorizontally { it } + fadeIn(),
+                exit = slideOutHorizontally { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                PlayerControlsDrawer(
                     player = player,
                     audioTracks = audioTracks,
                     subtitleTracks = subtitleTracks,
+                    videoTracks = videoTracks,
+                    isLive = false,
                     onSearchOpenSubtitles = if (openSubtitlesSettings.enabled && openSubtitlesSettings.apiKey.isNotBlank()) {
                         {
                             showTracksDialog = false
@@ -7753,7 +7763,7 @@ private fun VodPlayerDialog(
                         }
                     } else null,
                     onUserTrackSelected = { userManuallySelectedTracks = true },
-                    onDismiss = { showTracksDialog = false }
+                    onClose = { showTracksDialog = false }
                 )
             }
 
@@ -7882,98 +7892,576 @@ private fun extractSubtitleTracks(currentTracks: Tracks?): List<PlaybackTrackIte
     TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
 
 @UnstableApi
+private fun extractVideoTracks(currentTracks: Tracks?): List<PlaybackVideoTrackItem> =
+    TrackLanguageMatcher.extractVideoTracks(currentTracks)
+
+@UnstableApi
 @Composable
-private fun PlaybackTracksDialog(
+private fun PlayerControlsDrawer(
     player: Player,
     audioTracks: List<PlaybackTrackItem>,
     subtitleTracks: List<PlaybackTrackItem>,
+    videoTracks: List<PlaybackVideoTrackItem>,
+    isLive: Boolean,
     onSearchOpenSubtitles: (() -> Unit)? = null,
     onUserTrackSelected: () -> Unit = {},
-    onDismiss: () -> Unit
+    onClose: () -> Unit
 ) {
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
-    val audioFocusRequester = remember { FocusRequester() }
-    val selectedAudio = audioTracks.firstOrNull { it.isSelected } ?: audioTracks.firstOrNull()
+    val isCompact = LocalConfiguration.current.screenWidthDp < 600
+    val closeFocusRequester = remember { FocusRequester() }
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var subtitleDelayMs by remember { mutableLongStateOf(0L) }
+    var isBufferBoosterActive by remember { mutableStateOf(false) }
+
     val selectedSubtitle = subtitleTracks.firstOrNull { it.isSelected }
+    val isAutoVideo = remember(player.trackSelectionParameters) {
+        player.trackSelectionParameters.overrides.values.none { it.type == C.TRACK_TYPE_VIDEO }
+    }
+
+    var liveOffsetMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(player, isLive) {
+        if (isLive) {
+            while (true) {
+                liveOffsetMs = player.currentLiveOffset.coerceAtLeast(0L)
+                delay(1000)
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (isTv) {
             delay(100)
-            runCatching { audioFocusRequester.requestFocus() }
+            runCatching { closeFocusRequester.requestFocus() }
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Subtitles, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Text(strings.audioAndSubtitles, fontWeight = FontWeight.Bold)
+    Surface(
+        shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp),
+        color = Color(0xFF131722).copy(alpha = 0.96f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        shadowElevation = 24.dp,
+        modifier = Modifier
+            .fillMaxHeight()
+            .widthIn(min = 320.dp, max = if (isCompact) 360.dp else 430.dp)
+            .navigationBarsPadding()
+            .statusBarsPadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
+            // Header: Title & Close
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Tune,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        strings.audioAndSubtitles,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = Color.White
+                    )
+                }
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .focusRequester(closeFocusRequester)
+                        .tvFocusHighlight(shape = CircleShape, scaleOnFocus = if (isTv) 1.15f else 1f)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = strings.close,
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
-        },
-        text = {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                PlaybackTrackDropdown(
-                    title = strings.audioTracks,
-                    selectedValue = selectedAudio?.let { localizedPlaybackTrackLabel(it, strings) }
-                        ?: strings.noAudioTracksAvailable,
-                    options = audioTracks.map { localizedPlaybackTrackLabel(it, strings) },
-                    selectedIndex = audioTracks.indexOfFirst { it.isSelected }.coerceAtLeast(0),
-                    enabled = audioTracks.isNotEmpty(),
-                    modifier = Modifier.focusRequester(audioFocusRequester),
-                    onSelected = { index ->
-                        val track = audioTracks[index]
-                        onUserTrackSelected()
-                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-                            .build()
-                    }
-                )
-                PlaybackTrackDropdown(
-                    title = strings.subtitles,
-                    selectedValue = selectedSubtitle?.let { localizedPlaybackTrackLabel(it, strings) }
-                        ?: strings.subtitlesOff,
-                    options = listOf(strings.subtitlesOff) + subtitleTracks.map { localizedPlaybackTrackLabel(it, strings) },
-                    selectedIndex = subtitleTracks.indexOfFirst { it.isSelected }.let { if (it < 0) 0 else it + 1 },
-                    enabled = true,
-                    onSelected = { index ->
-                        onUserTrackSelected()
-                        player.trackSelectionParameters = if (index == 0) {
-                            player.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                                .build()
-                        } else {
-                            val track = subtitleTracks[index - 1]
-                            player.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                                .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-                                .build()
-                        }
-                    }
-                )
-                if (onSearchOpenSubtitles != null) {
-                    OutlinedButton(
-                        onClick = onSearchOpenSubtitles,
-                        modifier = Modifier.fillMaxWidth()
+
+            Spacer(Modifier.height(12.dp))
+
+            // Navigation Tabs
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    0 to strings.audioTracks,
+                    1 to strings.videoQuality,
+                    2 to strings.streamResilience
+                ).forEach { (tabIndex, title) ->
+                    val isSelected = selectedTab == tabIndex
+                    Surface(
+                        onClick = { selectedTab = tabIndex },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
+                        contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.06f)
                     ) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(strings.searchOnlineSubtitles, fontSize = 12.sp)
+                        Box(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = title,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(strings.close)
+
+            Spacer(Modifier.height(14.dp))
+
+            // Content Area
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                when (selectedTab) {
+                    0 -> {
+                        // Audio Tracks Section
+                        Text(
+                            strings.audioTracks,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (audioTracks.isEmpty()) {
+                            Text(
+                                strings.noAudioTracksAvailable,
+                                color = Color.White.copy(alpha = 0.6f),
+                                fontSize = 13.sp
+                            )
+                        } else {
+                            audioTracks.forEach { track ->
+                                val isSelected = track.isSelected
+                                Surface(
+                                    onClick = {
+                                        onUserTrackSelected()
+                                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                            .build()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
+                                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
+                                    modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = null,
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            localizedPlaybackTrackLabel(track, strings),
+                                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.85f),
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        if (isSelected) {
+                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Subtitles Section
+                        Text(
+                            strings.subtitles,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        val isOff = selectedSubtitle == null
+                        Surface(
+                            onClick = {
+                                onUserTrackSelected()
+                                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                    .build()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
+                            border = BorderStroke(1.dp, if (isOff) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
+                            modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Subtitles, contentDescription = null, tint = if (isOff) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    strings.subtitlesOff,
+                                    color = if (isOff) Color.White else Color.White.copy(alpha = 0.85f),
+                                    fontWeight = if (isOff) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (isOff) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+
+                        subtitleTracks.forEach { track ->
+                            val isSelected = track.isSelected
+                            Surface(
+                                onClick = {
+                                    onUserTrackSelected()
+                                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                        .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                        .build()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
+                                border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
+                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Subtitles, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        localizedPlaybackTrackLabel(track, strings),
+                                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.85f),
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (isSelected) {
+                                        Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        if (onSearchOpenSubtitles != null) {
+                            OutlinedButton(
+                                onClick = onSearchOpenSubtitles,
+                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(strings.searchOnlineSubtitles, fontSize = 12.sp)
+                            }
+                        }
+
+                        // Subtitle Delay Calibration (when subtitles are on)
+                        if (selectedSubtitle != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color.White.copy(alpha = 0.04f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            strings.subtitleDelay,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp,
+                                            color = Color.White
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                                        ) {
+                                            Text(
+                                                "${if (subtitleDelayMs > 0) "+" else ""}${String.format(Locale.ROOT, "%.1f", subtitleDelayMs / 1000f)}s",
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Slider(
+                                        value = subtitleDelayMs.toFloat(),
+                                        onValueChange = {
+                                            subtitleDelayMs = (it / 100f).toLong() * 100L
+                                        },
+                                        valueRange = -5000f..5000f,
+                                        steps = 99,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        listOf(
+                                            "-500ms" to -500L,
+                                            "-100ms" to -100L,
+                                            strings.subtitleDelayReset to 0L,
+                                            "+100ms" to 100L,
+                                            "+500ms" to 500L
+                                        ).forEach { (chipLabel, delta) ->
+                                            Surface(
+                                                onClick = {
+                                                    subtitleDelayMs = if (delta == 0L) 0L else (subtitleDelayMs + delta).coerceIn(-5000L, 5000L)
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (delta == 0L) MaterialTheme.colorScheme.primaryContainer else Color.White.copy(alpha = 0.08f),
+                                                contentColor = if (delta == 0L) MaterialTheme.colorScheme.onPrimaryContainer else Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp), scaleOnFocus = 1.08f)
+                                            ) {
+                                                Text(
+                                                    chipLabel,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    1 -> {
+                        // Video Quality Tab
+                        Text(
+                            strings.videoQuality,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        Surface(
+                            onClick = {
+                                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                                    .build()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isAutoVideo) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
+                            border = BorderStroke(1.dp, if (isAutoVideo) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
+                            modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Tune, contentDescription = null, tint = if (isAutoVideo) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        strings.qualityAuto,
+                                        color = if (isAutoVideo) Color.White else Color.White.copy(alpha = 0.85f),
+                                        fontWeight = if (isAutoVideo) FontWeight.Bold else FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        "Adaptive Bitrate (ABR)",
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                if (isAutoVideo) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+
+                        if (videoTracks.isNotEmpty()) {
+                            videoTracks.forEach { track ->
+                                val isSelected = !isAutoVideo && track.isSelected
+                                Surface(
+                                    onClick = {
+                                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                                            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
+                                            .build()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
+                                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
+                                    modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.Tune, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                track.label,
+                                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.85f),
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                fontSize = 13.sp
+                                            )
+                                            if (track.frameRate > 0f) {
+                                                Text(
+                                                    "${track.frameRate.toInt()} fps",
+                                                    color = Color.White.copy(alpha = 0.5f),
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+                                        }
+                                        if (isSelected) {
+                                            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    2 -> {
+                        // Stream Resilience Tab
+                        Text(
+                            strings.streamResilience,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        if (isLive) {
+                            val isDrifted = liveOffsetMs > 12_000L
+                            Surface(
+                                onClick = {
+                                    player.seekToDefaultPosition()
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isDrifted) Color(0xFFE50914).copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f),
+                                border = BorderStroke(1.dp, if (isDrifted) Color(0xFFE50914) else Color.White.copy(alpha = 0.1f)),
+                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (isDrifted) Color(0xFFE50914) else Color(0xFF4CAF50),
+                                        modifier = Modifier.size(10.dp)
+                                    ) {}
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            strings.goLive,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            if (isDrifted) "${liveOffsetMs / 1000}s behind broadcast" else "Synchronized with live broadcast",
+                                            color = Color.White.copy(alpha = 0.6f),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    if (isDrifted) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFFE50914),
+                                            contentColor = Color.White
+                                        ) {
+                                            Text(
+                                                strings.liveBadge,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                isBufferBoosterActive = !isBufferBoosterActive
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isBufferBoosterActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f),
+                            border = BorderStroke(1.dp, if (isBufferBoosterActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
+                            modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Bolt,
+                                    contentDescription = null,
+                                    tint = if (isBufferBoosterActive) Color(0xFFFFB800) else Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        strings.bufferBooster,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        strings.bufferBoosterDesc,
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = isBufferBoosterActive,
+                                    onCheckedChange = { isBufferBoosterActive = it },
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -10819,6 +11307,7 @@ private fun FullscreenPlayer(
 
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
+    val videoTracks = remember(currentTracks) { extractVideoTracks(currentTracks) }
 
     val isTv = LocalFormFactor.current.isTelevision
     val playerFocusRequester = remember { FocusRequester() }
@@ -11619,12 +12108,20 @@ private fun FullscreenPlayer(
                     }
                 }
             }
-            if (showTracksDialog) {
-                PlaybackTracksDialog(
+            AnimatedVisibility(
+                visible = showTracksDialog && !inPictureInPicture,
+                enter = slideInHorizontally { it } + fadeIn(),
+                exit = slideOutHorizontally { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                PlayerControlsDrawer(
                     player = player,
                     audioTracks = audioTracks,
                     subtitleTracks = subtitleTracks,
-                    onDismiss = { showTracksDialog = false }
+                    videoTracks = videoTracks,
+                    isLive = true,
+                    onUserTrackSelected = {},
+                    onClose = { showTracksDialog = false }
                 )
             }
             if (sleepTimerActivity?.sleepTimerState?.awaitingConfirmation == true) {

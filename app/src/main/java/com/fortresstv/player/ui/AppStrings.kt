@@ -224,6 +224,15 @@ interface Strings {
     fun seasonNumber(season: Int): String
     val nowPlayingBadge: String
 
+    val videoQuality: String
+    val qualityAuto: String
+    val subtitleDelay: String
+    val subtitleDelayReset: String
+    val goLive: String
+    val bufferBooster: String
+    val bufferBoosterDesc: String
+    val streamResilience: String
+
     val audioAndSubtitlesDefaults: String
     val preferredAudioLanguage: String
     val preferredSubtitleLanguage: String
@@ -647,6 +656,15 @@ object EnglishStrings : Strings {
     override val episodesDrawer = "Episodes"
     override fun seasonNumber(season: Int) = "Season $season"
     override val nowPlayingBadge = "Now Playing"
+
+    override val videoQuality = "Video Quality"
+    override val qualityAuto = "Auto"
+    override val subtitleDelay = "Subtitle Delay"
+    override val subtitleDelayReset = "Reset"
+    override val goLive = "Go Live"
+    override val bufferBooster = "Buffer Booster"
+    override val bufferBoosterDesc = "Increases stream buffer to 60s for unstable networks"
+    override val streamResilience = "Stream Resilience"
 
     override val audioAndSubtitlesDefaults = "Audio & Subtitles Defaults"
     override val preferredAudioLanguage = "Preferred Audio"
@@ -1073,6 +1091,15 @@ object PortugueseStrings : Strings {
     override val episodesDrawer = "Episódios"
     override fun seasonNumber(season: Int) = "Temporada $season"
     override val nowPlayingBadge = "A reproduzir"
+
+    override val videoQuality = "Qualidade de vídeo"
+    override val qualityAuto = "Automático"
+    override val subtitleDelay = "Atraso das legendas"
+    override val subtitleDelayReset = "Repor"
+    override val goLive = "Ir para Direto"
+    override val bufferBooster = "Reforço de Buffer"
+    override val bufferBoosterDesc = "Aumenta o buffer para 60s para ligações instáveis"
+    override val streamResilience = "Resiliência do fluxo"
 
     override val audioAndSubtitlesDefaults = "Predefinições de Áudio e Legendas"
     override val preferredAudioLanguage = "Áudio preferido"
