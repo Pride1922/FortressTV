@@ -4382,6 +4382,10 @@ private fun XtreamMoviesScreen(
         isContentLoading = isCatalogLoading,
         gridState = gridState,
         gridTestTag = "movies_grid",
+        fastScrollItems = visibleMovies.map { it.movie.name },
+        onFastScrollJump = { targetIndex ->
+            gridState.scrollToItem(targetIndex)
+        },
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
@@ -4509,6 +4513,10 @@ private fun XtreamSeriesScreen(
         isContentLoading = isCatalogLoading,
         gridState = gridState,
         gridTestTag = "series_grid",
+        fastScrollItems = visibleSeries.map { it.series.name },
+        onFastScrollJump = { targetIndex ->
+            gridState.scrollToItem(targetIndex)
+        },
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
         }
@@ -4567,6 +4575,8 @@ private fun LibraryCatalogScaffold(
     isContentLoading: Boolean = false,
     gridState: LazyGridState,
     gridTestTag: String,
+    fastScrollItems: List<String> = emptyList(),
+    onFastScrollJump: (suspend (Int) -> Unit)? = null,
     header: @Composable () -> Unit = {},
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
@@ -5112,18 +5122,115 @@ private fun LibraryCatalogScaffold(
                         Text(emptyMessage, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
                     }
                 } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(if (isTv) 120.dp else 150.dp),
-                        state = gridState,
-                        contentPadding = PaddingValues(
-                            top = if (isTv) 14.dp else 6.dp,
-                            bottom = if (isTv) 14.dp else 6.dp
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
-                        modifier = Modifier.fillMaxSize().testTag(gridTestTag),
-                        content = content
-                    )
+                    val coroutineScope = rememberCoroutineScope()
+                    val letterIndices = remember(fastScrollItems) {
+                        if (fastScrollItems.size < 20) emptyMap()
+                        else {
+                            val map = linkedMapOf<Char, Int>()
+                            fastScrollItems.forEachIndexed { index, name ->
+                                val first = name.trim().firstOrNull()?.uppercaseChar() ?: '#'
+                                val key = if (first in 'A'..'Z') first else '#'
+                                if (!map.containsKey(key)) {
+                                    map[key] = index
+                                }
+                            }
+                            map
+                        }
+                    }
+                    var activeFastScrollLetter by remember { mutableStateOf<Char?>(null) }
+                    val showFastScroller = !isTv && letterIndices.size >= 4
+
+                    Box(Modifier.fillMaxSize()) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(if (isTv) 120.dp else 150.dp),
+                            state = gridState,
+                            contentPadding = PaddingValues(
+                                top = if (isTv) 14.dp else 6.dp,
+                                bottom = if (isTv) 14.dp else 6.dp,
+                                end = if (showFastScroller) 32.dp else 0.dp
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
+                            modifier = Modifier.fillMaxSize().testTag(gridTestTag),
+                            content = content
+                        )
+
+                        if (showFastScroller && onFastScrollJump != null) {
+                            val letters = remember(letterIndices) { letterIndices.keys.toList() }
+                            Column(
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = 4.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                letters.forEach { char ->
+                                    val isSelected = activeFastScrollLetter == char
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.primary
+                                                else Color.Transparent
+                                            )
+                                            .clickable {
+                                                activeFastScrollLetter = char
+                                                letterIndices[char]?.let { targetIndex ->
+                                                    coroutineScope.launch {
+                                                        onFastScrollJump(targetIndex)
+                                                        delay(700)
+                                                        if (activeFastScrollLetter == char) {
+                                                            activeFastScrollLetter = null
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = char.toString(),
+                                            fontSize = 10.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Floating active letter preview bubble
+                            activeFastScrollLetter?.let { letter ->
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shadowElevation = 8.dp,
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .size(64.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = letter.toString(),
+                                            fontSize = 28.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -5290,6 +5397,33 @@ private fun MovieDetailsDialog(
                 .fillMaxHeight(if (isCompact) 0.90f else 0.82f)
         ) {
             Box(Modifier.fillMaxSize()) {
+                val effectiveBackdrop = details?.backdropUrl?.takeIf(String::isNotBlank)
+                if (effectiveBackdrop != null) {
+                    AsyncImage(
+                        model = effectiveBackdrop,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.55f)
+                            .align(Alignment.TopCenter)
+                            .graphicsLayer(alpha = 0.22f)
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.60f)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.35f),
+                                        MaterialTheme.colorScheme.surface
+                                    )
+                                )
+                            )
+                    )
+                }
                 if (useVerticalLayout) {
                     Column(
                         Modifier
@@ -5735,252 +5869,473 @@ private fun SeriesEpisodesDialog(
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+            shadowElevation = 14.dp,
             modifier = Modifier
-                .fillMaxWidth(if (isCompact) 0.94f else 0.86f)
-                .fillMaxHeight(if (isCompact) 0.90f else 0.86f)
+                .fillMaxWidth(if (isCompact) 0.96f else 0.90f)
+                .fillMaxHeight(if (isCompact) 0.94f else 0.90f)
         ) {
-            Column(Modifier.fillMaxSize().padding(if (isCompact) 14.dp else 20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val effectiveCover = details?.coverUrl ?: series.coverUrl
-                    if (!effectiveCover.isNullOrBlank()) {
-                        AsyncImage(
-                            model = effectiveCover,
-                            contentDescription = series.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(if (isCompact) 54.dp else 62.dp, if (isCompact) 80.dp else 92.dp).clip(RoundedCornerShape(10.dp))
-                        )
-                        Spacer(Modifier.width(if (isCompact) 10.dp else 14.dp))
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(series.name, fontSize = if (isCompact) 18.sp else 24.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        val meta = formatVodMetadata(
-                            details?.releaseDate?.take(4) ?: series.year,
-                            details?.rating ?: series.rating
-                        )
-                        if (meta.isNotBlank()) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(meta, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = if (isCompact) 12.sp else 13.sp)
+            Box(Modifier.fillMaxSize()) {
+                // Background Backdrop Fanart with cinematic gradient overlay
+                val effectiveBackdrop = details?.backdropUrl?.takeIf(String::isNotBlank)
+                if (effectiveBackdrop != null) {
+                    AsyncImage(
+                        model = effectiveBackdrop,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.60f)
+                            .align(Alignment.TopCenter)
+                            .graphicsLayer(alpha = 0.20f)
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.65f)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.35f),
+                                        MaterialTheme.colorScheme.surface
+                                    )
+                                )
+                            )
+                    )
+                }
+
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(if (isCompact) 14.dp else 22.dp)
+                ) {
+                    // Header: Cover, Title, Metadata Badges & Action Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(end = 40.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val effectiveCover = details?.coverUrl ?: series.coverUrl
+                        if (!effectiveCover.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+                                modifier = Modifier.size(if (isCompact) 64.dp else 84.dp, if (isCompact) 96.dp else 126.dp)
+                            ) {
+                                AsyncImage(
+                                    model = effectiveCover,
+                                    contentDescription = series.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            Spacer(Modifier.width(if (isCompact) 12.dp else 18.dp))
                         }
-                        val plot = details?.plot ?: series.plot
-                        if (!plot.isNullOrBlank()) {
-                            Spacer(Modifier.height(3.dp))
-                            Text(plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                        details?.let { info ->
-                            Spacer(Modifier.height(4.dp))
-                            val highlights = listOfNotNull(info.genre, info.duration, info.ageRating)
-                            if (highlights.isNotEmpty()) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = series.name,
+                                fontSize = if (isCompact) 19.sp else 26.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val meta = formatVodMetadata(
+                                details?.releaseDate?.take(4) ?: series.year,
+                                details?.rating ?: series.rating
+                            )
+                            if (meta.isNotBlank()) {
+                                Spacer(Modifier.height(3.dp))
                                 Text(
-                                    highlights.joinToString("  ·  "),
+                                    meta,
                                     color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
+                                    fontSize = if (isCompact) 12.sp else 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            val plot = details?.plot ?: series.plot
+                            if (!plot.isNullOrBlank()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    plot,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    maxLines = if (isCompact) 2 else 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            details?.let { info ->
+                                Spacer(Modifier.height(6.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    info.genre?.takeIf(String::isNotBlank)?.let { g ->
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        ) {
+                                            Text(
+                                                text = g.split(",").firstOrNull()?.trim() ?: g,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    info.ageRating?.takeIf(String::isNotBlank)?.let { age ->
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        ) {
+                                            Text(
+                                                text = age,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }
-                    if (isCompact) {
-                        IconButton(
-                            onClick = onToggleFollow,
-                            modifier = Modifier
-                                .focusRequester(seriesFollowFocusRequester)
-                                .tvFocusHighlight(
-                                    shape = CircleShape,
-                                    scaleOnFocus = if (isTv) 1.12f else 1f
-                                )
-                        ) {
-                            Icon(
-                                if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
-                                contentDescription = if (isFollowed) strings.unfollowSeries else strings.followSeries,
-                                tint = if (isFollowed) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    } else {
-                        OutlinedButton(
-                            onClick = onToggleFollow,
-                            modifier = Modifier
-                                .focusRequester(seriesFollowFocusRequester)
-                                .tvFocusHighlight(
-                                    shape = ButtonDefaults.outlinedShape,
-                                    scaleOnFocus = if (isTv) 1.05f else 1f
-                                )
-                        ) {
-                            Icon(
-                                if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (isFollowed) strings.unfollowSeries else strings.followSeries)
-                        }
-                    }
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .focusRequester(seriesCloseFocusRequester)
-                            .tvFocusHighlight(
-                                shape = CircleShape,
-                                scaleOnFocus = if (isTv) 1.12f else 1f
-                            )
-                    ) { Icon(Icons.Default.Close, contentDescription = strings.close) }
-                }
-                if (sortedEpisodes.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (nextUnwatchedEpisode != null) {
-                            Button(
-                                onClick = { onPlay(nextUnwatchedEpisode, client.episodeStreamUrl(nextUnwatchedEpisode)) },
+
+                        // Follow Toggle Button
+                        if (isCompact) {
+                            IconButton(
+                                onClick = onToggleFollow,
                                 modifier = Modifier
-                                    .height(40.dp)
-                                    .focusRequester(playNextFocusRequester)
+                                    .focusRequester(seriesFollowFocusRequester)
                                     .tvFocusHighlight(
-                                        shape = ButtonDefaults.shape,
-                                        scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                        shape = CircleShape,
+                                        scaleOnFocus = if (isTv) 1.12f else 1f
                                     )
                             ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    strings.playNextEpisode(nextUnwatchedEpisode.season, nextUnwatchedEpisode.episodeNumber),
-                                    fontWeight = FontWeight.Bold
+                                Icon(
+                                    if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                    contentDescription = if (isFollowed) strings.unfollowSeries else strings.followSeries,
+                                    tint = if (isFollowed) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         } else {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(
+                                onClick = onToggleFollow,
+                                modifier = Modifier
+                                    .focusRequester(seriesFollowFocusRequester)
+                                    .tvFocusHighlight(
+                                        shape = ButtonDefaults.outlinedShape,
+                                        scaleOnFocus = if (isTv) 1.05f else 1f
+                                    )
+                            ) {
+                                Icon(
+                                    if (isFollowed) Icons.Default.Star else Icons.Outlined.StarOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isFollowed) strings.unfollowSeries else strings.followSeries)
+                            }
+                        }
+                    }
+
+                    // Next Up Quick Action Hero Banner
+                    if (nextUnwatchedEpisode != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Surface(
+                            onClick = { onPlay(nextUnwatchedEpisode, client.episodeStreamUrl(nextUnwatchedEpisode)) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(playNextFocusRequester)
+                                .tvFocusHighlight(
+                                    shape = RoundedCornerShape(14.dp),
+                                    scaleOnFocus = if (isTv) 1.03f else 1.0f
+                                )
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.primary
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Row(
-                                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(strings.allEpisodesWatched, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
                                     }
                                 }
-                                Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = {
-                                    val first = sortedEpisodes.firstOrNull()
-                                    if (first != null) onPlay(first, client.episodeStreamUrl(first))
-                                }) {
-                                    Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(strings.restartSeries, fontSize = 12.sp)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary
+                                        ) {
+                                            Text(
+                                                text = strings.nextUpBadge,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            strings.episodeLabel(nextUnwatchedEpisode.season, nextUnwatchedEpisode.episodeNumber),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        nextUnwatchedEpisode.title,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                val totalUnwatched = sortedEpisodes.count { it.libraryId(sourceId) !in watchedItemIds }
+                                if (totalUnwatched > 0) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        strings.unwatchedEpisodesCount(totalUnwatched),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                         }
-                        val unwatchedCount = sortedEpisodes.count { it.libraryId(sourceId) !in watchedItemIds }
-                        if (unwatchedCount > 0) {
-                            Text(
-                                strings.unwatchedEpisodesCount(unwatchedCount),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-                }
-                if (seasons.size > 1) {
-                    Spacer(Modifier.height(12.dp))
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        itemsIndexed(seasons, key = { _, season -> season }) { index, season ->
-                            FilterChip(
-                                selected = (selectedSeason ?: seasons.firstOrNull()) == season,
-                                onClick = {
-                                    selectedSeason = season
-                                    focusEpisodeAfterSeasonChange = true
-                                },
-                                label = { Text(strings.seasonLabel(season)) },
-                                modifier = (if (index == 0) Modifier.focusRequester(firstSeasonFocusRequester) else Modifier)
-                                    .tvFocusHighlight(
-                                        shape = FilterChipDefaults.shape,
-                                        scaleOnFocus = if (isTv) 1.06f else 1f
-                                    )
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-                when {
-                    loadError -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(strings.seriesDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(8.dp))
-                            Button(
-                                onClick = { retryKey++ },
-                                modifier = Modifier
-                                    .focusRequester(seriesRetryFocusRequester)
-                                    .tvFocusHighlight(
-                                        shape = ButtonDefaults.shape,
-                                        scaleOnFocus = if (isTv) 1.05f else 1f
-                                    )
-                            ) { Text(strings.retry) }
-                        }
-                    }
-                    details == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                        Text(strings.loadingSeriesDetails, modifier = Modifier.padding(top = 72.dp))
-                    }
-                    episodes!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(strings.noEpisodesAvailable)
-                    }
-                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        itemsIndexed(filteredEpisodes, key = { _, episode -> "${episode.season}:${episode.id}" }) { index, episode ->
-                            val epLibraryId = episode.libraryId(sourceId)
-                            val isEpisodeWatched = epLibraryId in watchedItemIds
-                            val epProgress = progressEntries.firstOrNull { it.key == epLibraryId }?.progressFraction
+                    } else if (sortedEpisodes.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Surface(
-                                onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(if (index == 0) Modifier.focusRequester(firstEpisodeFocusRequester) else Modifier)
-                                    .onKeyEvent { keyEvent ->
-                                        if (isTv && keyEvent.type == KeyEventType.KeyDown &&
-                                            (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_MENU ||
-                                             keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_STAR)
-                                        ) {
-                                            onToggleEpisodeWatched(episode)
-                                            true
-                                        } else false
-                                    }
-                                    .tvFocusHighlight(
-                                        shape = RoundedCornerShape(12.dp),
-                                        scaleOnFocus = if (isTv) 1.02f else 1.0f
-                                    )
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
                             ) {
-                                Column {
-                                    Row(
-                                        Modifier.fillMaxWidth().padding(14.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            strings.episodeLabel(episode.season, episode.episodeNumber),
-                                            color = if (isEpisodeWatched) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Spacer(Modifier.width(14.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(episode.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                            if (!episode.plot.isNullOrBlank()) {
-                                                Spacer(Modifier.height(2.dp))
-                                                Text(episode.plot, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.allEpisodesWatched, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                            TextButton(onClick = {
+                                val first = sortedEpisodes.firstOrNull()
+                                if (first != null) onPlay(first, client.episodeStreamUrl(first))
+                            }) {
+                                Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(strings.restartSeries, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    // Season Pill Switcher with Unwatched Badges
+                    if (seasons.size > 1) {
+                        Spacer(Modifier.height(12.dp))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            itemsIndexed(seasons, key = { _, season -> season }) { index, season ->
+                                val seasonEpisodes = episodes?.filter { it.season == season } ?: emptyList()
+                                val seasonUnwatchedCount = seasonEpisodes.count { it.libraryId(sourceId) !in watchedItemIds }
+                                val isSeasonSelected = (selectedSeason ?: seasons.firstOrNull()) == season
+
+                                FilterChip(
+                                    selected = isSeasonSelected,
+                                    onClick = {
+                                        selectedSeason = season
+                                        focusEpisodeAfterSeasonChange = true
+                                    },
+                                    label = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(strings.seasonLabel(season))
+                                            if (seasonUnwatchedCount > 0) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = if (isSeasonSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                                    contentColor = if (isSeasonSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+                                                ) {
+                                                    Text(
+                                                        text = seasonUnwatchedCount.toString(),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                                    )
+                                                }
                                             }
                                         }
+                                    },
+                                    modifier = (if (index == 0) Modifier.focusRequester(firstSeasonFocusRequester) else Modifier)
+                                        .tvFocusHighlight(
+                                            shape = FilterChipDefaults.shape,
+                                            scaleOnFocus = if (isTv) 1.06f else 1f
+                                        )
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Episode Content List
+                    when {
+                        loadError -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(strings.seriesDetailsUnavailable, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(8.dp))
+                                Button(
+                                    onClick = { retryKey++ },
+                                    modifier = Modifier
+                                        .focusRequester(seriesRetryFocusRequester)
+                                        .tvFocusHighlight(
+                                            shape = ButtonDefaults.shape,
+                                            scaleOnFocus = if (isTv) 1.05f else 1f
+                                        )
+                                ) { Text(strings.retry) }
+                            }
+                        }
+                        details == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                            Text(strings.loadingSeriesDetails, modifier = Modifier.padding(top = 72.dp))
+                        }
+                        episodes!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(strings.noEpisodesAvailable)
+                        }
+                        else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            itemsIndexed(filteredEpisodes, key = { _, episode -> "${episode.season}:${episode.id}" }) { index, episode ->
+                                val epLibraryId = episode.libraryId(sourceId)
+                                val isEpisodeWatched = epLibraryId in watchedItemIds
+                                val epProgress = progressEntries.firstOrNull { it.key == epLibraryId }?.progressFraction
+                                val previewUrl = episode.posterUrl?.takeIf(String::isNotBlank)
+                                    ?: details?.backdropUrl?.takeIf(String::isNotBlank)
+                                    ?: details?.coverUrl
+
+                                Surface(
+                                    onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(if (index == 0) Modifier.focusRequester(firstEpisodeFocusRequester) else Modifier)
+                                        .onKeyEvent { keyEvent ->
+                                            if (isTv && keyEvent.type == KeyEventType.KeyDown &&
+                                                (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_MENU ||
+                                                 keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_STAR)
+                                            ) {
+                                                onToggleEpisodeWatched(episode)
+                                                true
+                                            } else false
+                                        }
+                                        .tvFocusHighlight(
+                                            shape = RoundedCornerShape(14.dp),
+                                            scaleOnFocus = if (isTv) 1.02f else 1.0f
+                                        )
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // 16:9 Thumbnail Frame
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            modifier = Modifier
+                                                .width(if (isCompact) 100.dp else 128.dp)
+                                                .aspectRatio(16f / 9f)
+                                        ) {
+                                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                if (!previewUrl.isNullOrBlank()) {
+                                                    AsyncImage(
+                                                        model = previewUrl,
+                                                        contentDescription = episode.title,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(28.dp)
+                                                    )
+                                                }
+                                                // Progress bar at the bottom edge of the thumbnail
+                                                if (epProgress != null && epProgress > 0f && !isEpisodeWatched) {
+                                                    LinearProgressIndicator(
+                                                        progress = { epProgress },
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(3.dp)
+                                                            .align(Alignment.BottomCenter),
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(Modifier.width(14.dp))
+
+                                        // Episode Badge, Title, and Plot
+                                        Column(Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = strings.episodeLabel(episode.season, episode.episodeNumber),
+                                                    color = if (isEpisodeWatched) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp
+                                                )
+                                            }
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                text = episode.title,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (!episode.plot.isNullOrBlank()) {
+                                                Spacer(Modifier.height(3.dp))
+                                                Text(
+                                                    text = episode.plot,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 11.sp,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+
+                                        // Watched Checkmark Button
                                         IconButton(
                                             onClick = { onToggleEpisodeWatched(episode) },
                                             enabled = !isTv,
@@ -5996,20 +6351,39 @@ private fun SeriesEpisodesDialog(
                                             )
                                         }
                                         Spacer(Modifier.width(4.dp))
-                                        Icon(Icons.Default.PlayArrow, contentDescription = strings.watchNow)
-                                    }
-                                    if (epProgress != null && epProgress > 0f && !isEpisodeWatched) {
-                                        LinearProgressIndicator(
-                                            progress = { epProgress },
-                                            modifier = Modifier.fillMaxWidth().height(3.dp),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = strings.watchNow,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                // Close Button in Top-Right
+                FilledIconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(if (isCompact) 8.dp else 14.dp)
+                        .focusRequester(seriesCloseFocusRequester)
+                        .tvFocusHighlight(
+                            shape = CircleShape,
+                            scaleOnFocus = if (isTv) 1.15f else 1f
+                        ),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = strings.close,
+                        modifier = Modifier.size(if (isCompact) 18.dp else 22.dp)
+                    )
                 }
             }
         }

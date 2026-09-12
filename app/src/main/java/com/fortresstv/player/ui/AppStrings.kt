@@ -99,6 +99,10 @@ interface Strings {
     val allEpisodesWatched: String
     val restartSeries: String
     fun unwatchedEpisodesCount(count: Int): String
+    fun seasonUnwatchedCount(count: Int): String
+    val nextUpBadge: String
+    val fastScrollJump: String
+    val jumpToLetter: String
     fun searchInGroup(group: String): String
     val searchChannels: String
     val noChannelsMatch: String
@@ -519,6 +523,10 @@ object EnglishStrings : Strings {
     override val allEpisodesWatched = "All episodes watched"
     override val restartSeries = "Restart Series"
     override fun unwatchedEpisodesCount(count: Int) = "$count ${if (count == 1) "unwatched" else "unwatched"}"
+    override fun seasonUnwatchedCount(count: Int) = "$count ${if (count == 1) "unwatched" else "unwatched"}"
+    override val nextUpBadge = "Next Up"
+    override val fastScrollJump = "Fast scroll"
+    override val jumpToLetter = "Jump to"
     override fun searchInGroup(group: String) = "Search in $group"
     override val searchChannels = "Search channels"
     override val noChannelsMatch = "No channels match your search."
@@ -941,6 +949,10 @@ object PortugueseStrings : Strings {
     override val allEpisodesWatched = "Todos os episódios vistos"
     override val restartSeries = "Recomeçar série"
     override fun unwatchedEpisodesCount(count: Int) = if (count == 1) "1 por ver" else "$count por ver"
+    override fun seasonUnwatchedCount(count: Int) = if (count == 1) "1 por ver" else "$count por ver"
+    override val nextUpBadge = "A Seguir"
+    override val fastScrollJump = "Deslocamento rápido"
+    override val jumpToLetter = "Saltar para"
     override fun searchInGroup(group: String) = "Pesquisar em $group"
     override val searchChannels = "Pesquisar canais"
     override val noChannelsMatch = "Nenhum canal corresponde à sua pesquisa."
