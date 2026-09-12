@@ -5179,7 +5179,51 @@ private fun LibraryCatalogScaffold(
                                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                         RoundedCornerShape(12.dp)
                                     )
-                                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                                    .padding(vertical = 4.dp, horizontal = 2.dp)
+                                    .pointerInput(letters, letterIndices) {
+                                        detectVerticalDragGestures(
+                                            onDragStart = { offset ->
+                                                val totalH = size.height.toFloat()
+                                                if (totalH > 0f && letters.isNotEmpty()) {
+                                                    val frac = (offset.y / totalH).coerceIn(0f, 0.999f)
+                                                    val letterIdx = (frac * letters.size).toInt().coerceIn(0, letters.lastIndex)
+                                                    val char = letters[letterIdx]
+                                                    activeFastScrollLetter = char
+                                                    letterIndices[char]?.let { targetIndex ->
+                                                        coroutineScope.launch {
+                                                            onFastScrollJump(targetIndex)
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            onVerticalDrag = { change, _ ->
+                                                change.consume()
+                                                val totalH = size.height.toFloat()
+                                                if (totalH > 0f && letters.isNotEmpty()) {
+                                                    val frac = (change.position.y / totalH).coerceIn(0f, 0.999f)
+                                                    val letterIdx = (frac * letters.size).toInt().coerceIn(0, letters.lastIndex)
+                                                    val char = letters[letterIdx]
+                                                    if (activeFastScrollLetter != char) {
+                                                        activeFastScrollLetter = char
+                                                        letterIndices[char]?.let { targetIndex ->
+                                                            coroutineScope.launch {
+                                                                onFastScrollJump(targetIndex)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                coroutineScope.launch {
+                                                    delay(600)
+                                                    activeFastScrollLetter = null
+                                                }
+                                            },
+                                            onDragCancel = {
+                                                activeFastScrollLetter = null
+                                            }
+                                        )
+                                    },
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
