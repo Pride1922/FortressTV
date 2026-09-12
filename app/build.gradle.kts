@@ -25,8 +25,8 @@ android {
         applicationId = "com.fortresstv.player"
         minSdk = 26
         targetSdk = 36
-        versionCode = 30
-        versionName = "1.0.0-RC5"
+        versionCode = 31
+        versionName = "1.0.0-RC6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
