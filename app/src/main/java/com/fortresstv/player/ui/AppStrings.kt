@@ -184,6 +184,12 @@ interface Strings {
     fun nextEpisodeIn(seconds: Int): String
     val playNow: String
     val sleepTimerExpired: String
+    val areYouStillWatching: String
+    fun stillWatchingCountdown(seconds: Int): String
+    val stopPlayback: String
+    val setAnotherTimer: String
+    val continueWithoutTimer: String
+    val playNextThenStop: String
     val audioAndSubtitles: String
     val audioTracks: String
     val subtitles: String
@@ -246,6 +252,7 @@ interface Strings {
     val tabPlaylists: String
     val tabEpg: String
     val tabGeneral: String
+    val tabSubtitles: String
     val tabAbout: String
     val language: String
     val playback: String
@@ -564,14 +571,20 @@ object EnglishStrings : Strings {
     override val autoPlayNext = "Auto-Play Next"
     override val autoPlayNextDesc = "Automatically play next episode when current ends"
     override val sleepTimer = "Sleep Timer"
-    override val sleepTimerHint = "Stops playback and closes FortressTV automatically, even after leaving fullscreen. No confirmation required."
+    override val sleepTimerHint = "Pauses playback when the timer finishes and asks whether you are still watching. No response stops playback after 30 seconds."
     override val sleepTimerOff = "Off"
-    override val endOfEpisode = "End of video"
+    override val endOfEpisode = "Ask at end of video"
     override val endOfProgramme = "End of current programme"
     override fun sleepTimerSet(minutes: Int) = "Sleep timer set for $minutes minutes"
     override fun nextEpisodeIn(seconds: Int) = "Next episode in ${seconds}s"
     override val playNow = "Play Now"
     override val sleepTimerExpired = "Sleep timer finished. Playback stopped."
+    override val areYouStillWatching = "Are you still watching?"
+    override fun stillWatchingCountdown(seconds: Int) = "Playback will stop in ${seconds}s if there is no response."
+    override val stopPlayback = "Stop playback"
+    override val setAnotherTimer = "Set another timer"
+    override val continueWithoutTimer = "Continue without timer"
+    override val playNextThenStop = "Play next episode, then stop"
     override val audioAndSubtitles = "Audio & Subtitles"
     override val audioTracks = "Audio"
     override val subtitles = "Subtitles"
@@ -598,10 +611,10 @@ object EnglishStrings : Strings {
     override val openSubtitles = "OpenSubtitles"
     override val openSubtitlesEnabled = "Enable OpenSubtitles"
     override val openSubtitlesApiKey = "API Key"
-    override val openSubtitlesUsername = "Username (optional)"
-    override val openSubtitlesPassword = "Password (optional)"
+    override val openSubtitlesUsername = "OpenSubtitles username"
+    override val openSubtitlesPassword = "OpenSubtitles password"
     override val openSubtitlesAutoSearch = "Auto-search missing subtitles"
-    override val openSubtitlesAutoSearchDesc = "Automatically search online when video lacks Portuguese subtitles"
+    override val openSubtitlesAutoSearchDesc = "Download only when the video lacks the preferred subtitle language selected above"
     override val openSubtitlesPreferPtPt = "Prioritize Portugal Portuguese (pt-PT)"
     override val openSubtitlesPreferPtPtDesc = "Show and select pt-PT subtitles before Brazilian Portuguese"
     override val searchOnlineSubtitles = "Search online subtitles"
@@ -612,7 +625,7 @@ object EnglishStrings : Strings {
     override val openSubtitlesTestConnection = "Test Connection"
     override val openSubtitlesConnectionSuccess = "Connection successful"
     override val openSubtitlesConnectionFailed = "Connection failed"
-    override val openSubtitlesAccountCredentials = "Account credentials (for download quota)"
+    override val openSubtitlesAccountCredentials = "Username and password are required for downloads. Use your OpenSubtitles username, not your email address."
     override val openSubtitlesApiKeyRequired = "API Key is required by OpenSubtitles.com"
     override val openSubtitlesApiKeyHint = "Get a free API key at opensubtitles.com/consumers"
 
@@ -634,6 +647,7 @@ object EnglishStrings : Strings {
     override val tabPlaylists = "Playlists"
     override val tabEpg = "EPG Guide"
     override val tabGeneral = "General"
+    override val tabSubtitles = "Audio & Subtitles"
     override val tabAbout = "About"
     override val language = "Language"
     override val playback = "Playback"
@@ -954,14 +968,20 @@ object PortugueseStrings : Strings {
     override val autoPlayNext = "Reprodução automática"
     override val autoPlayNextDesc = "Reproduzir automaticamente o próximo episódio"
     override val sleepTimer = "Temporizador de suspensão"
-    override val sleepTimerHint = "Para a reprodução e fecha o FortressTV automaticamente, mesmo depois de sair do ecrã inteiro. Não é necessária confirmação."
+    override val sleepTimerHint = "Pausa a reprodução quando o temporizador termina e pergunta se ainda está a ver. Sem resposta, para a reprodução após 30 segundos."
     override val sleepTimerOff = "Desativado"
-    override val endOfEpisode = "No final do vídeo"
+    override val endOfEpisode = "Perguntar no final do vídeo"
     override val endOfProgramme = "No final do programa atual"
     override fun sleepTimerSet(minutes: Int) = "Temporizador definido para $minutes minutos"
     override fun nextEpisodeIn(seconds: Int) = "Próximo episódio em ${seconds}s"
     override val playNow = "Reproduzir Agora"
     override val sleepTimerExpired = "Temporizador de suspensão terminado. Reprodução parada."
+    override val areYouStillWatching = "Ainda está a ver?"
+    override fun stillWatchingCountdown(seconds: Int) = "A reprodução será parada dentro de ${seconds}s se não houver resposta."
+    override val stopPlayback = "Parar reprodução"
+    override val setAnotherTimer = "Definir outro temporizador"
+    override val continueWithoutTimer = "Continuar sem temporizador"
+    override val playNextThenStop = "Reproduzir o próximo episódio e depois parar"
     override val audioAndSubtitles = "Áudio e Legendas"
     override val audioTracks = "Áudio"
     override val subtitles = "Legendas"
@@ -988,10 +1008,10 @@ object PortugueseStrings : Strings {
     override val openSubtitles = "OpenSubtitles"
     override val openSubtitlesEnabled = "Ativar OpenSubtitles"
     override val openSubtitlesApiKey = "Chave de API"
-    override val openSubtitlesUsername = "Nome de utilizador (opcional)"
-    override val openSubtitlesPassword = "Palavra-passe (opcional)"
+    override val openSubtitlesUsername = "Nome de utilizador do OpenSubtitles"
+    override val openSubtitlesPassword = "Palavra-passe do OpenSubtitles"
     override val openSubtitlesAutoSearch = "Pesquisa automática de legendas em falta"
-    override val openSubtitlesAutoSearchDesc = "Pesquisar online automaticamente quando o vídeo não tiver legendas em português"
+    override val openSubtitlesAutoSearchDesc = "Transferir apenas quando o vídeo não tiver legendas no idioma preferido selecionado acima"
     override val openSubtitlesPreferPtPt = "Priorizar português de Portugal (pt-PT)"
     override val openSubtitlesPreferPtPtDesc = "Apresentar e selecionar legendas pt-PT antes de português do Brasil"
     override val searchOnlineSubtitles = "Pesquisar legendas online"
@@ -1002,7 +1022,7 @@ object PortugueseStrings : Strings {
     override val openSubtitlesTestConnection = "Testar ligação"
     override val openSubtitlesConnectionSuccess = "Ligação com sucesso"
     override val openSubtitlesConnectionFailed = "Falha na ligação"
-    override val openSubtitlesAccountCredentials = "Credenciais de conta (para quota de transferências)"
+    override val openSubtitlesAccountCredentials = "O nome de utilizador e a palavra-passe são obrigatórios para transferências. Use o nome de utilizador do OpenSubtitles, não o endereço de e-mail."
     override val openSubtitlesApiKeyRequired = "A chave de API é obrigatória no OpenSubtitles.com"
     override val openSubtitlesApiKeyHint = "Obtenha uma chave gratuita em opensubtitles.com/consumers"
 
@@ -1024,6 +1044,7 @@ object PortugueseStrings : Strings {
     override val tabPlaylists = "Listas"
     override val tabEpg = "Guia EPG"
     override val tabGeneral = "Geral"
+    override val tabSubtitles = "Áudio e legendas"
     override val tabAbout = "Sobre"
     override val language = "Idioma"
     override val playback = "Reprodução"

@@ -2,9 +2,57 @@ package com.fortresstv.player.subtitles
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class OpenSubtitlesClientTest {
+
+    @Test
+    fun autoSearchOnlyRunsWhenSelectedLanguageIsMissing() {
+        assertFalse(shouldAutoSearchOpenSubtitles(
+            enabled = true,
+            autoSearch = true,
+            apiKey = "key", username = "user", password = "password",
+            preferredLanguage = "es",
+            availableTracks = listOf("spa" to "Español")
+        ))
+        assertTrue(shouldAutoSearchOpenSubtitles(
+            enabled = true, autoSearch = true,
+            apiKey = "key", username = "user", password = "password",
+            preferredLanguage = "es",
+            availableTracks = listOf("en" to "English")
+        ))
+        assertFalse(shouldAutoSearchOpenSubtitles(
+            enabled = true, autoSearch = true,
+            apiKey = "key", username = "user", password = "password",
+            preferredLanguage = "off",
+            availableTracks = emptyList()
+        ))
+    }
+
+    @Test
+    fun languageQueryUsesPreferredAppLanguage() {
+        assertEquals("es", openSubtitlesLanguageQuery("es", preferPtPt = true))
+        assertEquals("pt-PT,pt,pt-BR", openSubtitlesLanguageQuery("pt", preferPtPt = true))
+        assertEquals(null, openSubtitlesLanguageQuery("off", preferPtPt = true))
+    }
+
+    @Test
+    fun loginResponseBaseUrlIsRestrictedToOfficialHosts() {
+        val client = OpenSubtitlesClient("key")
+        assertEquals("https://vip-api.opensubtitles.com/api/v1", client.normalizeBaseUrl("vip-api.opensubtitles.com"))
+        assertEquals("https://api.opensubtitles.com/api/v1", client.normalizeBaseUrl("https://api.opensubtitles.com/"))
+        assertEquals("https://api.opensubtitles.com/api/v1", client.normalizeBaseUrl("malicious.example"))
+    }
+
+    @Test
+    fun apiErrorsExposeMessageWithoutDumpingResponse() {
+        val client = OpenSubtitlesClient("key")
+        assertEquals(
+            "Login failed (HTTP 401): Invalid credentials",
+            client.apiError("Login failed", 401, """{"message":"Invalid credentials","secret":"hidden"}""")
+        )
+    }
 
     @Test
     fun parseSearchResultsExtractsValidItems() {

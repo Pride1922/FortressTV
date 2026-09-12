@@ -18,13 +18,14 @@ class OpenSubtitlesClient(
 ) {
 
     private var cachedToken: String? = null
+    private var apiBaseUrl = DEFAULT_API_BASE_URL
 
     suspend fun login(): Result<String> = withContext(Dispatchers.IO) {
         if (username.isNullOrBlank() || password.isNullOrBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Username or password is blank"))
         }
         runCatching {
-            val url = URI("https://api.opensubtitles.com/api/v1/login").toURL()
+            val url = URI("$DEFAULT_API_BASE_URL/login").toURL()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 10_000
@@ -46,7 +47,7 @@ class OpenSubtitlesClient(
             val responseCode = conn.responseCode
             if (responseCode !in 200..299) {
                 val error = readStream(conn.errorStream ?: conn.inputStream)
-                throw IllegalStateException("Login failed (HTTP $responseCode): $error")
+                throw IllegalStateException(apiError("Login failed", responseCode, error))
             }
 
             val json = JSONObject(readStream(conn.inputStream))
@@ -55,6 +56,7 @@ class OpenSubtitlesClient(
                 throw IllegalStateException("Login succeeded but no token returned")
             }
             cachedToken = token
+            apiBaseUrl = normalizeBaseUrl(json.optString("base_url"))
             token
         }
     }
@@ -64,11 +66,13 @@ class OpenSubtitlesClient(
         season: Int? = null,
         episode: Int? = null,
         imdbId: String? = null,
-        languages: String = "pt-pt,pt,pt-br"
+        languages: String? = null
     ): Result<List<OpenSubtitlesItem>> = withContext(Dispatchers.IO) {
         runCatching {
             val params = mutableListOf<String>()
-            params.add("languages=" + URLEncoder.encode(languages, "UTF-8"))
+            languages?.takeIf { it.isNotBlank() }?.let {
+                params.add("languages=" + URLEncoder.encode(it, "UTF-8"))
+            }
 
             val cleanImdb = imdbId?.replace(Regex("[^0-9]"), "")?.takeIf { it.isNotBlank() }
             if (cleanImdb != null) {
@@ -85,7 +89,7 @@ class OpenSubtitlesClient(
                 params.add("type=movie")
             }
 
-            val url = URI("https://api.opensubtitles.com/api/v1/subtitles?" + params.joinToString("&")).toURL()
+            val url = URI("$apiBaseUrl/subtitles?" + params.joinToString("&")).toURL()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 12_000
@@ -99,7 +103,7 @@ class OpenSubtitlesClient(
             val responseCode = conn.responseCode
             if (responseCode !in 200..299) {
                 val error = readStream(conn.errorStream ?: conn.inputStream)
-                throw IllegalStateException("Search failed (HTTP $responseCode): $error")
+                throw IllegalStateException(apiError("Search failed", responseCode, error))
             }
 
             val responseBody = readStream(conn.inputStream)
@@ -110,10 +114,11 @@ class OpenSubtitlesClient(
     suspend fun downloadSubtitle(fileId: Int): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             if (cachedToken == null && !username.isNullOrBlank() && !password.isNullOrBlank()) {
-                login()
+                login().getOrThrow()
             }
+            if (cachedToken == null) throw IllegalStateException("Username and password are required to download subtitles")
 
-            val url = URI("https://api.opensubtitles.com/api/v1/download").toURL()
+            val url = URI("$apiBaseUrl/download").toURL()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 10_000
@@ -135,7 +140,7 @@ class OpenSubtitlesClient(
             val responseCode = conn.responseCode
             if (responseCode !in 200..299) {
                 val error = readStream(conn.errorStream ?: conn.inputStream)
-                throw IllegalStateException("Download request failed (HTTP $responseCode): $error")
+                throw IllegalStateException(apiError("Download request failed", responseCode, error))
             }
 
             val json = JSONObject(readStream(conn.inputStream))
@@ -163,11 +168,15 @@ class OpenSubtitlesClient(
 
     suspend fun testConnection(): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
-            if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
+            if (apiKey.isBlank()) throw IllegalArgumentException("API key is blank")
+            if (username.isNullOrBlank() xor password.isNullOrBlank()) {
+                throw IllegalArgumentException("Enter both username and password, or leave both blank")
+            }
+            if (!username.isNullOrBlank()) {
                 login().getOrThrow()
                 true
             } else {
-                val url = URI("https://api.opensubtitles.com/api/v1/infos/formats").toURL()
+                val url = URI("$DEFAULT_API_BASE_URL/infos/formats").toURL()
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 8_000
@@ -177,9 +186,28 @@ class OpenSubtitlesClient(
                     setRequestProperty("Accept", "application/json")
                 }
                 val code = conn.responseCode
-                if (code in 200..299) true else throw IllegalStateException("HTTP $code")
+                if (code in 200..299) true else {
+                    val error = readStream(conn.errorStream ?: conn.inputStream)
+                    throw IllegalStateException(apiError("API key check failed", code, error))
+                }
             }
         }
+    }
+
+    internal fun normalizeBaseUrl(host: String): String {
+        val cleanHost = host.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
+        return when (cleanHost) {
+            "api.opensubtitles.com", "vip-api.opensubtitles.com" -> "https://$cleanHost/api/v1"
+            else -> DEFAULT_API_BASE_URL
+        }
+    }
+
+    internal fun apiError(action: String, responseCode: Int, responseBody: String): String {
+        val message = runCatching {
+            val json = JSONObject(responseBody)
+            json.optString("message").ifBlank { json.optString("error") }
+        }.getOrNull().orEmpty()
+        return "$action (HTTP $responseCode)" + if (message.isBlank()) "" else ": $message"
     }
 
     internal fun parseSearchResults(jsonString: String): List<OpenSubtitlesItem> {
@@ -226,5 +254,9 @@ class OpenSubtitlesClient(
 
     private fun stripBom(content: String): String {
         return if (content.startsWith("\uFEFF")) content.substring(1) else content
+    }
+
+    private companion object {
+        const val DEFAULT_API_BASE_URL = "https://api.opensubtitles.com/api/v1"
     }
 }

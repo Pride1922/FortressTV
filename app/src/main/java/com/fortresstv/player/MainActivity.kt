@@ -283,6 +283,8 @@ import com.fortresstv.player.subtitles.OpenSubtitlesSearchDialog
 import com.fortresstv.player.subtitles.OpenSubtitlesSettings
 import com.fortresstv.player.subtitles.OpenSubtitlesSettingsStore
 import com.fortresstv.player.subtitles.SubtitleDiskCache
+import com.fortresstv.player.subtitles.openSubtitlesLanguageQuery
+import com.fortresstv.player.subtitles.shouldAutoSearchOpenSubtitles
 import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
@@ -332,7 +334,7 @@ class MainActivity : ComponentActivity() {
     internal var sleepTimerState by mutableStateOf(PlaybackSleepTimerState())
         private set
     private val sleepTimerHandler = Handler(Looper.getMainLooper())
-    private val sleepTimerPlayers = mutableSetOf<Player>()
+    private val sleepTimerPlayers = mutableMapOf<Player, () -> Unit>()
     internal val playbackSleepTimer = PlaybackSleepTimer(
         elapsedRealtime = android.os.SystemClock::elapsedRealtime,
         schedule = { delayMs, action ->
@@ -343,28 +345,31 @@ class MainActivity : ComponentActivity() {
         },
         onStateChanged = { sleepTimerState = it },
         onExpired = {
-            // Stop synchronously before finishing: no dialog, autoplay, or PiP escape.
+            // Pause immediately. The visible player asks whether the user is still watching.
             updatePictureInPictureState(enabled = false, fullscreenPlaying = false)
-            sleepTimerPlayers.toList().forEach { it.pause(); it.stop() }
+            sleepTimerPlayers.keys.toList().forEach { it.pause() }
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            finishAndRemoveTask()
+        },
+        onAutoStop = {
+            val registrations = sleepTimerPlayers.toList()
+            registrations.forEach { (player, _) -> player.stop() }
+            registrations.forEach { (_, dismiss) -> dismiss() }
         }
     )
 
-    internal fun registerSleepTimerPlayer(player: Player): () -> Unit {
+    internal fun registerSleepTimerPlayer(player: Player, onAutoStop: () -> Unit): () -> Unit {
         val listener = object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 playbackSleepTimer.checkDeadline()
                 if (playWhenReady && playbackSleepTimer.expired) {
                     player.pause()
-                    player.stop()
                 }
             }
         }
-        sleepTimerPlayers.add(player)
+        sleepTimerPlayers[player] = onAutoStop
         player.addListener(listener)
         playbackSleepTimer.checkDeadline()
-        if (playbackSleepTimer.expired) { player.pause(); player.stop() }
+        if (playbackSleepTimer.expired) player.pause()
         return {
             player.removeListener(listener)
             sleepTimerPlayers.remove(player)
@@ -5890,6 +5895,52 @@ private class SizeLimitedInputStream(
     }
 }
 
+@Composable
+private fun SleepTimerConfirmationDialog(
+    secondsRemaining: Int,
+    canContinue: Boolean,
+    canPlayNextThenStop: Boolean,
+    onStop: () -> Unit,
+    onContinue: () -> Unit,
+    onPlayNextThenStop: () -> Unit,
+    onSetTimer: (Int) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(strings.areYouStillWatching, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(strings.stillWatchingCountdown(secondsRemaining))
+                if (canPlayNextThenStop) {
+                    Button(onClick = onPlayNextThenStop, modifier = Modifier.fillMaxWidth()) {
+                        Text(strings.playNextThenStop)
+                    }
+                }
+                if (canContinue) {
+                    OutlinedButton(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+                        Text(strings.continueWithoutTimer)
+                    }
+                }
+                Text(strings.setAnotherTimer, fontWeight = FontWeight.SemiBold)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(15, 30, 45, 60, 90, 120).forEach { minutes ->
+                        OutlinedButton(onClick = { onSetTimer(minutes) }) {
+                            Text("$minutes min")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onStop) { Text(strings.stopPlayback) }
+        }
+    )
+}
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun VodPlayerDialog(
@@ -5939,7 +5990,7 @@ private fun VodPlayerDialog(
     val sleepTimerRemainingText = sleepTimerActivity?.sleepTimerState?.remainingMinutes?.let { "${it}m" }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
 
-    var currentTracks by remember { mutableStateOf<Tracks?>(null) }
+    var currentTracks by remember(request.key) { mutableStateOf<Tracks?>(null) }
     var userManuallySelectedTracks by remember(request.key) { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var selectedTrackTab by remember { mutableIntStateOf(0) }
@@ -6127,7 +6178,7 @@ private fun VodPlayerDialog(
 
     val mainActivity = context as? MainActivity
     DisposableEffect(player) {
-        val unregisterSleepTimerPlayer = sleepTimerActivity?.registerSleepTimerPlayer(player)
+        val unregisterSleepTimerPlayer = sleepTimerActivity?.registerSleepTimerPlayer(player, onDismiss)
         val pictureInPictureDismissedListener = {
             player.stop()
             onDismiss()
@@ -6200,54 +6251,62 @@ private fun VodPlayerDialog(
 
     var autoSearchAttempted by remember(request.key) { mutableStateOf(false) }
     LaunchedEffect(currentTracks, openSubtitlesSettings, preferredSubtitleLanguage) {
-        if (autoSearchAttempted || !openSubtitlesSettings.enabled || openSubtitlesSettings.apiKey.isBlank() || !openSubtitlesSettings.autoSearch) return@LaunchedEffect
+        if (autoSearchAttempted) return@LaunchedEffect
         if (currentTracks == null) return@LaunchedEffect
 
         val subTracks = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
-        val hasPtSub = subTracks.any { TrackLanguageMatcher.matchesLanguage(it.language, it.label, "pt") }
-        if (hasPtSub) {
-            autoSearchAttempted = true
-            return@LaunchedEffect
-        }
+        val shouldSearch = shouldAutoSearchOpenSubtitles(
+            enabled = openSubtitlesSettings.enabled,
+            autoSearch = openSubtitlesSettings.autoSearch,
+            apiKey = openSubtitlesSettings.apiKey,
+            username = openSubtitlesSettings.username,
+            password = openSubtitlesSettings.password,
+            preferredLanguage = preferredSubtitleLanguage,
+            availableTracks = subTracks.map { it.language to it.label }
+        )
+        if (!shouldSearch) return@LaunchedEffect
 
-        if (preferredSubtitleLanguage == "pt" || preferredSubtitleLanguage == "default") {
-            autoSearchAttempted = true
-            val queryTitle = request.seriesName ?: request.title
-            val languages = if (openSubtitlesSettings.preferPtPt) "pt-pt,pt,pt-br" else "pt,pt-pt,pt-br"
-            val client = OpenSubtitlesClient(
-                apiKey = openSubtitlesSettings.apiKey,
-                username = openSubtitlesSettings.username.takeIf { it.isNotBlank() },
-                password = openSubtitlesSettings.password.takeIf { it.isNotBlank() }
-            )
-            val results = client.searchSubtitles(
-                query = queryTitle,
-                season = request.season,
-                episode = request.episode,
-                languages = languages
-            ).getOrDefault(emptyList())
+        autoSearchAttempted = true
+        val queryTitle = request.seriesName ?: request.title
+        val languages = openSubtitlesLanguageQuery(
+            preferredSubtitleLanguage,
+            openSubtitlesSettings.preferPtPt
+        ) ?: return@LaunchedEffect
+        val client = OpenSubtitlesClient(
+            apiKey = openSubtitlesSettings.apiKey,
+            username = openSubtitlesSettings.username,
+            password = openSubtitlesSettings.password
+        )
+        val loginResult = client.login()
+        if (loginResult.isFailure) return@LaunchedEffect
+        val results = client.searchSubtitles(
+            query = queryTitle,
+            season = request.season,
+            episode = request.episode,
+            languages = languages
+        ).getOrDefault(emptyList())
 
-            if (results.isNotEmpty()) {
-                val sorted = if (openSubtitlesSettings.preferPtPt) {
-                    results.sortedWith(
-                        compareByDescending<OpenSubtitlesItem> { it.language == "pt-pt" }
-                            .thenByDescending { it.downloads }
-                    )
-                } else {
-                    results.sortedByDescending { it.downloads }
-                }
-                val best = sorted.first()
-                val cacheKey = "sub_${request.sourceId}_${request.itemId}_${best.fileId}"
-                val cachedFile = subtitleCache.subtitleFile(cacheKey)
-                if (cachedFile.exists() && cachedFile.length() > 0) {
-                    attachAndSelectSubtitle(best, cachedFile)
+        if (results.isNotEmpty()) {
+            val sorted = if (openSubtitlesSettings.preferPtPt && preferredSubtitleLanguage == "pt") {
+                results.sortedWith(
+                    compareByDescending<OpenSubtitlesItem> { it.language == "pt-pt" }
+                        .thenByDescending { it.downloads }
+                )
+            } else {
+                results.sortedByDescending { it.downloads }
+            }
+            val best = sorted.first()
+            val cacheKey = "sub_${request.sourceId}_${request.itemId}_${best.fileId}"
+            val cachedFile = subtitleCache.subtitleFile(cacheKey)
+            if (cachedFile.exists() && cachedFile.length() > 0) {
+                attachAndSelectSubtitle(best, cachedFile)
+                android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                val srtContent = client.downloadSubtitle(best.fileId).getOrNull()
+                if (srtContent != null) {
+                    val file = subtitleCache.saveSubtitle(cacheKey, srtContent)
+                    attachAndSelectSubtitle(best, file)
                     android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                    val srtContent = client.downloadSubtitle(best.fileId).getOrNull()
-                    if (srtContent != null) {
-                        val file = subtitleCache.saveSubtitle(cacheKey, srtContent)
-                        attachAndSelectSubtitle(best, file)
-                        android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
-                    }
                 }
             }
         }
@@ -7085,6 +7144,7 @@ private fun VodPlayerDialog(
                     initialQuery = request.seriesName ?: request.title,
                     season = request.season,
                     episode = request.episode,
+                    preferredLanguage = preferredSubtitleLanguage,
                     settings = openSubtitlesSettings,
                     onSubtitleSelected = { item, srtContent ->
                         val cacheKey = "sub_${request.sourceId}_${request.itemId}_${item.fileId}"
@@ -7094,6 +7154,28 @@ private fun VodPlayerDialog(
                         android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
                     },
                     onDismiss = { showOpenSubtitlesSearchDialog = false }
+                )
+            }
+
+            if (sleepTimerActivity?.sleepTimerState?.awaitingConfirmation == true) {
+                val videoEnded = playbackState == Player.STATE_ENDED
+                SleepTimerConfirmationDialog(
+                    secondsRemaining = sleepTimerActivity.sleepTimerState.confirmationSeconds ?: 30,
+                    canContinue = !videoEnded || nextEpisode != null,
+                    canPlayNextThenStop = videoEnded && nextEpisode != null,
+                    onStop = { sleepTimerActivity.playbackSleepTimer.stopNow() },
+                    onContinue = {
+                        sleepTimerActivity.playbackSleepTimer.select(null)
+                        if (videoEnded) nextEpisode?.let(onPlayNext) else player.play()
+                    },
+                    onPlayNextThenStop = {
+                        sleepTimerActivity.playbackSleepTimer.select(-1)
+                        nextEpisode?.let(onPlayNext)
+                    },
+                    onSetTimer = { minutes ->
+                        sleepTimerActivity.playbackSleepTimer.select(minutes)
+                        if (videoEnded) nextEpisode?.let(onPlayNext) else player.play()
+                    }
                 )
             }
 
@@ -8827,7 +8909,11 @@ private fun PlayerPanel(
 
     DisposableEffect(player) {
         var resumePlaybackOnStart = false
-        val unregisterSleepTimerPlayer = (activity as? MainActivity)?.registerSleepTimerPlayer(player)
+        val unregisterSleepTimerPlayer = (activity as? MainActivity)?.registerSleepTimerPlayer(player) {
+            manualFullscreen = false
+            landscapeFullscreenDismissed = true
+            player.clearMediaItems()
+        }
         val pictureInPictureDismissedListener = {
             resumePlaybackOnStart = false
             manualFullscreen = false
@@ -10219,6 +10305,23 @@ private fun FullscreenPlayer(
                     onDismiss = { showTracksDialog = false }
                 )
             }
+            if (sleepTimerActivity?.sleepTimerState?.awaitingConfirmation == true) {
+                SleepTimerConfirmationDialog(
+                    secondsRemaining = sleepTimerActivity.sleepTimerState.confirmationSeconds ?: 30,
+                    canContinue = true,
+                    canPlayNextThenStop = false,
+                    onStop = { sleepTimerActivity.playbackSleepTimer.stopNow() },
+                    onContinue = {
+                        sleepTimerActivity.playbackSleepTimer.select(null)
+                        player.play()
+                    },
+                    onPlayNextThenStop = {},
+                    onSetTimer = { minutes ->
+                        sleepTimerActivity.playbackSleepTimer.select(minutes)
+                        player.play()
+                    }
+                )
+            }
             if (showSleepTimerDialog) {
                 AlertDialog(
                     onDismissRequest = { showSleepTimerDialog = false },
@@ -11269,7 +11372,7 @@ private fun SettingsDialog(
     val isTv = LocalFormFactor.current.isTelevision
 
     var selectedTab by remember { mutableIntStateOf(initialTab) }
-    val tabFocusRequesters = remember { List(4) { FocusRequester() } }
+    val tabFocusRequesters = remember { List(5) { FocusRequester() } }
     var settingsContentHasFocus by remember { mutableStateOf(false) }
 
     LaunchedEffect(isTv) {
@@ -11285,6 +11388,7 @@ private fun SettingsDialog(
         Pair(strings.tabGeneral, Icons.Default.Settings),
         Pair(strings.tabPlaylists, Icons.Default.FolderOpen),
         Pair(strings.tabEpg, Icons.Default.DateRange),
+        Pair(strings.tabSubtitles, Icons.Default.Subtitles),
         Pair(strings.tabAbout, Icons.Default.Info)
     )
 
@@ -11435,12 +11539,6 @@ private fun SettingsDialog(
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
                                     preferredAudioLanguage = preferredAudioLanguage,
                                     onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
-                                    preferredSubtitleLanguage = preferredSubtitleLanguage,
-                                    onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
-                                    subtitleFallbackEnglish = subtitleFallbackEnglish,
-                                    onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
-                                    openSubtitlesSettings = openSubtitlesSettings,
-                                    onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
                                     hideAdultContent = hideAdultContent,
                                     onHideAdultContentChanged = onHideAdultContentChanged,
                                     parentalControlEnabled = parentalControlEnabled,
@@ -11482,7 +11580,33 @@ private fun SettingsDialog(
                                     onEpgTimeShiftChanged = onEpgTimeShiftChanged,
                                     onEpgLoadedDaysChanged = onEpgLoadedDaysChanged
                                 )
-                                3 -> AboutTab()
+                                3 -> GeneralTab(
+                                    appLanguage = appLanguage,
+                                    onLanguageChanged = onLanguageChanged,
+                                    playChannelsFullscreen = playChannelsFullscreen,
+                                    onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
+                                    autoPictureInPicture = autoPictureInPicture,
+                                    onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    preferredAudioLanguage = preferredAudioLanguage,
+                                    onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                                    preferredSubtitleLanguage = preferredSubtitleLanguage,
+                                    onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
+                                    subtitleFallbackEnglish = subtitleFallbackEnglish,
+                                    onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
+                                    openSubtitlesSettings = openSubtitlesSettings,
+                                    onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
+                                    hideAdultContent = hideAdultContent,
+                                    onHideAdultContentChanged = onHideAdultContentChanged,
+                                    parentalControlEnabled = parentalControlEnabled,
+                                    hasParentalPin = hasParentalPin,
+                                    onParentalControlToggled = onParentalControlToggled,
+                                    onChangeParentalPin = onChangeParentalPin,
+                                    onRemoveParentalPin = onRemoveParentalPin,
+                                    onCreateBackup = onCreateBackup,
+                                    onRestoreBackup = onRestoreBackup,
+                                    subtitlesOnly = true
+                                )
+                                4 -> AboutTab()
                             }
                         }
                     }
@@ -11523,12 +11647,6 @@ private fun SettingsDialog(
                                 onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
                                 preferredAudioLanguage = preferredAudioLanguage,
                                 onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
-                                preferredSubtitleLanguage = preferredSubtitleLanguage,
-                                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
-                                subtitleFallbackEnglish = subtitleFallbackEnglish,
-                                onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
-                                openSubtitlesSettings = openSubtitlesSettings,
-                                onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
                                 hideAdultContent = hideAdultContent,
                                 onHideAdultContentChanged = onHideAdultContentChanged,
                                 parentalControlEnabled = parentalControlEnabled,
@@ -11570,7 +11688,33 @@ private fun SettingsDialog(
                                 onEpgTimeShiftChanged = onEpgTimeShiftChanged,
                                 onEpgLoadedDaysChanged = onEpgLoadedDaysChanged
                             )
-                            3 -> AboutTab()
+                            3 -> GeneralTab(
+                                appLanguage = appLanguage,
+                                onLanguageChanged = onLanguageChanged,
+                                playChannelsFullscreen = playChannelsFullscreen,
+                                onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
+                                autoPictureInPicture = autoPictureInPicture,
+                                onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                preferredAudioLanguage = preferredAudioLanguage,
+                                onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
+                                subtitleFallbackEnglish = subtitleFallbackEnglish,
+                                onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
+                                openSubtitlesSettings = openSubtitlesSettings,
+                                onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
+                                hideAdultContent = hideAdultContent,
+                                onHideAdultContentChanged = onHideAdultContentChanged,
+                                parentalControlEnabled = parentalControlEnabled,
+                                hasParentalPin = hasParentalPin,
+                                onParentalControlToggled = onParentalControlToggled,
+                                onChangeParentalPin = onChangeParentalPin,
+                                onRemoveParentalPin = onRemoveParentalPin,
+                                onCreateBackup = onCreateBackup,
+                                onRestoreBackup = onRestoreBackup,
+                                subtitlesOnly = true
+                            )
+                            4 -> AboutTab()
                         }
                     }
                 }
@@ -11799,7 +11943,8 @@ private fun GeneralTab(
     onChangeParentalPin: () -> Unit,
     onRemoveParentalPin: () -> Unit,
     onCreateBackup: () -> Unit,
-    onRestoreBackup: () -> Unit
+    onRestoreBackup: () -> Unit,
+    subtitlesOnly: Boolean = false
 ) {
     val strings = LocalAppStrings.current
     Column(
@@ -11807,7 +11952,7 @@ private fun GeneralTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Language Group
-        SettingsGroup(title = strings.language) {
+        if (!subtitlesOnly) SettingsGroup(title = strings.language) {
             Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AppLanguage.entries.forEach { lang ->
                     val isSelected = lang == appLanguage
@@ -11846,7 +11991,7 @@ private fun GeneralTab(
         }
 
         // Playback Group
-        SettingsGroup(title = strings.playback) {
+        if (!subtitlesOnly) SettingsGroup(title = strings.playback) {
             SettingsToggleRow(
                 title = strings.playChannelsFullscreen,
                 subtitle = strings.playChannelsFullscreenDesc,
@@ -11864,8 +12009,8 @@ private fun GeneralTab(
             )
         }
 
-        // Audio & Subtitles Defaults Group
-        SettingsGroup(title = strings.audioAndSubtitlesDefaults) {
+        // Keep media-language preferences together in the Audio & Subtitles tab.
+        if (subtitlesOnly) SettingsGroup(title = strings.audioAndSubtitlesDefaults) {
             val audioOptions = listOf(
                 "default" to strings.defaultMediaAudio,
                 "pt" to strings.langPortuguese,
@@ -11912,7 +12057,7 @@ private fun GeneralTab(
         }
 
         // OpenSubtitles Group
-        SettingsGroup(title = strings.openSubtitles) {
+        if (subtitlesOnly) SettingsGroup(title = strings.openSubtitles) {
             SettingsToggleRow(
                 title = strings.openSubtitlesEnabled,
                 subtitle = "",
@@ -11952,6 +12097,7 @@ private fun GeneralTab(
 
                     var usernameText by remember(openSubtitlesSettings.username) { mutableStateOf(openSubtitlesSettings.username) }
                     var passwordText by remember(openSubtitlesSettings.password) { mutableStateOf(openSubtitlesSettings.password) }
+                    var passwordVisible by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = usernameText,
@@ -11970,7 +12116,15 @@ private fun GeneralTab(
                                 onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(password = it))
                             },
                             label = { Text(strings.openSubtitlesPassword) },
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                    Icon(
+                                        if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (passwordVisible) strings.hidePassword else strings.showPassword
+                                    )
+                                }
+                            },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -12047,8 +12201,8 @@ private fun GeneralTab(
             }
         }
 
-        // Backup & Restore Group
-        SettingsGroup(title = strings.backupAndRestore) {
+        // General-only groups
+        if (!subtitlesOnly) SettingsGroup(title = strings.backupAndRestore) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -12113,7 +12267,7 @@ private fun GeneralTab(
         }
 
         // Parental Control Group
-        SettingsGroup(title = strings.parentalControl) {
+        if (!subtitlesOnly) SettingsGroup(title = strings.parentalControl) {
             SettingsToggleRow(
                 title = strings.parentalControl,
                 subtitle = strings.parentalControlDesc,
@@ -12149,7 +12303,7 @@ private fun GeneralTab(
         }
 
         // Content Filter Group
-        SettingsGroup(title = strings.categories) {
+        if (!subtitlesOnly) SettingsGroup(title = strings.categories) {
             SettingsToggleRow(
                 title = strings.hideAdultContent,
                 subtitle = strings.hideAdultContentSubtitle,

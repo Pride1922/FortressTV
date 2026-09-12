@@ -28,6 +28,7 @@ fun OpenSubtitlesSearchDialog(
     initialQuery: String,
     season: Int? = null,
     episode: Int? = null,
+    preferredLanguage: String,
     settings: OpenSubtitlesSettings,
     onSubtitleSelected: (OpenSubtitlesItem, String) -> Unit,
     onDismiss: () -> Unit
@@ -54,7 +55,7 @@ fun OpenSubtitlesSearchDialog(
                 username = settings.username.takeIf { it.isNotBlank() },
                 password = settings.password.takeIf { it.isNotBlank() }
             )
-            val lang = if (settings.preferPtPt) "pt-pt,pt,pt-br" else "pt,pt-pt,pt-br"
+            val lang = openSubtitlesLanguageQuery(preferredLanguage, settings.preferPtPt)
             val res = client.searchSubtitles(
                 query = searchQuery,
                 season = searchSeason.toIntOrNull(),
@@ -64,7 +65,7 @@ fun OpenSubtitlesSearchDialog(
             isLoading = false
             if (res.isSuccess) {
                 val list = res.getOrDefault(emptyList())
-                results = if (settings.preferPtPt) {
+                results = if (settings.preferPtPt && preferredLanguage == "pt") {
                     list.sortedWith(
                         compareByDescending<OpenSubtitlesItem> { it.language == "pt-pt" }
                             .thenByDescending { it.downloads }
@@ -146,6 +147,9 @@ fun OpenSubtitlesSearchDialog(
                         Text(errorMessage ?: strings.noSubtitlesFound, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
+                    errorMessage?.let {
+                        Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    }
                     LazyColumn(
                         Modifier.fillMaxWidth().weight(1f, fill = false),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -170,6 +174,8 @@ fun OpenSubtitlesSearchDialog(
                                             downloadingFileId = null
                                             if (dlRes.isSuccess) {
                                                 onSubtitleSelected(item, dlRes.getOrThrow())
+                                            } else {
+                                                errorMessage = dlRes.exceptionOrNull()?.message ?: strings.openSubtitlesConnectionFailed
                                             }
                                         }
                                     }
@@ -183,7 +189,7 @@ fun OpenSubtitlesSearchDialog(
                                             val badgeText = when (item.language) {
                                                 "pt-pt" -> "PT-PT 🇵🇹"
                                                 "pt-br" -> "PT-BR 🇧🇷"
-                                                else -> "PT"
+                                                else -> item.language.uppercase()
                                             }
                                             val badgeBg = if (isPtPt) Color(0xFF1B5E20) else Color(0xFF0D47A1)
                                             Box(
