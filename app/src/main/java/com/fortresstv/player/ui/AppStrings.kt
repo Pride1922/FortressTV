@@ -203,6 +203,27 @@ interface Strings {
     val langPortuguese: String
     val langSpanish: String
     val langFrench: String
+
+    val openSubtitles: String
+    val openSubtitlesEnabled: String
+    val openSubtitlesApiKey: String
+    val openSubtitlesUsername: String
+    val openSubtitlesPassword: String
+    val openSubtitlesAutoSearch: String
+    val openSubtitlesAutoSearchDesc: String
+    val openSubtitlesPreferPtPt: String
+    val openSubtitlesPreferPtPtDesc: String
+    val searchOnlineSubtitles: String
+    val searchingSubtitles: String
+    val noSubtitlesFound: String
+    val downloadingSubtitle: String
+    val subtitleDownloaded: String
+    val openSubtitlesTestConnection: String
+    val openSubtitlesConnectionSuccess: String
+    val openSubtitlesConnectionFailed: String
+    val openSubtitlesAccountCredentials: String
+    val openSubtitlesApiKeyRequired: String
+    val openSubtitlesApiKeyHint: String
     val langGerman: String
     val langItalian: String
 
@@ -572,6 +593,27 @@ object EnglishStrings : Strings {
     override val langGerman = "German"
     override val langItalian = "Italian"
 
+    override val openSubtitles = "OpenSubtitles"
+    override val openSubtitlesEnabled = "Enable OpenSubtitles"
+    override val openSubtitlesApiKey = "API Key"
+    override val openSubtitlesUsername = "Username (optional)"
+    override val openSubtitlesPassword = "Password (optional)"
+    override val openSubtitlesAutoSearch = "Auto-search missing subtitles"
+    override val openSubtitlesAutoSearchDesc = "Automatically search online when video lacks Portuguese subtitles"
+    override val openSubtitlesPreferPtPt = "Prioritize Portugal Portuguese (pt-PT)"
+    override val openSubtitlesPreferPtPtDesc = "Show and select pt-PT subtitles before Brazilian Portuguese"
+    override val searchOnlineSubtitles = "Search online subtitles"
+    override val searchingSubtitles = "Searching subtitles..."
+    override val noSubtitlesFound = "No subtitles found"
+    override val downloadingSubtitle = "Downloading subtitle..."
+    override val subtitleDownloaded = "Subtitle activated"
+    override val openSubtitlesTestConnection = "Test Connection"
+    override val openSubtitlesConnectionSuccess = "Connection successful"
+    override val openSubtitlesConnectionFailed = "Connection failed"
+    override val openSubtitlesAccountCredentials = "Account credentials (for download quota)"
+    override val openSubtitlesApiKeyRequired = "API Key is required by OpenSubtitles.com"
+    override val openSubtitlesApiKeyHint = "Get a free API key at opensubtitles.com/consumers"
+
     override val welcomeTitle = "Secure IPTV Player"
     override val welcomeSubtitle = "Private by default. Hardware-backed AES-256 encrypted storage."
     override val playlistM3u = "Playlist (M3U / M3U8)"
@@ -939,6 +981,27 @@ object PortugueseStrings : Strings {
     override val langFrench = "Francês"
     override val langGerman = "Alemão"
     override val langItalian = "Italiano"
+
+    override val openSubtitles = "OpenSubtitles"
+    override val openSubtitlesEnabled = "Ativar OpenSubtitles"
+    override val openSubtitlesApiKey = "Chave de API"
+    override val openSubtitlesUsername = "Nome de utilizador (opcional)"
+    override val openSubtitlesPassword = "Palavra-passe (opcional)"
+    override val openSubtitlesAutoSearch = "Pesquisa automática de legendas em falta"
+    override val openSubtitlesAutoSearchDesc = "Pesquisar online automaticamente quando o vídeo não tiver legendas em português"
+    override val openSubtitlesPreferPtPt = "Priorizar português de Portugal (pt-PT)"
+    override val openSubtitlesPreferPtPtDesc = "Apresentar e selecionar legendas pt-PT antes de português do Brasil"
+    override val searchOnlineSubtitles = "Pesquisar legendas online"
+    override val searchingSubtitles = "A pesquisar legendas..."
+    override val noSubtitlesFound = "Nenhuma legenda encontrada"
+    override val downloadingSubtitle = "A transferir legenda..."
+    override val subtitleDownloaded = "Legenda ativada"
+    override val openSubtitlesTestConnection = "Testar ligação"
+    override val openSubtitlesConnectionSuccess = "Ligação com sucesso"
+    override val openSubtitlesConnectionFailed = "Falha na ligação"
+    override val openSubtitlesAccountCredentials = "Credenciais de conta (para quota de transferências)"
+    override val openSubtitlesApiKeyRequired = "A chave de API é obrigatória no OpenSubtitles.com"
+    override val openSubtitlesApiKeyHint = "Obtenha uma chave gratuita em opensubtitles.com/consumers"
 
     override val welcomeTitle = "Reprodutor IPTV Seguro"
     override val welcomeSubtitle = "Privacidade por padrão. Armazenamento encriptado com AES-256."

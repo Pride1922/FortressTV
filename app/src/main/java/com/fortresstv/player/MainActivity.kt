@@ -277,6 +277,13 @@ import com.fortresstv.player.xtream.XtreamMovieDetails
 import com.fortresstv.player.xtream.XtreamSeries
 import com.fortresstv.player.xtream.XtreamSeriesDetails
 import com.fortresstv.player.xtream.XtreamEpisode
+import com.fortresstv.player.subtitles.OpenSubtitlesClient
+import com.fortresstv.player.subtitles.OpenSubtitlesItem
+import com.fortresstv.player.subtitles.OpenSubtitlesSearchDialog
+import com.fortresstv.player.subtitles.OpenSubtitlesSettings
+import com.fortresstv.player.subtitles.OpenSubtitlesSettingsStore
+import com.fortresstv.player.subtitles.SubtitleDiskCache
+import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -523,6 +530,8 @@ private fun FortressTVApp(
     val userLibrary = remember { UserLibraryStore(context.applicationContext) }
     val vodProgressStore = remember { VodProgressStore(context.applicationContext) }
     val backupManager = remember { BackupManager(settings, userLibrary, vodProgressStore) }
+    val openSubtitlesStore = remember { OpenSubtitlesSettingsStore(context.applicationContext) }
+    var openSubtitlesSettings by remember { mutableStateOf(openSubtitlesStore.loadSettings()) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -1348,6 +1357,7 @@ private fun FortressTVApp(
                     preferredAudioLanguage = preferredAudioLanguage,
                     preferredSubtitleLanguage = preferredSubtitleLanguage,
                     subtitleFallbackEnglish = subtitleFallbackEnglish,
+                    openSubtitlesSettings = openSubtitlesSettings,
                     hideAdultContent = effectiveHideAdultContent,
                     loading = loading,
                     error = error,
@@ -1426,6 +1436,11 @@ private fun FortressTVApp(
                 onSubtitleFallbackEnglishChanged = { enabled ->
                     subtitleFallbackEnglish = enabled
                     scope.launch(Dispatchers.IO) { settings.setSubtitleFallbackEnglish(enabled) }
+                },
+                openSubtitlesSettings = openSubtitlesSettings,
+                onOpenSubtitlesSettingsChanged = { newSettings ->
+                    openSubtitlesSettings = newSettings
+                    scope.launch(Dispatchers.IO) { openSubtitlesStore.saveSettings(newSettings) }
                 },
                 hideAdultContent = hideAdultContent,
                 onHideAdultContentChanged = { enabled ->
@@ -3242,6 +3257,7 @@ private data class VodPlaybackRequest(
     val sourceId: String,
     val itemId: String,
     val seriesId: Int? = null,
+    val seriesName: String? = null,
     val title: String,
     val posterUrl: String?,
     val containerExtension: String,
@@ -3267,6 +3283,7 @@ private fun FortressLibrary(
     preferredAudioLanguage: String = "default",
     preferredSubtitleLanguage: String = "off",
     subtitleFallbackEnglish: Boolean = true,
+    openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     hideAdultContent: Boolean = false,
     loading: Boolean,
     error: String?,
@@ -3488,6 +3505,7 @@ private fun FortressLibrary(
                             sourceId = catalog.sourceId,
                             itemId = episode.id,
                             seriesId = series.id,
+                            seriesName = series.name,
                             title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
                             posterUrl = episode.posterUrl ?: series.coverUrl,
                             containerExtension = episode.containerExtension,
@@ -3540,6 +3558,7 @@ private fun FortressLibrary(
                         vodPlayback = VodPlaybackRequest(
                             key = "episode:${catalog.sourceId}:${episode.id}", kind = VodProgressKind.EPISODE,
                             sourceId = catalog.sourceId, itemId = episode.id, seriesId = series.id,
+                            seriesName = series.name,
                             title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
                             posterUrl = episode.posterUrl ?: series.coverUrl, containerExtension = episode.containerExtension,
                             season = episode.season, episode = episode.episodeNumber, streamUrl = url
@@ -3560,6 +3579,7 @@ private fun FortressLibrary(
                 preferredAudioLanguage = preferredAudioLanguage,
                 preferredSubtitleLanguage = preferredSubtitleLanguage,
                 subtitleFallbackEnglish = subtitleFallbackEnglish,
+                openSubtitlesSettings = openSubtitlesSettings,
                 loadNextEpisode = if (request.kind == VodProgressKind.EPISODE) {
                     suspend { resolveNextEpisodePlayback(request, xtreamProfiles, context) }
                 } else null,
@@ -3820,9 +3840,12 @@ private fun resolveVodPlayback(
             )
         )
     }
+    val seriesName = if (entry.kind == VodProgressKind.EPISODE && entry.seriesId != null) {
+        catalogs.firstOrNull { it.sourceId == entry.sourceId }?.series?.firstOrNull { it.id == entry.seriesId }?.name
+    } else null
     return VodPlaybackRequest(
         key = entry.key, kind = entry.kind, sourceId = entry.sourceId, itemId = entry.itemId,
-        seriesId = entry.seriesId, title = entry.title, posterUrl = entry.posterUrl,
+        seriesId = entry.seriesId, seriesName = seriesName, title = entry.title, posterUrl = entry.posterUrl,
         containerExtension = entry.containerExtension, season = entry.season, episode = entry.episode,
         streamUrl = streamUrl
     )
@@ -3845,6 +3868,7 @@ private suspend fun resolveNextEpisodePlayback(
         sourceId = current.sourceId,
         itemId = next.id,
         seriesId = seriesId,
+        seriesName = current.seriesName,
         title = next.title,
         posterUrl = next.posterUrl ?: current.posterUrl,
         containerExtension = next.containerExtension,
@@ -3870,6 +3894,7 @@ private suspend fun resolveAllSeriesEpisodesPlayback(
             sourceId = current.sourceId,
             itemId = episode.id,
             seriesId = seriesId,
+            seriesName = current.seriesName,
             title = episode.title,
             posterUrl = episode.posterUrl ?: current.posterUrl,
             containerExtension = episode.containerExtension,
@@ -5829,6 +5854,7 @@ private fun VodPlayerDialog(
     preferredAudioLanguage: String = "default",
     preferredSubtitleLanguage: String = "off",
     subtitleFallbackEnglish: Boolean = true,
+    openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     loadNextEpisode: (suspend () -> VodPlaybackRequest?)?,
     loadAllEpisodes: (suspend () -> List<VodPlaybackRequest>)? = null,
     onPlayNext: (VodPlaybackRequest) -> Unit,
@@ -5838,6 +5864,10 @@ private fun VodPlayerDialog(
     val context = LocalContext.current
     val strings = LocalAppStrings.current
     val scope = rememberCoroutineScope()
+    val subtitleCache = remember { SubtitleDiskCache(context.applicationContext) }
+    var attachedSubtitles by remember(request.key) { mutableStateOf<List<Pair<OpenSubtitlesItem, java.io.File>>>(emptyList()) }
+    var showOpenSubtitlesSearchDialog by remember { mutableStateOf(false) }
+
     val renderersFactory = remember(context) {
         DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
     }
@@ -6119,9 +6149,110 @@ private fun VodPlayerDialog(
             player.release()
         }
     }
+
+    fun attachAndSelectSubtitle(item: OpenSubtitlesItem, file: java.io.File) {
+        userManuallySelectedTracks = true
+        val updated = attachedSubtitles.filter { it.first.fileId != item.fileId } + (item to file)
+        attachedSubtitles = updated
+        val currentPos = player.currentPosition
+        val wasPlaying = player.playWhenReady
+        val newMediaItem = MediaItem.Builder()
+            .setUri(request.streamUrl)
+            .setSubtitleConfigurations(
+                updated.map { (subItem, f) ->
+                    MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(f))
+                        .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                        .setLanguage(subItem.language)
+                        .setLabel("OpenSubtitles · ${subItem.release}")
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .build()
+                }
+            )
+            .build()
+        player.setMediaItem(newMediaItem, currentPos)
+        player.prepare()
+        player.playWhenReady = wasPlaying
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setPreferredTextLanguage(item.language)
+            .build()
+    }
+
+    var autoSearchAttempted by remember(request.key) { mutableStateOf(false) }
+    LaunchedEffect(currentTracks, openSubtitlesSettings, preferredSubtitleLanguage) {
+        if (autoSearchAttempted || !openSubtitlesSettings.enabled || openSubtitlesSettings.apiKey.isBlank() || !openSubtitlesSettings.autoSearch) return@LaunchedEffect
+        if (currentTracks == null) return@LaunchedEffect
+
+        val subTracks = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
+        val hasPtSub = subTracks.any { TrackLanguageMatcher.matchesLanguage(it.language, it.label, "pt") }
+        if (hasPtSub) {
+            autoSearchAttempted = true
+            return@LaunchedEffect
+        }
+
+        if (preferredSubtitleLanguage == "pt" || preferredSubtitleLanguage == "default") {
+            autoSearchAttempted = true
+            val queryTitle = request.seriesName ?: request.title
+            val languages = if (openSubtitlesSettings.preferPtPt) "pt-pt,pt,pt-br" else "pt,pt-pt,pt-br"
+            val client = OpenSubtitlesClient(
+                apiKey = openSubtitlesSettings.apiKey,
+                username = openSubtitlesSettings.username.takeIf { it.isNotBlank() },
+                password = openSubtitlesSettings.password.takeIf { it.isNotBlank() }
+            )
+            val results = client.searchSubtitles(
+                query = queryTitle,
+                season = request.season,
+                episode = request.episode,
+                languages = languages
+            ).getOrDefault(emptyList())
+
+            if (results.isNotEmpty()) {
+                val sorted = if (openSubtitlesSettings.preferPtPt) {
+                    results.sortedWith(
+                        compareByDescending<OpenSubtitlesItem> { it.language == "pt-pt" }
+                            .thenByDescending { it.downloads }
+                    )
+                } else {
+                    results.sortedByDescending { it.downloads }
+                }
+                val best = sorted.first()
+                val cacheKey = "sub_${request.sourceId}_${request.itemId}_${best.fileId}"
+                val cachedFile = subtitleCache.subtitleFile(cacheKey)
+                if (cachedFile.exists() && cachedFile.length() > 0) {
+                    attachAndSelectSubtitle(best, cachedFile)
+                    android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    val srtContent = client.downloadSubtitle(best.fileId).getOrNull()
+                    if (srtContent != null) {
+                        val file = subtitleCache.saveSubtitle(cacheKey, srtContent)
+                        attachAndSelectSubtitle(best, file)
+                        android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(player, resumeDecisionMade) {
         if (!resumeDecisionMade) return@LaunchedEffect
-        player.setMediaItem(MediaItem.fromUri(request.streamUrl))
+        val mediaItem = MediaItem.Builder()
+            .setUri(request.streamUrl)
+            .apply {
+                if (attachedSubtitles.isNotEmpty()) {
+                    setSubtitleConfigurations(
+                        attachedSubtitles.map { (subItem, f) ->
+                            MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(f))
+                                .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                                .setLanguage(subItem.language)
+                                .setLabel("OpenSubtitles · ${subItem.release}")
+                                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                                .build()
+                        }
+                    )
+                }
+            }
+            .build()
+        player.setMediaItem(mediaItem)
         player.prepare()
         if (resumePositionMs > 0L) player.seekTo(resumePositionMs)
         player.play()
@@ -6918,8 +7049,31 @@ private fun VodPlayerDialog(
                     player = player,
                     audioTracks = audioTracks,
                     subtitleTracks = subtitleTracks,
+                    onSearchOpenSubtitles = if (openSubtitlesSettings.enabled && openSubtitlesSettings.apiKey.isNotBlank()) {
+                        {
+                            showTracksDialog = false
+                            showOpenSubtitlesSearchDialog = true
+                        }
+                    } else null,
                     onUserTrackSelected = { userManuallySelectedTracks = true },
                     onDismiss = { showTracksDialog = false }
+                )
+            }
+
+            if (showOpenSubtitlesSearchDialog) {
+                OpenSubtitlesSearchDialog(
+                    initialQuery = request.seriesName ?: request.title,
+                    season = request.season,
+                    episode = request.episode,
+                    settings = openSubtitlesSettings,
+                    onSubtitleSelected = { item, srtContent ->
+                        val cacheKey = "sub_${request.sourceId}_${request.itemId}_${item.fileId}"
+                        val file = subtitleCache.saveSubtitle(cacheKey, srtContent)
+                        attachAndSelectSubtitle(item, file)
+                        showOpenSubtitlesSearchDialog = false
+                        android.widget.Toast.makeText(context, strings.subtitleDownloaded, android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    onDismiss = { showOpenSubtitlesSearchDialog = false }
                 )
             }
 
@@ -7014,6 +7168,7 @@ private fun PlaybackTracksDialog(
     player: Player,
     audioTracks: List<PlaybackTrackItem>,
     subtitleTracks: List<PlaybackTrackItem>,
+    onSearchOpenSubtitles: (() -> Unit)? = null,
     onUserTrackSelected: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -7082,6 +7237,16 @@ private fun PlaybackTracksDialog(
                         }
                     }
                 )
+                if (onSearchOpenSubtitles != null) {
+                    OutlinedButton(
+                        onClick = onSearchOpenSubtitles,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.searchOnlineSubtitles, fontSize = 12.sp)
+                    }
+                }
             }
         },
         confirmButton = {
@@ -11061,6 +11226,8 @@ private fun SettingsDialog(
     onPreferredSubtitleLanguageChanged: (String) -> Unit = {},
     subtitleFallbackEnglish: Boolean = true,
     onSubtitleFallbackEnglishChanged: (Boolean) -> Unit = {},
+    openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
+    onOpenSubtitlesSettingsChanged: (OpenSubtitlesSettings) -> Unit = {},
     hideAdultContent: Boolean,
     onHideAdultContentChanged: (Boolean) -> Unit,
     parentalControlEnabled: Boolean,
@@ -11271,6 +11438,8 @@ private fun SettingsDialog(
                                     onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                                     subtitleFallbackEnglish = subtitleFallbackEnglish,
                                     onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
+                                    openSubtitlesSettings = openSubtitlesSettings,
+                                    onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
                                     hideAdultContent = hideAdultContent,
                                     onHideAdultContentChanged = onHideAdultContentChanged,
                                     parentalControlEnabled = parentalControlEnabled,
@@ -11357,6 +11526,8 @@ private fun SettingsDialog(
                                 onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                                 subtitleFallbackEnglish = subtitleFallbackEnglish,
                                 onSubtitleFallbackEnglishChanged = onSubtitleFallbackEnglishChanged,
+                                openSubtitlesSettings = openSubtitlesSettings,
+                                onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
                                 hideAdultContent = hideAdultContent,
                                 onHideAdultContentChanged = onHideAdultContentChanged,
                                 parentalControlEnabled = parentalControlEnabled,
@@ -11617,6 +11788,8 @@ private fun GeneralTab(
     onPreferredSubtitleLanguageChanged: (String) -> Unit = {},
     subtitleFallbackEnglish: Boolean = true,
     onSubtitleFallbackEnglishChanged: (Boolean) -> Unit = {},
+    openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
+    onOpenSubtitlesSettingsChanged: (OpenSubtitlesSettings) -> Unit = {},
     hideAdultContent: Boolean,
     onHideAdultContentChanged: (Boolean) -> Unit,
     parentalControlEnabled: Boolean,
@@ -11735,6 +11908,142 @@ private fun GeneralTab(
                 checked = subtitleFallbackEnglish,
                 onCheckedChange = onSubtitleFallbackEnglishChanged
             )
+        }
+
+        // OpenSubtitles Group
+        SettingsGroup(title = strings.openSubtitles) {
+            SettingsToggleRow(
+                title = strings.openSubtitlesEnabled,
+                subtitle = "",
+                icon = Icons.Default.Subtitles,
+                checked = openSubtitlesSettings.enabled,
+                onCheckedChange = { checked ->
+                    onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(enabled = checked))
+                }
+            )
+            if (openSubtitlesSettings.enabled) {
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    var apiKeyText by remember(openSubtitlesSettings.apiKey) { mutableStateOf(openSubtitlesSettings.apiKey) }
+                    OutlinedTextField(
+                        value = apiKeyText,
+                        onValueChange = {
+                            apiKeyText = it
+                            onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(apiKey = it))
+                        },
+                        label = { Text(strings.openSubtitlesApiKey) },
+                        supportingText = { Text(strings.openSubtitlesApiKeyHint, fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        strings.openSubtitlesAccountCredentials,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    var usernameText by remember(openSubtitlesSettings.username) { mutableStateOf(openSubtitlesSettings.username) }
+                    var passwordText by remember(openSubtitlesSettings.password) { mutableStateOf(openSubtitlesSettings.password) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = usernameText,
+                            onValueChange = {
+                                usernameText = it
+                                onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(username = it))
+                            },
+                            label = { Text(strings.openSubtitlesUsername) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = passwordText,
+                            onValueChange = {
+                                passwordText = it
+                                onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(password = it))
+                            },
+                            label = { Text(strings.openSubtitlesPassword) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    var isTesting by remember { mutableStateOf(false) }
+                    var testMessage by remember { mutableStateOf<String?>(null) }
+                    val coroutineScope = rememberCoroutineScope()
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = {
+                                if (apiKeyText.isBlank()) {
+                                    testMessage = strings.openSubtitlesApiKeyRequired
+                                    return@OutlinedButton
+                                }
+                                isTesting = true
+                                testMessage = null
+                                coroutineScope.launch {
+                                    val client = OpenSubtitlesClient(
+                                        apiKey = apiKeyText.trim(),
+                                        username = usernameText.trim().takeIf { it.isNotBlank() },
+                                        password = passwordText.trim().takeIf { it.isNotBlank() }
+                                    )
+                                    val res = client.testConnection()
+                                    isTesting = false
+                                    testMessage = if (res.isSuccess) {
+                                        strings.openSubtitlesConnectionSuccess
+                                    } else {
+                                        "${strings.openSubtitlesConnectionFailed}: ${res.exceptionOrNull()?.message ?: ""}"
+                                    }
+                                }
+                            },
+                            enabled = !isTesting
+                        ) {
+                            if (isTesting) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(strings.openSubtitlesTestConnection, fontSize = 12.sp)
+                        }
+
+                        testMessage?.let { msg ->
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                msg,
+                                fontSize = 11.sp,
+                                color = if (msg == strings.openSubtitlesConnectionSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                SettingsToggleRow(
+                    title = strings.openSubtitlesPreferPtPt,
+                    subtitle = strings.openSubtitlesPreferPtPtDesc,
+                    icon = Icons.Default.Translate,
+                    checked = openSubtitlesSettings.preferPtPt,
+                    onCheckedChange = { checked ->
+                        onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(preferPtPt = checked))
+                    }
+                )
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                SettingsToggleRow(
+                    title = strings.openSubtitlesAutoSearch,
+                    subtitle = strings.openSubtitlesAutoSearchDesc,
+                    icon = Icons.Default.Download,
+                    checked = openSubtitlesSettings.autoSearch,
+                    onCheckedChange = { checked ->
+                        onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(autoSearch = checked))
+                    }
+                )
+            }
         }
 
         // Backup & Restore Group
