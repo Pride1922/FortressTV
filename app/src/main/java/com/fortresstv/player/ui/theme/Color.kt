@@ -12,3 +12,9 @@ val FortressText = Color(0xFFF1F5F9)
 val FortressTextDark = Color(0xFF111827)
 val FortressMuted = Color(0xFF94A3B8)
 val FortressOutline = Color(0xFF334155)
+
+// Glassmorphism & Atmospheric elevation
+val FortressGlassOverlay = Color(0xDC0B0F17)
+val FortressGlassCard = Color(0xD8182231)
+val FortressGlowPrimary = Color(0x335EEAD4)
+val FortressBorderSubtle = Color(0x20FFFFFF)

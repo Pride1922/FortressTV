@@ -150,6 +150,7 @@ import com.fortresstv.player.ui.AppFormFactor
 import com.fortresstv.player.ui.FormFactorDetector
 import com.fortresstv.player.ui.LocalFormFactor
 import com.fortresstv.player.ui.tvFocusHighlight
+import com.fortresstv.player.ui.theme.TabularDigitsTextStyle
 import com.fortresstv.player.ui.TvPlayerAction
 import com.fortresstv.player.ui.TvPlayerKeyDispatcher
 import androidx.compose.ui.input.key.onKeyEvent
@@ -5466,14 +5467,13 @@ private fun MovieDetailsDialog(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(0.60f)
+                            .fillMaxHeight(0.65f)
                             .align(Alignment.TopCenter)
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.35f),
-                                        MaterialTheme.colorScheme.surface
-                                    )
+                                    0.0f to MaterialTheme.colorScheme.surface.copy(alpha = 0.15f),
+                                    0.60f to MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                                    1.0f to MaterialTheme.colorScheme.surface
                                 )
                             )
                     )
@@ -5948,14 +5948,13 @@ private fun SeriesEpisodesDialog(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(0.65f)
+                            .fillMaxHeight(0.70f)
                             .align(Alignment.TopCenter)
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.35f),
-                                        MaterialTheme.colorScheme.surface
-                                    )
+                                    0.0f to MaterialTheme.colorScheme.surface.copy(alpha = 0.15f),
+                                    0.60f to MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                                    1.0f to MaterialTheme.colorScheme.surface
                                 )
                             )
                     )
@@ -7276,7 +7275,8 @@ private fun VodPlayerDialog(
                                         sleepTimerRemainingText.orEmpty(),
                                         color = Color.White,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        style = TabularDigitsTextStyle
                                     )
                                 } else if (sleepTimerMinutes == -1 && !isCompact) {
                                     Spacer(Modifier.width(6.dp))
@@ -7436,13 +7436,15 @@ private fun VodPlayerDialog(
                                 formatPlaybackTime(if (isDraggingSlider) sliderDragPositionMs.toLong() else currentPositionMs),
                                 color = Color.White.copy(alpha = 0.9f),
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                style = TabularDigitsTextStyle
                             )
                             Text(
                                 formatPlaybackTime(totalDurationMs),
                                 color = Color.White.copy(alpha = 0.7f),
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                style = TabularDigitsTextStyle
                             )
                         }
                     }
@@ -7516,7 +7518,8 @@ private fun VodPlayerDialog(
                                         strings.nextEpisodeIn(autoPlayCountdown),
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = TabularDigitsTextStyle
                                     )
                                 }
                             }
@@ -8217,6 +8220,7 @@ private fun PlayerControlsDrawer(
                                                 color = MaterialTheme.colorScheme.primary,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 12.sp,
+                                                style = TabularDigitsTextStyle,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                             )
                                         }
@@ -8396,7 +8400,8 @@ private fun PlayerControlsDrawer(
                                         Text(
                                             if (isDrifted) "${liveOffsetMs / 1000}s behind broadcast" else "Synchronized with live broadcast",
                                             color = Color.White.copy(alpha = 0.6f),
-                                            fontSize = 11.sp
+                                            fontSize = 11.sp,
+                                            style = TabularDigitsTextStyle
                                         )
                                     }
                                     if (isDrifted) {
@@ -11782,7 +11787,8 @@ private fun FullscreenPlayer(
                                             sleepTimerRemainingText.orEmpty(),
                                             color = Color.White,
                                             fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            style = TabularDigitsTextStyle
                                         )
                                     } else if (sleepTimerMinutes == -1 && !isCompact) {
                                         Spacer(Modifier.width(6.dp))
@@ -12095,12 +12101,14 @@ private fun FullscreenPlayer(
                                     Text(
                                         formatProgrammeTime(Instant.ofEpochMilli(currentStartEpoch)),
                                         color = Color.White.copy(alpha = .65f),
-                                        fontSize = 11.sp
+                                        fontSize = 11.sp,
+                                        style = TabularDigitsTextStyle
                                     )
                                     Text(
                                         strings.endsAt(formatProgrammeTime(Instant.ofEpochMilli(currentStopEpoch))),
                                         color = Color.White.copy(alpha = .65f),
-                                        fontSize = 11.sp
+                                        fontSize = 11.sp,
+                                        style = TabularDigitsTextStyle
                                     )
                                 }
                             }
@@ -13259,7 +13267,8 @@ private fun FullscreenChannelDrawer(
                                                     presentation.timeRange,
                                                     color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f),
                                                     fontSize = 11.sp,
-                                                    maxLines = 1
+                                                    maxLines = 1,
+                                                    style = TabularDigitsTextStyle
                                                 )
                                             }
                                         }

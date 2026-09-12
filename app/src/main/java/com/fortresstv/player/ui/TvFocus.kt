@@ -1,7 +1,8 @@
 package com.fortresstv.player.ui
 
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,8 +23,8 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Shared focus styling for Android TV and D-pad navigation.
- * Highlights the composable with a high-contrast border and optional subtle scale
- * when focused.
+ * Highlights the composable with spring physics scaling, high-contrast border,
+ * and elevation depth when focused.
  */
 fun Modifier.tvFocusHighlight(
     shape: Shape = RoundedCornerShape(12.dp),
@@ -37,7 +38,10 @@ fun Modifier.tvFocusHighlight(
     val borderColor = focusedBorderColor ?: MaterialTheme.colorScheme.primary
     val animatedScale by animateFloatAsState(
         targetValue = if (isFocused) scaleOnFocus else 1f,
-        animationSpec = tween(durationMillis = 150),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "tv_focus_scale"
     )
 
@@ -49,6 +53,11 @@ fun Modifier.tvFocusHighlight(
         .graphicsLayer {
             scaleX = animatedScale
             scaleY = animatedScale
+            if (isFocused && scaleOnFocus > 1f) {
+                shadowElevation = 8f
+                this.shape = shape
+                clip = false
+            }
         }
         .border(
             BorderStroke(
