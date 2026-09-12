@@ -4321,7 +4321,7 @@ private fun XtreamMoviesScreen(
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
-    var sortOption by remember { mutableStateOf(VodSortOption.DEFAULT) }
+    var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var visibleMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
@@ -4453,7 +4453,7 @@ private fun XtreamSeriesScreen(
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
-    var sortOption by remember { mutableStateOf(VodSortOption.DEFAULT) }
+    var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
     var visibleSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
@@ -5127,8 +5127,9 @@ private fun LibraryCatalogScaffold(
                         if (fastScrollItems.size < 20) emptyMap()
                         else {
                             val map = linkedMapOf<Char, Int>()
-                            fastScrollItems.forEachIndexed { index, name ->
-                                val first = name.trim().firstOrNull()?.uppercaseChar() ?: '#'
+                            fastScrollItems.forEachIndexed { index, rawName ->
+                                val name = rawName.trim().trimStart('"', '\'', '(', '[', '{', '<', '«')
+                                val first = name.firstOrNull()?.uppercaseChar() ?: '#'
                                 val key = if (first in 'A'..'Z') first else '#'
                                 if (!map.containsKey(key)) {
                                     map[key] = index
@@ -5138,7 +5139,7 @@ private fun LibraryCatalogScaffold(
                         }
                     }
                     var activeFastScrollLetter by remember { mutableStateOf<Char?>(null) }
-                    val showFastScroller = !isTv && letterIndices.size >= 4
+                    val showFastScroller = !isTv && letterIndices.size >= 4 && sortOption == VodSortOption.ALPHABETICAL
 
                     Box(Modifier.fillMaxSize()) {
                         LazyVerticalGrid(
@@ -5156,7 +5157,15 @@ private fun LibraryCatalogScaffold(
                         )
 
                         if (showFastScroller && onFastScrollJump != null) {
-                            val letters = remember(letterIndices) { letterIndices.keys.toList() }
+                            val letters = remember(letterIndices) {
+                                letterIndices.keys.sortedWith { a, b ->
+                                    when {
+                                        a == '#' -> -1
+                                        b == '#' -> 1
+                                        else -> a.compareTo(b)
+                                    }
+                                }
+                            }
                             Column(
                                 modifier = Modifier
                                     .align(Alignment.CenterEnd)
