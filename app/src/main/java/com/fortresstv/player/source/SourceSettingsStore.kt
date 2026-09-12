@@ -6,6 +6,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.playlist.SourceRole
+import com.fortresstv.player.player.PlaybackMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
@@ -203,6 +204,13 @@ class SourceSettingsStore(context: Context) {
 
     fun setAutoPictureInPicture(enabled: Boolean) {
         preferences.edit().putBoolean("auto_picture_in_picture", enabled).apply()
+    }
+
+    fun playbackMode(): PlaybackMode =
+        PlaybackMode.fromPersisted(preferences.getString("playback_mode", null))
+
+    fun setPlaybackMode(mode: PlaybackMode) {
+        preferences.edit().putString("playback_mode", mode.persistedValue).apply()
     }
 
     fun preferredAudioLanguage(): String =

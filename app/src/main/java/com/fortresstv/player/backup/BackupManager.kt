@@ -9,6 +9,7 @@ import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.playlist.SourceRole
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceSettingsStore
+import com.fortresstv.player.player.PlaybackMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
@@ -42,6 +43,7 @@ class BackupManager(
             preferredAudioLanguage = sourceSettingsStore.preferredAudioLanguage(),
             preferredSubtitleLanguage = sourceSettingsStore.preferredSubtitleLanguage(),
             subtitleFallbackEnglish = sourceSettingsStore.subtitleFallbackEnglish(),
+            playbackMode = sourceSettingsStore.playbackMode().persistedValue,
             epgLoadedDays = sourceSettingsStore.epgLoadedDays()
         )
 
@@ -126,6 +128,7 @@ class BackupManager(
         sourceSettingsStore.setPreferredAudioLanguage(s.preferredAudioLanguage)
         sourceSettingsStore.setPreferredSubtitleLanguage(s.preferredSubtitleLanguage)
         sourceSettingsStore.setSubtitleFallbackEnglish(s.subtitleFallbackEnglish)
+        sourceSettingsStore.setPlaybackMode(PlaybackMode.fromPersisted(s.playbackMode))
         if (s.epgSource != null) {
             sourceSettingsStore.saveEpg(s.epgSource)
         } else if (!merge) {
@@ -225,6 +228,7 @@ class BackupManager(
                 put("preferredAudioLanguage", payload.settings.preferredAudioLanguage)
                 put("preferredSubtitleLanguage", payload.settings.preferredSubtitleLanguage)
                 put("subtitleFallbackEnglish", payload.settings.subtitleFallbackEnglish)
+                put("playbackMode", payload.settings.playbackMode)
                 put("epgLoadedDays", payload.settings.epgLoadedDays)
 
                 if (payload.settings.epgSource != null) {
@@ -342,6 +346,7 @@ class BackupManager(
                 preferredAudioLanguage = settingsObj.optString("preferredAudioLanguage", "default"),
                 preferredSubtitleLanguage = settingsObj.optString("preferredSubtitleLanguage", "off"),
                 subtitleFallbackEnglish = settingsObj.optBoolean("subtitleFallbackEnglish", true),
+                playbackMode = settingsObj.optString("playbackMode", "auto"),
                 epgLoadedDays = settingsObj.optInt("epgLoadedDays", 3).coerceIn(1, 7)
             )
 

@@ -6,6 +6,11 @@ a real multi-day EPG before release.
 
 ## Implemented
 
+- Playback uses separate live and VOD buffer profiles with Automatic, Stable, and Data Saver modes.
+- Live stall recovery preserves slowly arriving data, waits while the network is unavailable, and uses bounded backoff only when playback, buffer, and transfer progress have all stopped.
+- Playback diagnostics record sanitized stream type, adaptive-track availability, selected resolution and bitrate, bandwidth estimates, startup readiness, rebuffer count, network type, and Media3 error codes under `FortressTV.QoE`; source URLs and credentials are excluded.
+- Wi-Fi and cellular handovers trigger one controlled recovery when a player is buffering or failed.
+
 - Channel lists use `LazyColumn`, so only visible and prefetched channels are composed.
 - Channel rows have stable keys and reusable content types.
 - Current-programme presentation is cached per channel until the guide clock changes.
@@ -45,6 +50,8 @@ a real multi-day EPG before release.
   SHA-256 identity calculation for every channel during each subsequent source merge.
 
 ## Next profiling targets
+
+- Run the playback resilience matrix on an explicitly selected physical tablet with adaptive HLS, fixed HLS, MPEG-TS, and VOD sources. Measure startup time, rebuffer ratio, recovery time, channel-switch time, and live offset under gradual bandwidth reduction, short outages, and Wi-Fi/cellular handover.
 
 - Replace the programme guide's two mutually synchronized vertical lists with a shared
   vertical scrolling model if profiling shows scroll feedback or dropped frames.

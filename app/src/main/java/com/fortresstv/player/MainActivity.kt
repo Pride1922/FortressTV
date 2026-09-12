@@ -217,6 +217,7 @@ import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Speed
 import com.fortresstv.player.transfer.LocalTransferServer
 import com.fortresstv.player.transfer.TransferKind
 import com.fortresstv.player.transfer.TransferPreview
@@ -250,6 +251,15 @@ import com.fortresstv.player.playlist.searchChannels
 import com.fortresstv.player.player.GestureControl
 import com.fortresstv.player.player.GestureLevel
 import com.fortresstv.player.player.GesturePlayerView
+import com.fortresstv.player.player.FortressPlayerFactory
+import com.fortresstv.player.player.LocalPlaybackMode
+import com.fortresstv.player.player.PlaybackContentType
+import com.fortresstv.player.player.PlaybackMode
+import com.fortresstv.player.player.PlaybackTransferProgress
+import com.fortresstv.player.player.StallDecision
+import com.fortresstv.player.player.StallRecoveryPolicy
+import com.fortresstv.player.player.isPlaybackNetworkAvailable
+import com.fortresstv.player.player.rememberPlaybackNetworkGeneration
 import com.fortresstv.player.player.PlaybackTrackItem
 import com.fortresstv.player.player.TrackLanguageMatcher
 import com.fortresstv.player.epg.EpgGuide
@@ -586,6 +596,7 @@ private fun FortressTVApp(
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
+    var playbackMode by remember { mutableStateOf(PlaybackMode.AUTO) }
     var preferredAudioLanguage by remember { mutableStateOf("default") }
     var preferredSubtitleLanguage by remember { mutableStateOf("off") }
     var subtitleFallbackEnglish by remember { mutableStateOf(true) }
@@ -947,6 +958,7 @@ private fun FortressTVApp(
         val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
         val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
         val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
+        val savedPlaybackMode = withContext(Dispatchers.IO) { settings.playbackMode() }
         val savedAudioLang = withContext(Dispatchers.IO) { settings.preferredAudioLanguage() }
         val savedSubLang = withContext(Dispatchers.IO) { settings.preferredSubtitleLanguage() }
         val savedSubFallback = withContext(Dispatchers.IO) { settings.subtitleFallbackEnglish() }
@@ -956,6 +968,7 @@ private fun FortressTVApp(
         epgLastUpdate = epgUpdate
         playChannelsFullscreen = savedFullscreenPreference
         autoPictureInPicture = savedPictureInPicturePreference
+        playbackMode = savedPlaybackMode
         preferredAudioLanguage = savedAudioLang
         preferredSubtitleLanguage = savedSubLang
         subtitleFallbackEnglish = savedSubFallback
@@ -1287,6 +1300,7 @@ private fun FortressTVApp(
                             appLanguage = newLang
                             playChannelsFullscreen = settings.playChannelsFullscreen()
                             autoPictureInPicture = settings.autoPictureInPicture()
+                            playbackMode = settings.playbackMode()
                             preferredAudioLanguage = settings.preferredAudioLanguage()
                             preferredSubtitleLanguage = settings.preferredSubtitleLanguage()
                             subtitleFallbackEnglish = settings.subtitleFallbackEnglish()
@@ -1369,7 +1383,8 @@ private fun FortressTVApp(
 
     CompositionLocalProvider(
         LocalAppStrings provides strings,
-        LocalFormFactor provides formFactor
+        LocalFormFactor provides formFactor,
+        LocalPlaybackMode provides playbackMode
     ) {
         Box(Modifier.fillMaxSize()) {
             if (restoring) {
@@ -1470,6 +1485,11 @@ private fun FortressTVApp(
                 onAutoPictureInPictureChanged = { enabled ->
                     autoPictureInPicture = enabled
                     scope.launch(Dispatchers.IO) { settings.setAutoPictureInPicture(enabled) }
+                },
+                playbackMode = playbackMode,
+                onPlaybackModeChanged = { mode ->
+                    playbackMode = mode
+                    scope.launch(Dispatchers.IO) { settings.setPlaybackMode(mode) }
                 },
                 preferredAudioLanguage = preferredAudioLanguage,
                 onPreferredAudioLanguageChanged = { lang ->
@@ -5847,9 +5867,6 @@ private fun formatPlaybackTime(ms: Long): String {
     }
 }
 
-private const val LIVE_STALL_TIMEOUT_MILLIS = 12_000L
-private const val LIVE_STALL_MIN_PROGRESS_MILLIS = 1_000L
-private const val LIVE_STALL_MAX_RECOVERY_ATTEMPTS = 2
 internal const val NEXT_EPISODE_TRIGGER_REMAINING_MS = 45_000L
 internal const val NEXT_EPISODE_COUNTDOWN_SECONDS = 10
 
@@ -5963,10 +5980,11 @@ private fun VodPlayerDialog(
     var attachedSubtitles by remember(request.key) { mutableStateOf<List<Pair<OpenSubtitlesItem, java.io.File>>>(emptyList()) }
     var showOpenSubtitlesSearchDialog by remember { mutableStateOf(false) }
 
-    val renderersFactory = remember(context) {
-        DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+    val playbackMode = LocalPlaybackMode.current
+    val player = remember(request.streamUrl, playbackMode) {
+        FortressPlayerFactory.create(context, PlaybackContentType.VOD, playbackMode)
     }
-    val player = remember(request.streamUrl) { ExoPlayer.Builder(context, renderersFactory).build() }
+    val vodNetworkGeneration = rememberPlaybackNetworkGeneration()
     var resumePositionMs by remember(request.key) { mutableLongStateOf(initialPositionMs) }
     var resumeDecisionMade by remember(request.key) { mutableStateOf(initialPositionMs < 10_000L) }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
@@ -5998,6 +6016,18 @@ private fun VodPlayerDialog(
     var allEpisodes by remember(request.seriesId) { mutableStateOf<List<VodPlaybackRequest>>(emptyList()) }
     var showEpisodesDrawer by remember { mutableStateOf(false) }
     var selectedDrawerSeason by remember(request.season) { mutableIntStateOf(request.season ?: 1) }
+
+    LaunchedEffect(vodNetworkGeneration) {
+        if (vodNetworkGeneration > 0 && player.currentMediaItem != null &&
+            (player.playbackState == Player.STATE_BUFFERING || player.playerError != null)
+        ) {
+            val position = player.currentPosition.coerceAtLeast(0L)
+            delay(750)
+            player.prepare()
+            player.seekTo(position)
+            player.play()
+        }
+    }
 
     LaunchedEffect(player) {
         while (true) {
@@ -8870,14 +8900,14 @@ private fun PlayerPanel(
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycleOwner = activity as? LifecycleOwner
-    val renderersFactory = remember(context) {
-        DefaultRenderersFactory(context).setExtensionRendererMode(
-            DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-        )
+    val playbackMode = LocalPlaybackMode.current
+    val liveTransferProgress = remember { PlaybackTransferProgress() }
+    val player = remember(playbackMode) {
+        FortressPlayerFactory.create(context, PlaybackContentType.LIVE, playbackMode, liveTransferProgress).apply {
+            playWhenReady = true
+        }
     }
-    val player = remember {
-        ExoPlayer.Builder(context, renderersFactory).build().apply { playWhenReady = true }
-    }
+    val liveNetworkGeneration = rememberPlaybackNetworkGeneration()
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -8891,6 +8921,17 @@ private fun PlayerPanel(
     val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
     var previousWatchedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var currentTrackedChannel by remember { mutableStateOf(channel) }
+
+    LaunchedEffect(liveNetworkGeneration) {
+        if (liveNetworkGeneration > 0 && player.currentMediaItem != null &&
+            (player.playbackState == Player.STATE_BUFFERING || player.playerError != null)
+        ) {
+            delay(750)
+            playbackError = null
+            player.prepare()
+            player.play()
+        }
+    }
 
     fun handleChannelSwitch(next: PlaylistChannel) {
         if (next != channel) {
@@ -8931,7 +8972,14 @@ private fun PlayerPanel(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                playbackError = error.message ?: strings.playbackError
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    playbackError = null
+                    player.seekToDefaultPosition()
+                    player.prepare()
+                    player.play()
+                } else {
+                    playbackError = error.message ?: strings.playbackError
+                }
             }
         }
         val lifecycleObserver = object : DefaultLifecycleObserver {
@@ -8966,13 +9014,13 @@ private fun PlayerPanel(
         }
     }
 
-    LaunchedEffect(channel.streamUrl) {
+    LaunchedEffect(player, channel.streamUrl) {
         if (currentTrackedChannel != channel) {
             previousWatchedChannel = currentTrackedChannel
             currentTrackedChannel = channel
         }
         playbackError = null
-        player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+        player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
         player.prepare()
         player.play()
         if (autoEnterFullscreen) manualFullscreen = true
@@ -8991,26 +9039,40 @@ private fun PlayerPanel(
         }
         val positionBefore = player.currentPosition
         val bufferedBefore = player.bufferedPosition
-        delay(LIVE_STALL_TIMEOUT_MILLIS)
+        val bytesBefore = liveTransferProgress.bytesObserved
+        delay(
+            when (playbackMode) {
+                PlaybackMode.AUTO -> 15_000L
+                PlaybackMode.STABLE -> 25_000L
+                PlaybackMode.DATA_SAVER -> 18_000L
+            }
+        )
         if (player.playbackState != Player.STATE_BUFFERING || !player.playWhenReady || playbackError != null) {
             return@LaunchedEffect
         }
         val positionProgress = player.currentPosition - positionBefore
         val bufferProgress = player.bufferedPosition - bufferedBefore
-        if (positionProgress >= LIVE_STALL_MIN_PROGRESS_MILLIS || bufferProgress >= LIVE_STALL_MIN_PROGRESS_MILLIS) {
-            return@LaunchedEffect
+        when (StallRecoveryPolicy.decide(
+            positionProgressMs = positionProgress,
+            bufferProgressMs = bufferProgress,
+            recoveryAttempts = consecutiveStallRecoveries,
+            networkAvailable = context.isPlaybackNetworkAvailable(),
+            bytesProgress = liveTransferProgress.bytesObserved - bytesBefore
+        )) {
+            StallDecision.WAIT -> Unit
+            StallDecision.GIVE_UP -> playbackError = strings.playbackError
+            StallDecision.RECOVER -> {
+                consecutiveStallRecoveries++
+                val backoffMs = 1_000L shl (consecutiveStallRecoveries - 1).coerceAtMost(3)
+                Log.w("FortressTV.Player", "Recovering stalled live playback; attempt=$consecutiveStallRecoveries")
+                delay(backoffMs)
+                if (!context.isPlaybackNetworkAvailable()) return@LaunchedEffect
+                player.stop()
+                player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+                player.prepare()
+                player.play()
+            }
         }
-        if (consecutiveStallRecoveries >= LIVE_STALL_MAX_RECOVERY_ATTEMPTS) {
-            playbackError = strings.playbackError
-            return@LaunchedEffect
-        }
-
-        consecutiveStallRecoveries++
-        Log.w("FortressTV.Player", "Recovering stalled live playback; attempt=$consecutiveStallRecoveries")
-        player.stop()
-        player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
-        player.prepare()
-        player.play()
     }
 
     Column(modifier) {
@@ -9347,7 +9409,14 @@ private fun VideoSurface(
             modifier = Modifier.fillMaxSize()
         )
         if (playbackState == Player.STATE_BUFFERING) {
-            CircularProgressIndicator(Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.primary)
+            Column(
+                Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                Text(strings.buildingPlaybackBuffer, color = Color.White, fontSize = 12.sp)
+            }
         }
         playbackError?.let { message ->
             Column(
@@ -11324,6 +11393,8 @@ private fun SettingsDialog(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    playbackMode: PlaybackMode,
+    onPlaybackModeChanged: (PlaybackMode) -> Unit,
     preferredAudioLanguage: String = "default",
     onPreferredAudioLanguageChanged: (String) -> Unit = {},
     preferredSubtitleLanguage: String = "off",
@@ -11537,6 +11608,8 @@ private fun SettingsDialog(
                                     onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                     autoPictureInPicture = autoPictureInPicture,
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    playbackMode = playbackMode,
+                                    onPlaybackModeChanged = onPlaybackModeChanged,
                                     preferredAudioLanguage = preferredAudioLanguage,
                                     onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                                     hideAdultContent = hideAdultContent,
@@ -11587,6 +11660,8 @@ private fun SettingsDialog(
                                     onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                     autoPictureInPicture = autoPictureInPicture,
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    playbackMode = playbackMode,
+                                    onPlaybackModeChanged = onPlaybackModeChanged,
                                     preferredAudioLanguage = preferredAudioLanguage,
                                     onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                                     preferredSubtitleLanguage = preferredSubtitleLanguage,
@@ -11645,6 +11720,8 @@ private fun SettingsDialog(
                                 onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                 autoPictureInPicture = autoPictureInPicture,
                                 onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                playbackMode = playbackMode,
+                                onPlaybackModeChanged = onPlaybackModeChanged,
                                 preferredAudioLanguage = preferredAudioLanguage,
                                 onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                                 hideAdultContent = hideAdultContent,
@@ -11695,6 +11772,8 @@ private fun SettingsDialog(
                                 onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                 autoPictureInPicture = autoPictureInPicture,
                                 onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                playbackMode = playbackMode,
+                                onPlaybackModeChanged = onPlaybackModeChanged,
                                 preferredAudioLanguage = preferredAudioLanguage,
                                 onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                                 preferredSubtitleLanguage = preferredSubtitleLanguage,
@@ -11927,6 +12006,8 @@ private fun GeneralTab(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    playbackMode: PlaybackMode = PlaybackMode.AUTO,
+    onPlaybackModeChanged: (PlaybackMode) -> Unit = {},
     preferredAudioLanguage: String = "default",
     onPreferredAudioLanguageChanged: (String) -> Unit = {},
     preferredSubtitleLanguage: String = "off",
@@ -11992,6 +12073,19 @@ private fun GeneralTab(
 
         // Playback Group
         if (!subtitlesOnly) SettingsGroup(title = strings.playback) {
+            SettingsDropdownPickerRow(
+                title = strings.playbackMode,
+                subtitle = strings.playbackModeDesc,
+                icon = Icons.Default.Speed,
+                selectedValue = playbackMode.persistedValue,
+                options = listOf(
+                    PlaybackMode.AUTO.persistedValue to strings.playbackModeAuto,
+                    PlaybackMode.STABLE.persistedValue to strings.playbackModeStable,
+                    PlaybackMode.DATA_SAVER.persistedValue to strings.playbackModeDataSaver
+                ),
+                onValueSelected = { onPlaybackModeChanged(PlaybackMode.fromPersisted(it)) }
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
             SettingsToggleRow(
                 title = strings.playChannelsFullscreen,
                 subtitle = strings.playChannelsFullscreenDesc,

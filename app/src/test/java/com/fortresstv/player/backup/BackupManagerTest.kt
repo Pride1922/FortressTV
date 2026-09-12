@@ -24,6 +24,7 @@ class BackupManagerTest {
             epgSource = ContentSource.RemoteUrl("https://example.com/epg.xml", "My EPG"),
             epgTimeShiftHours = 2,
             activePlaylistId = "profile-1",
+            playbackMode = "stable",
             epgLoadedDays = 5
         )
 
@@ -109,6 +110,7 @@ class BackupManagerTest {
         assertEquals(payload.settings.parentalPin, decoded.settings.parentalPin)
         assertEquals(payload.settings.epgTimeShiftHours, decoded.settings.epgTimeShiftHours)
         assertEquals(5, decoded.settings.epgLoadedDays)
+        assertEquals("stable", decoded.settings.playbackMode)
         assertEquals(payload.settings.activePlaylistId, decoded.settings.activePlaylistId)
 
         assertEquals(2, decoded.playlists.size)

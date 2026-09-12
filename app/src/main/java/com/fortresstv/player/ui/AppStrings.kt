@@ -165,6 +165,7 @@ interface Strings {
     val aspectZoom: String
     val aspectFit: String
     val playbackError: String
+    val buildingPlaybackBuffer: String
     val resumePlayback: String
     val resumePlaybackDescription: String
     val resume: String
@@ -256,6 +257,11 @@ interface Strings {
     val tabAbout: String
     val language: String
     val playback: String
+    val playbackMode: String
+    val playbackModeDesc: String
+    val playbackModeAuto: String
+    val playbackModeStable: String
+    val playbackModeDataSaver: String
     val playChannelsFullscreen: String
     val playChannelsFullscreenDesc: String
     val autoPictureInPicture: String
@@ -560,6 +566,7 @@ object EnglishStrings : Strings {
     override val aspectZoom = "Aspect: Zoom"
     override val aspectFit = "Aspect: Fit"
     override val playbackError = "Unable to play this channel."
+    override val buildingPlaybackBuffer = "Connection is unstable — building buffer…"
     override val resumePlayback = "Continue watching?"
     override val resumePlaybackDescription = "Resume from where you stopped or restart from the beginning."
     override val resume = "Resume"
@@ -651,6 +658,11 @@ object EnglishStrings : Strings {
     override val tabAbout = "About"
     override val language = "Language"
     override val playback = "Playback"
+    override val playbackMode = "Playback stability"
+    override val playbackModeDesc = "Choose the balance between live delay, reliability and mobile data use."
+    override val playbackModeAuto = "Automatic"
+    override val playbackModeStable = "Stable"
+    override val playbackModeDataSaver = "Data saver"
     override val playChannelsFullscreen = "Open channels in fullscreen"
     override val playChannelsFullscreenDesc = "Enter fullscreen immediately when you select a channel."
     override val autoPictureInPicture = "Picture-in-Picture"
@@ -957,6 +969,7 @@ object PortugueseStrings : Strings {
     override val aspectZoom = "Proporção: Zoom"
     override val aspectFit = "Proporção: Ajustar"
     override val playbackError = "Não foi possível reproduzir este canal."
+    override val buildingPlaybackBuffer = "Ligação instável — a preparar a memória de reprodução…"
     override val resumePlayback = "Continuar a ver?"
     override val resumePlaybackDescription = "Continue a partir de onde parou ou recomece do início."
     override val resume = "Continuar"
@@ -1048,6 +1061,11 @@ object PortugueseStrings : Strings {
     override val tabAbout = "Sobre"
     override val language = "Idioma"
     override val playback = "Reprodução"
+    override val playbackMode = "Estabilidade da reprodução"
+    override val playbackModeDesc = "Escolha o equilíbrio entre atraso da emissão, estabilidade e utilização de dados móveis."
+    override val playbackModeAuto = "Automático"
+    override val playbackModeStable = "Estável"
+    override val playbackModeDataSaver = "Poupança de dados"
     override val playChannelsFullscreen = "Abrir canais em ecrã inteiro"
     override val playChannelsFullscreenDesc = "Entrar imediatamente em ecrã inteiro ao selecionar um canal."
     override val autoPictureInPicture = "Imagem em imagem"
