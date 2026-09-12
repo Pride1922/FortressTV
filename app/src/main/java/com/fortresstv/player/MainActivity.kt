@@ -11015,6 +11015,16 @@ private fun VideoSurface(
             onFullscreen()
         }
     }
+    var isProlongedBuffering by remember { mutableStateOf(false) }
+    LaunchedEffect(playbackState) {
+        if (playbackState == Player.STATE_BUFFERING) {
+            isProlongedBuffering = false
+            delay(3_500)
+            isProlongedBuffering = true
+        } else {
+            isProlongedBuffering = false
+        }
+    }
     Box(
         modifier.background(Color.Black)
     ) {
@@ -11103,7 +11113,13 @@ private fun VideoSurface(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                Text(strings.buildingPlaybackBuffer, color = Color.White, fontSize = 12.sp)
+                AnimatedVisibility(
+                    visible = isProlongedBuffering,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Text(strings.buildingPlaybackBuffer, color = Color.White, fontSize = 12.sp)
+                }
             }
         }
         playbackError?.let { message ->
