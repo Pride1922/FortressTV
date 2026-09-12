@@ -329,6 +329,48 @@ class MainActivity : ComponentActivity() {
     private var transferDeepLink by mutableStateOf<String?>(null)
     private var foregroundGeneration by mutableIntStateOf(0)
 
+    internal var sleepTimerState by mutableStateOf(PlaybackSleepTimerState())
+        private set
+    private val sleepTimerHandler = Handler(Looper.getMainLooper())
+    private val sleepTimerPlayers = mutableSetOf<Player>()
+    internal val playbackSleepTimer = PlaybackSleepTimer(
+        elapsedRealtime = android.os.SystemClock::elapsedRealtime,
+        schedule = { delayMs, action ->
+            val runnable = Runnable { action() }
+            sleepTimerHandler.postDelayed(runnable, delayMs)
+            val cancel: () -> Unit = { sleepTimerHandler.removeCallbacks(runnable) }
+            cancel
+        },
+        onStateChanged = { sleepTimerState = it },
+        onExpired = {
+            // Stop synchronously before finishing: no dialog, autoplay, or PiP escape.
+            updatePictureInPictureState(enabled = false, fullscreenPlaying = false)
+            sleepTimerPlayers.toList().forEach { it.pause(); it.stop() }
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            finishAndRemoveTask()
+        }
+    )
+
+    internal fun registerSleepTimerPlayer(player: Player): () -> Unit {
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                playbackSleepTimer.checkDeadline()
+                if (playWhenReady && playbackSleepTimer.expired) {
+                    player.pause()
+                    player.stop()
+                }
+            }
+        }
+        sleepTimerPlayers.add(player)
+        player.addListener(listener)
+        playbackSleepTimer.checkDeadline()
+        if (playbackSleepTimer.expired) { player.pause(); player.stop() }
+        return {
+            player.removeListener(listener)
+            sleepTimerPlayers.remove(player)
+        }
+    }
+
     private val confirmPictureInPictureDismissed = Runnable {
         if (!isInPictureInPictureMode && !isActivityResumed && !hasWindowFocus()) {
             android.util.Log.d("FortressTV", "PiP dismissed confirmed - stopping audio & video")
@@ -341,15 +383,15 @@ class MainActivity : ComponentActivity() {
     }
 
     fun updatePictureInPictureState(enabled: Boolean, fullscreenPlaying: Boolean) {
-        pictureInPictureEnabled = enabled
-        fullscreenVideoPlaying = fullscreenPlaying
+        pictureInPictureEnabled = enabled && !playbackSleepTimer.expired
+        fullscreenVideoPlaying = fullscreenPlaying && !playbackSleepTimer.expired
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             setPictureInPictureParams(
                 PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
                     .apply {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            setAutoEnterEnabled(enabled && fullscreenPlaying)
+                            setAutoEnterEnabled(pictureInPictureEnabled && fullscreenVideoPlaying)
                             setSeamlessResizeEnabled(true)
                         }
                     }
@@ -400,6 +442,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        playbackSleepTimer.checkDeadline()
         foregroundGeneration++
         isActivityResumed = true
         pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
@@ -420,6 +463,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        playbackSleepTimer.dispose()
         pictureInPictureHandler.removeCallbacksAndMessages(null)
         onPictureInPictureDismissed?.invoke()
         onPictureInPictureDismissed = null
@@ -5890,9 +5934,9 @@ private fun VodPlayerDialog(
     var isDraggingSlider by remember { mutableStateOf(false) }
     var sliderDragPositionMs by remember { mutableFloatStateOf(0f) }
 
-    var sleepTimerMinutes by remember { mutableStateOf<Int?>(null) }
-    var sleepTimerEndEpochMs by remember { mutableStateOf<Long?>(null) }
-    var sleepTimerRemainingText by remember { mutableStateOf<String?>(null) }
+    val sleepTimerActivity = context.findActivity() as? MainActivity
+    val sleepTimerMinutes = sleepTimerActivity?.sleepTimerState?.minutes
+    val sleepTimerRemainingText = sleepTimerActivity?.sleepTimerState?.remainingMinutes?.let { "${it}m" }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
 
     var currentTracks by remember { mutableStateOf<Tracks?>(null) }
@@ -6048,30 +6092,6 @@ private fun VodPlayerDialog(
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
 
-    // Episodes replace the player, but must retain the original timer deadline.
-    LaunchedEffect(player, sleepTimerEndEpochMs, sleepTimerMinutes) {
-        val targetEpoch = sleepTimerEndEpochMs
-        if (targetEpoch != null) {
-            while (true) {
-                val remainingMs = targetEpoch - System.currentTimeMillis()
-                if (remainingMs <= 0L) {
-                    autoPlayNext = false
-                    autoPlayCountdown = -1
-                    Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
-                    player.pause()
-                    onDismiss()
-                    break
-                } else {
-                    val mins = ((remainingMs / 1000L) / 60L).toInt() + 1
-                    sleepTimerRemainingText = "${mins}m"
-                }
-                delay(1000)
-            }
-        } else {
-            sleepTimerRemainingText = null
-        }
-    }
-
     LaunchedEffect(autoPlayCountdown, nextEpisode, isPlaying, sleepTimerMinutes) {
         if (sleepTimerMinutes == -1) {
             autoPlayCountdown = -1
@@ -6081,6 +6101,8 @@ private fun VodPlayerDialog(
             delay(1000)
             autoPlayCountdown--
             if (autoPlayCountdown == 0) {
+                sleepTimerActivity?.playbackSleepTimer?.checkDeadline()
+                if (sleepTimerActivity?.playbackSleepTimer?.expired == true) return@LaunchedEffect
                 nextEpisode?.let { next ->
                     onPlayNext(next)
                 }
@@ -6105,6 +6127,7 @@ private fun VodPlayerDialog(
 
     val mainActivity = context as? MainActivity
     DisposableEffect(player) {
+        val unregisterSleepTimerPlayer = sleepTimerActivity?.registerSleepTimerPlayer(player)
         val pictureInPictureDismissedListener = {
             player.stop()
             onDismiss()
@@ -6119,12 +6142,8 @@ private fun VodPlayerDialog(
                 playbackState = state
                 if (state == Player.STATE_ENDED) {
                     onSaveProgress(player.duration.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
-                    if (sleepTimerMinutes == -1) {
-                        Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
-                        player.pause()
-                        onDismiss()
-                        return
-                    }
+                    sleepTimerActivity?.playbackSleepTimer?.mediaEnded()
+                    if (sleepTimerActivity?.playbackSleepTimer?.expired == true) return
                     if (loadNextEpisode != null && !loadingNextEpisode && nextEpisode == null) {
                         loadingNextEpisode = true
                         scope.launch {
@@ -6146,6 +6165,7 @@ private fun VodPlayerDialog(
             mainActivity?.setOnPictureInPictureDismissedListener(null)
             onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
             player.removeListener(listener)
+            unregisterSleepTimerPlayer?.invoke()
             player.release()
         }
     }
@@ -7099,16 +7119,15 @@ private fun VodPlayerDialog(
                                 120 to "120 min",
                                 -1 to strings.endOfEpisode
                             )
+                            Text(strings.sleepTimerHint, style = MaterialTheme.typography.bodySmall)
                             options.forEach { (mins, label) ->
                                 val isSelected = sleepTimerMinutes == mins
                                 Surface(
                                     onClick = {
-                                        sleepTimerMinutes = mins
+                                        sleepTimerActivity?.playbackSleepTimer?.select(mins)
                                         if (mins != null && mins > 0) {
-                                            sleepTimerEndEpochMs = System.currentTimeMillis() + mins * 60_000L
                                             Toast.makeText(context, strings.sleepTimerSet(mins), Toast.LENGTH_SHORT).show()
                                         } else {
-                                            sleepTimerEndEpochMs = null
                                             if (mins == -1) {
                                                 Toast.makeText(context, strings.endOfEpisode, Toast.LENGTH_SHORT).show()
                                             }
@@ -8808,6 +8827,7 @@ private fun PlayerPanel(
 
     DisposableEffect(player) {
         var resumePlaybackOnStart = false
+        val unregisterSleepTimerPlayer = (activity as? MainActivity)?.registerSleepTimerPlayer(player)
         val pictureInPictureDismissedListener = {
             resumePlaybackOnStart = false
             manualFullscreen = false
@@ -8855,6 +8875,7 @@ private fun PlayerPanel(
             lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
             (activity as? MainActivity)?.setOnPictureInPictureDismissedListener(null)
             player.removeListener(listener)
+            unregisterSleepTimerPlayer?.invoke()
             player.release()
         }
     }
@@ -9408,9 +9429,9 @@ private fun FullscreenPlayer(
     var showGuide by remember { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
-    var sleepTimerMinutes by remember { mutableStateOf<Int?>(null) }
-    var sleepTimerEndEpochMs by remember { mutableStateOf<Long?>(null) }
-    var sleepTimerRemainingText by remember { mutableStateOf<String?>(null) }
+    val sleepTimerActivity = context.findActivity() as? MainActivity
+    val sleepTimerMinutes = sleepTimerActivity?.sleepTimerState?.minutes
+    val sleepTimerRemainingText = sleepTimerActivity?.sleepTimerState?.remainingMinutes?.let { "${it}m" }
     var locked by remember { mutableStateOf(false) }
     var lockPromptVisible by remember { mutableStateOf(false) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
@@ -9491,26 +9512,6 @@ private fun FullscreenPlayer(
         if (controlsVisible && !showChannels && !showGuide && !showTracksDialog && !showSleepTimerDialog && !locked) {
             delay(if (isTv) 8_000 else 3_500)
             controlsVisible = false
-        }
-    }
-    LaunchedEffect(player, sleepTimerEndEpochMs, sleepTimerMinutes) {
-        val targetEpoch = sleepTimerEndEpochMs
-        if (targetEpoch != null) {
-            while (true) {
-                val remainingMs = targetEpoch - System.currentTimeMillis()
-                if (remainingMs <= 0L) {
-                    Toast.makeText(context, strings.sleepTimerExpired, Toast.LENGTH_SHORT).show()
-                    player.pause()
-                    onExit()
-                    break
-                } else {
-                    val mins = ((remainingMs / 1000L) / 60L).toInt() + 1
-                    sleepTimerRemainingText = "${mins}m"
-                }
-                delay(1000)
-            }
-        } else {
-            sleepTimerRemainingText = null
         }
     }
     LaunchedEffect(channel, epgGuide) {
@@ -10242,19 +10243,19 @@ private fun FullscreenPlayer(
                                     add(-1 to strings.endOfProgramme)
                                 }
                             }
+                            Text(strings.sleepTimerHint, style = MaterialTheme.typography.bodySmall)
                             options.forEach { (mins, label) ->
                                 val isSelected = sleepTimerMinutes == mins
                                 Surface(
                                     onClick = {
-                                        sleepTimerMinutes = mins
+                                        sleepTimerActivity?.playbackSleepTimer?.select(
+                                            mins,
+                                            if (mins == -1) currentStopEpoch?.minus(System.currentTimeMillis()) else null
+                                        )
                                         if (mins != null && mins > 0) {
-                                            sleepTimerEndEpochMs = System.currentTimeMillis() + mins * 60_000L
                                             Toast.makeText(context, strings.sleepTimerSet(mins), Toast.LENGTH_SHORT).show()
                                         } else if (mins == -1 && currentStopEpoch != null) {
-                                            sleepTimerEndEpochMs = currentStopEpoch
                                             Toast.makeText(context, strings.endOfProgramme, Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            sleepTimerEndEpochMs = null
                                         }
                                         showSleepTimerDialog = false
                                     },

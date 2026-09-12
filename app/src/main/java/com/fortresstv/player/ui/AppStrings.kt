@@ -176,6 +176,7 @@ interface Strings {
     val autoPlayNext: String
     val autoPlayNextDesc: String
     val sleepTimer: String
+    val sleepTimerHint: String
     val sleepTimerOff: String
     val endOfEpisode: String
     val endOfProgramme: String
@@ -563,6 +564,7 @@ object EnglishStrings : Strings {
     override val autoPlayNext = "Auto-Play Next"
     override val autoPlayNextDesc = "Automatically play next episode when current ends"
     override val sleepTimer = "Sleep Timer"
+    override val sleepTimerHint = "Stops playback and closes FortressTV automatically, even after leaving fullscreen. No confirmation required."
     override val sleepTimerOff = "Off"
     override val endOfEpisode = "End of video"
     override val endOfProgramme = "End of current programme"
@@ -952,6 +954,7 @@ object PortugueseStrings : Strings {
     override val autoPlayNext = "Reprodução automática"
     override val autoPlayNextDesc = "Reproduzir automaticamente o próximo episódio"
     override val sleepTimer = "Temporizador de suspensão"
+    override val sleepTimerHint = "Para a reprodução e fecha o FortressTV automaticamente, mesmo depois de sair do ecrã inteiro. Não é necessária confirmação."
     override val sleepTimerOff = "Desativado"
     override val endOfEpisode = "No final do vídeo"
     override val endOfProgramme = "No final do programa atual"
