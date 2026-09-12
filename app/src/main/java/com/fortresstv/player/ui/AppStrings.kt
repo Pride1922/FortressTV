@@ -48,6 +48,11 @@ interface Strings {
     val homeStartupScreenHome: String
     val homeStartupScreenLiveTv: String
     val homeNoContent: String
+    val quickZap: String
+    val quickZapFavorites: String
+    val quickZapRecent: String
+    val dockedPlayer: String
+    val closeDockedPlayer: String
     val comingSoon: String
     val moviesComingSoon: String
     val seriesComingSoon: String
@@ -463,6 +468,11 @@ object EnglishStrings : Strings {
     override val homeStartupScreenHome = "Home"
     override val homeStartupScreenLiveTv = "Live TV"
     override val homeNoContent = "Your media dashboard will appear here as you watch channels, movies, and series."
+    override val quickZap = "Quick Zap"
+    override val quickZapFavorites = "Favorites"
+    override val quickZapRecent = "Recent"
+    override val dockedPlayer = "Mini Player"
+    override val closeDockedPlayer = "Close mini player"
     override val comingSoon = "Coming next"
     override val moviesComingSoon = "Your movie library will appear here when a VOD source is configured."
     override val seriesComingSoon = "Your series, seasons and episodes will appear here when a VOD source is configured."
@@ -880,6 +890,11 @@ object PortugueseStrings : Strings {
     override val homeStartupScreenHome = "Início"
     override val homeStartupScreenLiveTv = "TV em direto"
     override val homeNoContent = "O seu painel aparecerá aqui à medida que vê canais, filmes e séries."
+    override val quickZap = "Zapping Rápido"
+    override val quickZapFavorites = "Favoritos"
+    override val quickZapRecent = "Recentes"
+    override val dockedPlayer = "Mini Leitor"
+    override val closeDockedPlayer = "Fechar mini leitor"
     override val comingSoon = "Brevemente"
     override val moviesComingSoon = "A sua biblioteca de filmes aparecerá aqui quando configurar uma fonte VOD."
     override val seriesComingSoon = "As suas séries, temporadas e episódios aparecerão aqui quando configurar uma fonte VOD."
