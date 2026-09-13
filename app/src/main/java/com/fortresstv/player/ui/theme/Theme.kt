@@ -1,9 +1,11 @@
 package com.fortresstv.player.ui.theme
 
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 
 private val DarkColorScheme = darkColorScheme(
     primary = FortressGreen,
@@ -38,9 +40,14 @@ fun FortressTVTheme(
     darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
-        typography = Typography,
-        content = content
-    )
+        colorScheme = colorScheme,
+        typography = Typography
+    ) {
+        CompositionLocalProvider(
+            LocalContentColor provides colorScheme.onBackground,
+            content = content
+        )
+    }
 }

@@ -264,7 +264,8 @@ import com.fortresstv.player.player.PlaybackTransferProgress
 import com.fortresstv.player.player.PlaybackFrameProgress
 import com.fortresstv.player.player.ReadyFreezePolicy
 import com.fortresstv.player.player.StallDecision
-import com.fortresstv.player.player.StallRecoveryPolicy
+import com.fortresstv.player.player.BufferingSample
+import com.fortresstv.player.player.awaitBufferingStall
 import com.fortresstv.player.player.isPlaybackNetworkAvailable
 import com.fortresstv.player.player.rememberPlaybackNetworkGeneration
 import com.fortresstv.player.player.PlaybackTrackItem
@@ -308,9 +309,11 @@ import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import android.content.ContentValues
 import android.os.Environment
 import android.provider.MediaStore
@@ -3566,6 +3569,7 @@ private fun FortressLibrary(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
                     contentFocusRequester = contentFocusRequester,
+                    sidebarFocusRequester = selectedItemFocusRequester,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
                     favoriteChannelIds = favoriteChannelIds,
@@ -3890,13 +3894,19 @@ private fun GlobalLibrarySidebar(
                                 shape = CircleShape,
                                 scaleOnFocus = if (isTv) 1.15f else 1.0f
                             )
+                            .focusProperties {
+                                if (contentFocusRequester != null) {
+                                    right = contentFocusRequester
+                                }
+                            }
                             .onPreviewKeyEvent { keyEvent ->
-                                if (isTv && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
-                                    if (keyEvent.type == KeyEventType.KeyUp) {
-                                        try { contentFocusRequester.requestFocus() } catch (_: Throwable) {}
+                                if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        runCatching { contentFocusRequester.requestFocus() }
                                     }
-                                    true
-                                } else false
+                                    return@onPreviewKeyEvent true
+                                }
+                                false
                             }
                     ) {
                         Icon(Icons.AutoMirrored.Filled.MenuOpen, contentDescription = strings.collapseSidebar)
@@ -3912,13 +3922,19 @@ private fun GlobalLibrarySidebar(
                             shape = CircleShape,
                             scaleOnFocus = if (isTv) 1.15f else 1.0f
                         )
+                        .focusProperties {
+                            if (contentFocusRequester != null) {
+                                right = contentFocusRequester
+                            }
+                        }
                         .onPreviewKeyEvent { keyEvent ->
-                            if (isTv && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
-                                if (keyEvent.type == KeyEventType.KeyUp) {
-                                    try { contentFocusRequester.requestFocus() } catch (_: Throwable) {}
+                            if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    runCatching { contentFocusRequester.requestFocus() }
                                 }
-                                true
-                            } else false
+                                return@onPreviewKeyEvent true
+                            }
+                            false
                         }
                 ) {
                     Icon(Icons.Default.Menu, contentDescription = strings.expandSidebar)
@@ -3938,21 +3954,21 @@ private fun GlobalLibrarySidebar(
                             if (index == 0) {
                                 up = menuToggleFocusRequester
                             }
+                            if (contentFocusRequester != null) {
+                                right = contentFocusRequester
+                            }
                         }
                         .then(if (isSelected && selectedItemFocusRequester != null) {
                             Modifier.focusRequester(selectedItemFocusRequester)
                         } else Modifier)
                         .onPreviewKeyEvent { keyEvent ->
-                            if (isTv && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
-                                if (contentFocusRequester != null) {
-                                    if (keyEvent.type == KeyEventType.KeyUp) {
-                                        try {
-                                            contentFocusRequester.requestFocus()
-                                        } catch (_: Throwable) {}
-                                    }
-                                    true
-                                } else false
-                            } else false
+                            if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    runCatching { contentFocusRequester.requestFocus() }
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                            false
                         },
                     onClick = { onDestinationSelected(item) }
                 )
@@ -3966,6 +3982,21 @@ private fun GlobalLibrarySidebar(
                 icon = Icons.Default.Settings,
                 expanded = effectiveExpanded,
                 selected = false,
+                modifier = Modifier
+                    .focusProperties {
+                        if (contentFocusRequester != null) {
+                            right = contentFocusRequester
+                        }
+                    }
+                    .onPreviewKeyEvent { keyEvent ->
+                        if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                runCatching { contentFocusRequester.requestFocus() }
+                            }
+                            return@onPreviewKeyEvent true
+                        }
+                        false
+                    },
                 onClick = onOpenSettings
             )
         }
@@ -4156,15 +4187,23 @@ private enum class VodSortOption {
 private fun ContinueWatchingRow(
     entries: List<VodProgressEntry>,
     onClick: (VodProgressEntry) -> Unit,
-    onRemove: (VodProgressEntry) -> Unit
+    onRemove: (VodProgressEntry) -> Unit,
+    firstItemFocusRequester: FocusRequester? = null,
+    sidebarFocusRequester: FocusRequester? = null
 ) {
     if (entries.isEmpty()) return
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
     val featured = entries.first()
     val remaining = entries.drop(1)
 
     Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-        Text(strings.continueWatching, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            strings.continueWatching,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
         Spacer(Modifier.height(10.dp))
 
         // Hero Spotlight Banner
@@ -4181,8 +4220,24 @@ private fun ContinueWatchingRow(
                 Row(
                     modifier = Modifier
                         .weight(1f)
+                        .then(if (firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
+                        .focusProperties {
+                            if (sidebarFocusRequester != null) {
+                                left = sidebarFocusRequester
+                            }
+                        }
+                        .onPreviewKeyEvent { keyEvent ->
+                            if (isTv && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                    if (handled) return@onPreviewKeyEvent true
+                                }
+                            }
+                            false
+                        }
                         .clip(RoundedCornerShape(10.dp))
-                        .clickable { onClick(featured) },
+                        .clickable { onClick(featured) }
+                        .tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = if (isTv) 1.04f else 1.0f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!featured.posterUrl.isNullOrBlank()) {
@@ -4268,11 +4323,26 @@ private fun ContinueWatchingRow(
         if (remaining.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(remaining.take(15), key = { "continue:${it.key}" }) { entry ->
+                itemsIndexed(remaining.take(15), key = { _, it -> "continue:${it.key}" }) { index, entry ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainer,
-                        modifier = Modifier.width(220.dp)
+                        modifier = Modifier
+                            .width(220.dp)
+                            .focusProperties {
+                                if (index == 0 && sidebarFocusRequester != null) {
+                                    left = sidebarFocusRequester
+                                }
+                            }
+                            .onPreviewKeyEvent { keyEvent ->
+                                if (isTv && index == 0 && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                        if (handled) return@onPreviewKeyEvent true
+                                    }
+                                }
+                                false
+                            }
                     ) {
                         Column {
                             Box(Modifier.fillMaxWidth().height(4.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -6710,7 +6780,7 @@ private fun VodPlayerDialog(
     val vodForwardFocusRequester = remember { FocusRequester() }
     val vodTimelineFocusRequester = remember { FocusRequester() }
     val vodDrawerCloseFocusRequester = remember { FocusRequester() }
-    var lastInteractionEpoch by remember { mutableLongStateOf(0L) }
+    val vodInteractionSignal = remember { Channel<Unit>(Channel.CONFLATED) }
 
     LaunchedEffect(Unit) {
         if (isTv) {
@@ -6760,10 +6830,18 @@ private fun VodPlayerDialog(
         }
     }
 
-    LaunchedEffect(controlsVisible, showEpisodesDrawer, showSleepTimerDialog, showTracksDialog, lastInteractionEpoch) {
+    LaunchedEffect(controlsVisible, showEpisodesDrawer, showSleepTimerDialog, showTracksDialog) {
         if (controlsVisible && !showEpisodesDrawer && !showSleepTimerDialog && !showTracksDialog) {
-            delay(if (isTv) 4_000 else 3_000)
-            controlsVisible = false
+            val timeoutMs = if (isTv) 4_000L else 3_000L
+            while (true) {
+                val ping = withTimeoutOrNull(timeoutMs) {
+                    vodInteractionSignal.receive()
+                }
+                if (ping == null) {
+                    controlsVisible = false
+                    break
+                }
+            }
         }
     }
 
@@ -7005,15 +7083,16 @@ private fun VodPlayerDialog(
                 .fillMaxSize()
                 .background(Color.Black)
                 .focusRequester(playerFocusRequester)
+                .focusProperties { canFocus = !isTv || !isOverlayActive }
                 .focusable()
                 .onPreviewKeyEvent { keyEvent ->
                     if (isTv && isOverlayActive && keyEvent.type == KeyEventType.KeyDown) {
-                        lastInteractionEpoch = System.currentTimeMillis()
+                        vodInteractionSignal.trySend(Unit)
                     }
                     val isBackKey = keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK ||
                         keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE
                     if (isTv && isOverlayActive && isBackKey) {
-                        lastInteractionEpoch = System.currentTimeMillis()
+                        vodInteractionSignal.trySend(Unit)
                         if (keyEvent.type == KeyEventType.KeyUp) dismissVodOverlay()
                         true
                     } else {
@@ -7038,7 +7117,7 @@ private fun VodPlayerDialog(
                         )
                     }
                     if (action != null) {
-                        lastInteractionEpoch = System.currentTimeMillis()
+                        vodInteractionSignal.trySend(Unit)
                         when (action) {
                             TvPlayerAction.TOGGLE_CONTROLS -> {
                                 controlsVisible = !controlsVisible
@@ -7955,6 +8034,24 @@ private fun PlayerControlsDrawer(
 
     var selectedTab by remember { mutableIntStateOf(0) }
 
+    val tabFocusRequesters = remember { List(3) { FocusRequester() } }
+    val optionCount = when (selectedTab) {
+        0 -> audioTracks.size + 1 + subtitleTracks.size + if (onSearchOpenSubtitles != null) 1 else 0
+        1 -> 1 + videoTracks.size
+        else -> if (isLive) 1 else 0
+    }
+    val optionFocusRequesters = remember(selectedTab, optionCount) { List(optionCount) { FocusRequester() } }
+    fun optionNavigation(index: Int): Modifier = Modifier
+        .focusRequester(optionFocusRequesters[index])
+        .focusProperties {
+            if (isTv) {
+                up = optionFocusRequesters.getOrNull(index - 1) ?: tabFocusRequesters[selectedTab]
+                down = optionFocusRequesters.getOrNull(index + 1) ?: FocusRequester.Cancel
+                left = FocusRequester.Cancel
+                right = FocusRequester.Cancel
+            }
+        }
+
     val selectedSubtitle = subtitleTracks.firstOrNull { it.isSelected }
     val isAutoVideo = remember(player.trackSelectionParameters) {
         player.trackSelectionParameters.overrides.values.none { it.type == C.TRACK_TYPE_VIDEO }
@@ -7972,8 +8069,12 @@ private fun PlayerControlsDrawer(
 
     LaunchedEffect(Unit) {
         if (isTv) {
-            delay(100)
-            runCatching { closeFocusRequester.requestFocus() }
+            repeat(10) {
+                withFrameNanos { }
+                if (runCatching { tabFocusRequesters[0].requestFocus() }.getOrDefault(false)) {
+                    return@LaunchedEffect
+                }
+            }
         }
     }
 
@@ -8019,6 +8120,14 @@ private fun PlayerControlsDrawer(
                     modifier = Modifier
                         .size(36.dp)
                         .focusRequester(closeFocusRequester)
+                        .focusProperties {
+                            if (isTv) {
+                                down = tabFocusRequesters[selectedTab]
+                                left = tabFocusRequesters[selectedTab]
+                                up = FocusRequester.Cancel
+                                right = FocusRequester.Cancel
+                            }
+                        }
                         .tvFocusHighlight(shape = CircleShape, scaleOnFocus = if (isTv) 1.15f else 1f)
                 ) {
                     Icon(
@@ -8050,6 +8159,15 @@ private fun PlayerControlsDrawer(
                         contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.7f),
                         modifier = Modifier
                             .weight(1f)
+                            .focusRequester(tabFocusRequesters[tabIndex])
+                            .focusProperties {
+                                if (isTv) {
+                                    up = closeFocusRequester
+                                    down = optionFocusRequesters.firstOrNull() ?: FocusRequester.Cancel
+                                    left = tabFocusRequesters.getOrNull(tabIndex - 1) ?: FocusRequester.Cancel
+                                    right = tabFocusRequesters.getOrNull(tabIndex + 1) ?: closeFocusRequester
+                                }
+                            }
                             .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.06f)
                     ) {
                         Box(
@@ -8094,7 +8212,7 @@ private fun PlayerControlsDrawer(
                                 fontSize = 13.sp
                             )
                         } else {
-                            audioTracks.forEach { track ->
+                            audioTracks.forEachIndexed { index, track ->
                                 val isSelected = track.isSelected
                                 Surface(
                                     onClick = {
@@ -8107,7 +8225,7 @@ private fun PlayerControlsDrawer(
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
                                     border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
-                                    modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                                    modifier = Modifier.fillMaxWidth().then(optionNavigation(index)).tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -8156,7 +8274,7 @@ private fun PlayerControlsDrawer(
                             shape = RoundedCornerShape(10.dp),
                             color = if (isOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
                             border = BorderStroke(1.dp, if (isOff) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
-                            modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                            modifier = Modifier.fillMaxWidth().then(optionNavigation(audioTracks.size)).tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -8177,7 +8295,7 @@ private fun PlayerControlsDrawer(
                             }
                         }
 
-                        subtitleTracks.forEach { track ->
+                        subtitleTracks.forEachIndexed { index, track ->
                             val isSelected = track.isSelected
                             Surface(
                                 onClick = {
@@ -8191,7 +8309,7 @@ private fun PlayerControlsDrawer(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
                                 border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
-                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                                modifier = Modifier.fillMaxWidth().then(optionNavigation(audioTracks.size + 1 + index)).tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -8216,7 +8334,7 @@ private fun PlayerControlsDrawer(
                         if (onSearchOpenSubtitles != null) {
                             OutlinedButton(
                                 onClick = onSearchOpenSubtitles,
-                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f),
+                                modifier = Modifier.fillMaxWidth().then(optionNavigation(optionCount - 1)).tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -8245,7 +8363,7 @@ private fun PlayerControlsDrawer(
                             shape = RoundedCornerShape(10.dp),
                             color = if (isAutoVideo) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
                             border = BorderStroke(1.dp, if (isAutoVideo) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
-                            modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                            modifier = Modifier.fillMaxWidth().then(optionNavigation(0)).tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -8273,7 +8391,7 @@ private fun PlayerControlsDrawer(
                         }
 
                         if (videoTracks.isNotEmpty()) {
-                            videoTracks.forEach { track ->
+                            videoTracks.forEachIndexed { index, track ->
                                 val isSelected = !isAutoVideo && track.isSelected
                                 Surface(
                                     onClick = {
@@ -8285,7 +8403,7 @@ private fun PlayerControlsDrawer(
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
                                     border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)),
-                                    modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                                    modifier = Modifier.fillMaxWidth().then(optionNavigation(index + 1)).tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -8335,7 +8453,7 @@ private fun PlayerControlsDrawer(
                                 shape = RoundedCornerShape(12.dp),
                                 color = if (isDrifted) Color(0xFFE50914).copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f),
                                 border = BorderStroke(1.dp, if (isDrifted) Color(0xFFE50914) else Color.White.copy(alpha = 0.1f)),
-                                modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                                modifier = Modifier.fillMaxWidth().then(optionNavigation(0)).tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
                             ) {
                                 Row(
                                     modifier = Modifier.padding(14.dp),
@@ -8485,6 +8603,7 @@ private fun HomeScreen(
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
     contentFocusRequester: FocusRequester,
+    sidebarFocusRequester: FocusRequester? = null,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int,
     favoriteChannelIds: Set<String>,
@@ -8508,6 +8627,12 @@ private fun HomeScreen(
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val isTv = LocalFormFactor.current.isTelevision
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val coroutineScope = rememberCoroutineScope()
+    var isTvSearchActive by remember { mutableStateOf(false) }
+    val searchBarFocusRequester = remember { FocusRequester() }
+    val searchTextFieldFocusRequester = remember { FocusRequester() }
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
@@ -8522,7 +8647,7 @@ private fun HomeScreen(
     }
 
     val favoriteChannels = remember(channels, favoriteChannelIds) {
-        channels.filter { it.libraryId() in favoriteChannelIds }
+        channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true }
     }
 
     val recentChannelsList = remember(channels, recentChannelIds) {
@@ -8537,6 +8662,14 @@ private fun HomeScreen(
                     (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
             }.map { CatalogSeries(catalog, it) }
         }
+    }
+
+    val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty()
+
+    BackHandler(enabled = isTv && isTvSearchActive) {
+        isTvSearchActive = false
+        keyboardController?.hide()
+        runCatching { searchBarFocusRequester.requestFocus() }
     }
 
     val isSearching = searchQuery.trim().isNotEmpty()
@@ -8573,19 +8706,54 @@ private fun HomeScreen(
     val searchMatchingMovies = searchResults.movies
     val searchMatchingSeries = searchResults.series
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 20.dp, vertical = 14.dp)
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
     ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 14.dp)
+        ) {
         // Top Search Bar
         Surface(
+            onClick = {
+                if (isTv) {
+                    isTvSearchActive = true
+                    coroutineScope.launch {
+                        delay(50)
+                        runCatching { searchTextFieldFocusRequester.requestFocus() }
+                        keyboardController?.show()
+                    }
+                } else {
+                    runCatching { searchTextFieldFocusRequester.requestFocus() }
+                }
+            },
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
             modifier = Modifier
                 .fillMaxWidth()
+                .focusRequester(searchBarFocusRequester)
+                .then(
+                    if (!hasContent || isSearching) {
+                        Modifier.focusRequester(contentFocusRequester)
+                    } else Modifier
+                )
+                .focusProperties {
+                    if (sidebarFocusRequester != null) {
+                        left = sidebarFocusRequester
+                    }
+                }
+                .onPreviewKeyEvent { keyEvent ->
+                    if (isTv && !isTvSearchActive && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                        if (keyEvent.type == KeyEventType.KeyDown) {
+                            val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                            if (handled) return@onPreviewKeyEvent true
+                        }
+                    }
+                    false
+                }
                 .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.02f else 1.0f)
         ) {
             Row(
@@ -8607,7 +8775,32 @@ private fun HomeScreen(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     singleLine = true,
-                    modifier = Modifier.weight(1f).focusRequester(contentFocusRequester),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            if (isTv) {
+                                isTvSearchActive = false
+                                keyboardController?.hide()
+                                runCatching { searchBarFocusRequester.requestFocus() }
+                            }
+                        }
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(searchTextFieldFocusRequester)
+                        .focusProperties {
+                            canFocus = !isTv || isTvSearchActive
+                        }
+                        .onPreviewKeyEvent { keyEvent ->
+                            if (isTv && isTvSearchActive && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                                if (keyEvent.type == KeyEventType.KeyUp) {
+                                    isTvSearchActive = false
+                                    keyboardController?.hide()
+                                    focusManager.moveFocus(FocusDirection.Down)
+                                }
+                                true
+                            } else false
+                        },
                     decorationBox = { innerTextField ->
                         if (searchQuery.isEmpty()) {
                             Text(
@@ -8621,7 +8814,14 @@ private fun HomeScreen(
                 )
                 if (searchQuery.isNotEmpty()) {
                     IconButton(
-                        onClick = { searchQuery = "" },
+                        onClick = {
+                            searchQuery = ""
+                            if (isTv) {
+                                isTvSearchActive = false
+                                keyboardController?.hide()
+                                runCatching { searchBarFocusRequester.requestFocus() }
+                            }
+                        },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
@@ -8754,7 +8954,6 @@ private fun HomeScreen(
                 }
             }
         } else {
-            val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty()
             if (!hasContent) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Surface(
@@ -8794,7 +8993,9 @@ private fun HomeScreen(
                             ContinueWatchingRow(
                                 entries = progressEntries,
                                 onClick = onContinueWatching,
-                                onRemove = onRemoveContinueWatching
+                                onRemove = onRemoveContinueWatching,
+                                firstItemFocusRequester = contentFocusRequester,
+                                sidebarFocusRequester = sidebarFocusRequester
                             )
                         }
                     }
@@ -8807,7 +9008,8 @@ private fun HomeScreen(
                                 Text(
                                     strings.homeFavoriteChannelsNow,
                                     fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
@@ -8818,7 +9020,7 @@ private fun HomeScreen(
                             }
                             Spacer(Modifier.height(10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(favoriteChannels, key = { "fav_now:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                                itemsIndexed(favoriteChannels, key = { _, it -> "fav_now:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
                                     val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgTimeShiftHours) {
                                         epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)
                                     }
@@ -8840,6 +9042,25 @@ private fun HomeScreen(
                                         modifier = Modifier
                                             .width(240.dp)
                                             .height(116.dp)
+                                            .then(
+                                                if (index == 0 && progressEntries.isEmpty()) {
+                                                    Modifier.focusRequester(contentFocusRequester)
+                                                } else Modifier
+                                            )
+                                            .focusProperties {
+                                                if (index == 0 && sidebarFocusRequester != null) {
+                                                    left = sidebarFocusRequester
+                                                }
+                                            }
+                                            .onPreviewKeyEvent { keyEvent ->
+                                                if (isTv && index == 0 && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                                        val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                                        if (handled) return@onPreviewKeyEvent true
+                                                    }
+                                                }
+                                                false
+                                            }
                                             .tvFocusHighlight(shape = RoundedCornerShape(14.dp), scaleOnFocus = 1.04f)
                                     ) {
                                         Column(Modifier.fillMaxSize().padding(12.dp)) {
@@ -8900,12 +9121,13 @@ private fun HomeScreen(
                                 Text(
                                     strings.homeRecentChannels,
                                     fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Spacer(Modifier.height(10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                items(recentChannelsList, key = { "recent:${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                                itemsIndexed(recentChannelsList, key = { _, it -> "recent:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
                                     Surface(
                                         onClick = { onWatchChannel(channel) },
                                         shape = RoundedCornerShape(12.dp),
@@ -8914,6 +9136,25 @@ private fun HomeScreen(
                                         modifier = Modifier
                                             .width(180.dp)
                                             .height(64.dp)
+                                            .then(
+                                                if (index == 0 && progressEntries.isEmpty() && favoriteChannels.isEmpty()) {
+                                                    Modifier.focusRequester(contentFocusRequester)
+                                                } else Modifier
+                                            )
+                                            .focusProperties {
+                                                if (index == 0 && sidebarFocusRequester != null) {
+                                                    left = sidebarFocusRequester
+                                                }
+                                            }
+                                            .onPreviewKeyEvent { keyEvent ->
+                                                if (isTv && index == 0 && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                                        val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                                        if (handled) return@onPreviewKeyEvent true
+                                                    }
+                                                }
+                                                false
+                                            }
                                             .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
                                     ) {
                                         Row(
@@ -8944,18 +9185,39 @@ private fun HomeScreen(
                                 Text(
                                     strings.homeNextUp,
                                     fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
                             }
                             Spacer(Modifier.height(10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                items(followedSeries, key = { "home_series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                                itemsIndexed(followedSeries, key = { _, it -> "home_series:${it.catalog.sourceId}:${it.series.id}" }) { index, entry ->
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
                                         subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
                                         onClick = { selectedSeries = entry },
-                                        modifier = Modifier.width(120.dp)
+                                        modifier = Modifier
+                                            .width(120.dp)
+                                            .then(
+                                                if (index == 0 && progressEntries.isEmpty() && favoriteChannels.isEmpty() && recentChannelsList.isEmpty()) {
+                                                    Modifier.focusRequester(contentFocusRequester)
+                                                } else Modifier
+                                            )
+                                            .focusProperties {
+                                                if (index == 0 && sidebarFocusRequester != null) {
+                                                    left = sidebarFocusRequester
+                                                }
+                                            }
+                                            .onPreviewKeyEvent { keyEvent ->
+                                                if (isTv && index == 0 && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                                        val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                                        if (handled) return@onPreviewKeyEvent true
+                                                    }
+                                                }
+                                                false
+                                            }
                                     )
                                 }
                             }
@@ -9009,6 +9271,7 @@ private fun HomeScreen(
             )
         }
     }
+}
 }
 
 private enum class FavoriteSection { CHANNELS, MOVIES, SERIES }
@@ -9318,8 +9581,10 @@ private fun ChannelBrowser(
 
     val filterButtonFocusRequester = remember { FocusRequester() }
     val calendarButtonFocusRequester = remember { FocusRequester() }
-    val effectiveContentFocusRequester = contentFocusRequester ?: remember { FocusRequester() }
+    val selectedCategoryFocusRequester = remember { FocusRequester() }
+    val channelListFocusRequester = remember { FocusRequester() }
     val firstFilterFocusRequester = remember { FocusRequester() }
+    val playerFocusRequester = remember { FocusRequester() }
 
     val allFilter = "all"
     val recentFilter = "recent"
@@ -9328,6 +9593,11 @@ private fun ChannelBrowser(
     var sidebarInteractionCount by remember { mutableLongStateOf(0L) }
     var showManageCategories by remember { mutableStateOf(false) }
     var focusFirstChannelAfterFilter by remember { mutableStateOf(false) }
+    var hadInitialComposition by remember { mutableStateOf(false) }
+
+    val categoryFocusRequester = selectedCategoryFocusRequester
+    val effectiveChannelFocusRequester = contentFocusRequester ?: channelListFocusRequester
+    val categoryListState = rememberLazyListState()
 
     LaunchedEffect(isSidebarExpanded, sidebarInteractionCount, isLandscapeTablet) {
         if (isSidebarExpanded && !isTv && !isLandscapeTablet) {
@@ -9337,19 +9607,15 @@ private fun ChannelBrowser(
     }
 
     LaunchedEffect(isSidebarExpanded) {
+        if (!hadInitialComposition) {
+            hadInitialComposition = true
+            return@LaunchedEffect
+        }
         if (isTv && isSidebarExpanded) {
             delay(100)
-            runCatching { firstFilterFocusRequester.requestFocus() }
-        } else if (isTv && focusFirstChannelAfterFilter) {
-            focusFirstChannelAfterFilter = false
-            delay(100)
-            runCatching { effectiveContentFocusRequester.requestFocus() }
+            val handled = runCatching { categoryFocusRequester.requestFocus() }.isSuccess
+            if (!handled) runCatching { firstFilterFocusRequester.requestFocus() }
         }
-    }
-
-    BackHandler(enabled = isTv && isSidebarExpanded) {
-        isSidebarExpanded = false
-        runCatching { filterButtonFocusRequester.requestFocus() }
     }
 
     val groupCounts = remember(playlist) {
@@ -9464,6 +9730,9 @@ private fun ChannelBrowser(
     val visibleChannels = remember(channelsInGroup, searchQuery) {
         channelsInGroup.searchChannels(searchQuery)
     }
+    val channelEntryFocusIndex = remember(visibleChannels, selectedChannel) {
+        visibleChannels.indexOfFirst { it == selectedChannel }.coerceAtLeast(0)
+    }
     val channelListState = rememberLazyListState()
 
     val channelPaneWidth = when {
@@ -9472,7 +9741,7 @@ private fun ChannelBrowser(
         isLandscapeTablet -> 340.dp
         else -> 430.dp
     }
-    val movablePlayerPanel = remember {
+    val movablePlayerPanel = remember(playerFocusRequester, effectiveChannelFocusRequester) {
         movableContentOf { currentChannel: PlaylistChannel, playerModifier: Modifier, isCompactPreview: Boolean ->
             PlayerPanel(
                 channel = currentChannel,
@@ -9488,7 +9757,9 @@ private fun ChannelBrowser(
                 autoPictureInPicture = autoPictureInPicture,
                 onChannelSelected = ::selectChannel,
                 modifier = playerModifier,
-                compactPreview = isCompactPreview
+                compactPreview = isCompactPreview,
+                playerFocusRequester = playerFocusRequester,
+                channelListFocusRequester = effectiveChannelFocusRequester
             )
         }
     }
@@ -9555,7 +9826,53 @@ private fun ChannelBrowser(
     var showUnmatchedDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(selectedFilter, searchQuery) {
-        channelListState.scrollToItem(0)
+        // A pending TV focus transfer scrolls to its own target below.
+        if (!isTv || !focusFirstChannelAfterFilter) channelListState.scrollToItem(0)
+    }
+
+    var channelPaneHasFocus by remember { mutableStateOf(false) }
+    var categorySidebarHasFocus by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = isTv && (channelPaneHasFocus || (isSidebarExpanded && !isLandscapeTablet))) {
+        if (channelPaneHasFocus) {
+            if (isSidebarExpanded) {
+                val handled = runCatching { categoryFocusRequester.requestFocus() }.isSuccess
+                if (!handled) {
+                    runCatching { firstFilterFocusRequester.requestFocus() }
+                }
+            } else if (sidebarFocusRequester != null) {
+                runCatching { sidebarFocusRequester.requestFocus() }
+            }
+        } else if (isSidebarExpanded && !isLandscapeTablet) {
+            isSidebarExpanded = false
+            runCatching { filterButtonFocusRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(focusFirstChannelAfterFilter, selectedFilter, searchQuery, visibleChannels, channelEntryFocusIndex) {
+        if (isTv && focusFirstChannelAfterFilter) {
+            // The wide layout keeps the filters open, so focus must not depend on
+            // the sidebar closing. Compose the row that actually owns the requester.
+            if (visibleChannels.isNotEmpty()) {
+                channelListState.scrollToItem(channelEntryFocusIndex)
+                withFrameNanos { }
+                effectiveChannelFocusRequester.requestFocus()
+            }
+            focusFirstChannelAfterFilter = false
+        }
+    }
+
+    LaunchedEffect(selectedChannel) {
+        if (selectedChannel != null) {
+            val target = visibleChannels.indexOfFirst { it == selectedChannel }
+            if (target >= 0) {
+                val layoutInfo = channelListState.layoutInfo
+                val visibleIndices = layoutInfo.visibleItemsInfo.map { it.index }
+                if (target !in visibleIndices) {
+                    runCatching { channelListState.scrollToItem((target - 1).coerceAtLeast(0)) }
+                }
+            }
+        }
     }
 
     LaunchedEffect(channelListState.isScrollInProgress) {
@@ -9593,6 +9910,7 @@ private fun ChannelBrowser(
                     .width(sidebarWidth)
                     .fillMaxHeight()
                     .background(MaterialTheme.colorScheme.surface)
+                    .onFocusChanged { categorySidebarHasFocus = it.hasFocus }
                     .pointerInput(Unit) {
                         awaitEachGesture {
                             while (true) {
@@ -9611,10 +9929,34 @@ private fun ChannelBrowser(
                     Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     IconButton(
                         onClick = { isSidebarExpanded = false },
-                        modifier = Modifier.tvFocusHighlight(
-                            shape = CircleShape,
-                            scaleOnFocus = if (isTv) 1.12f else 1f
-                        )
+                        modifier = Modifier
+                            .focusProperties {
+                                if (sidebarFocusRequester != null) left = sidebarFocusRequester
+                                right = effectiveChannelFocusRequester
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (isTv && (event.type == KeyEventType.KeyDown || event.type == KeyEventType.KeyUp)) {
+                                    when (event.nativeKeyEvent.keyCode) {
+                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            if (event.type == KeyEventType.KeyDown && sidebarFocusRequester != null) {
+                                                runCatching { sidebarFocusRequester.requestFocus() }
+                                            }
+                                            return@onPreviewKeyEvent true
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                runCatching { effectiveChannelFocusRequester.requestFocus() }
+                                            }
+                                            return@onPreviewKeyEvent true
+                                        }
+                                    }
+                                }
+                                false
+                            }
+                            .tvFocusHighlight(
+                                shape = CircleShape,
+                                scaleOnFocus = if (isTv) 1.12f else 1f
+                            )
                     ) {
                         Icon(Icons.AutoMirrored.Filled.MenuOpen, contentDescription = strings.hideChannelFilters)
                     }
@@ -9627,6 +9969,29 @@ private fun ChannelBrowser(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .focusProperties {
+                            if (sidebarFocusRequester != null) left = sidebarFocusRequester
+                            right = effectiveChannelFocusRequester
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (isTv && (event.type == KeyEventType.KeyDown || event.type == KeyEventType.KeyUp)) {
+                                when (event.nativeKeyEvent.keyCode) {
+                                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                        if (event.type == KeyEventType.KeyDown && sidebarFocusRequester != null) {
+                                            runCatching { sidebarFocusRequester.requestFocus() }
+                                        }
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            runCatching { effectiveChannelFocusRequester.requestFocus() }
+                                        }
+                                        return@onPreviewKeyEvent true
+                                    }
+                                }
+                            }
+                            false
+                        }
                         .tvFocusHighlight(
                             shape = RoundedCornerShape(10.dp),
                             scaleOnFocus = if (isTv) 1.03f else 1f
@@ -9679,6 +10044,29 @@ private fun ChannelBrowser(
                         },
                         modifier = Modifier
                             .size(32.dp)
+                            .focusProperties {
+                                if (sidebarFocusRequester != null) left = sidebarFocusRequester
+                                right = effectiveChannelFocusRequester
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (isTv && (event.type == KeyEventType.KeyDown || event.type == KeyEventType.KeyUp)) {
+                                    when (event.nativeKeyEvent.keyCode) {
+                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            if (event.type == KeyEventType.KeyDown && sidebarFocusRequester != null) {
+                                                runCatching { sidebarFocusRequester.requestFocus() }
+                                            }
+                                            return@onPreviewKeyEvent true
+                                        }
+                                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                runCatching { effectiveChannelFocusRequester.requestFocus() }
+                                            }
+                                            return@onPreviewKeyEvent true
+                                        }
+                                    }
+                                }
+                                false
+                            }
                             .tvFocusHighlight(
                                 shape = CircleShape,
                                 scaleOnFocus = if (isTv) 1.12f else 1f
@@ -9690,24 +10078,33 @@ private fun ChannelBrowser(
                 Spacer(Modifier.height(8.dp))
 
                 LazyColumn(
+                    state = categoryListState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     item {
+                        val isSelected = selectedFilter == allFilter
                         GroupItem(
                             name = strings.allChannels,
                             count = allVisibleChannels.size,
-                            selected = selectedFilter == allFilter,
-                            modifier = Modifier.focusRequester(firstFilterFocusRequester),
+                            selected = isSelected,
+                            modifier = (if (isSelected) Modifier.focusRequester(categoryFocusRequester) else Modifier)
+                                .focusRequester(firstFilterFocusRequester),
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            channelListFocusRequester = effectiveChannelFocusRequester,
                             onClick = { selectFilter(allFilter) }
                         )
                     }
                     if (recentChannels.isNotEmpty()) {
                         item {
+                            val isSelected = selectedFilter == recentFilter
                             GroupItem(
                                 name = strings.recentlyWatched,
                                 count = recentChannels.size,
-                                selected = selectedFilter == recentFilter,
+                                selected = isSelected,
+                                modifier = if (isSelected) Modifier.focusRequester(categoryFocusRequester) else Modifier,
+                                sidebarFocusRequester = sidebarFocusRequester,
+                                channelListFocusRequester = effectiveChannelFocusRequester,
                                 onClick = { selectFilter(recentFilter) }
                             )
                         }
@@ -9719,10 +10116,14 @@ private fun ChannelBrowser(
                             Spacer(Modifier.height(4.dp))
                         }
                         items(enabledSources, key = { "source-filter-${it.id}" }) { profile ->
+                            val isSelected = selectedFilter == "source:${profile.id}"
                             GroupItem(
                                 name = profile.name,
                                 count = sourceCounts[profile.id] ?: 0,
-                                selected = selectedFilter == "source:${profile.id}",
+                                selected = isSelected,
+                                modifier = if (isSelected) Modifier.focusRequester(categoryFocusRequester) else Modifier,
+                                sidebarFocusRequester = sidebarFocusRequester,
+                                channelListFocusRequester = effectiveChannelFocusRequester,
                                 onClick = { selectFilter("source:${profile.id}") }
                             )
                         }
@@ -9730,10 +10131,14 @@ private fun ChannelBrowser(
                     val uncategorizedCount = groupCounts[""] ?: 0
                     if (uncategorizedCount > 0) {
                         item {
+                            val isSelected = selectedFilter == uncategorizedFilter
                             GroupItem(
                                 name = strings.uncategorized,
                                 count = uncategorizedCount,
-                                selected = selectedFilter == uncategorizedFilter,
+                                selected = isSelected,
+                                modifier = if (isSelected) Modifier.focusRequester(categoryFocusRequester) else Modifier,
+                                sidebarFocusRequester = sidebarFocusRequester,
+                                channelListFocusRequester = effectiveChannelFocusRequester,
                                 onClick = { selectFilter(uncategorizedFilter) }
                             )
                         }
@@ -9742,10 +10147,14 @@ private fun ChannelBrowser(
                         orderedCategories,
                         key = { "group-filter-$it" }
                     ) { group ->
+                        val isSelected = selectedFilter == "group:$group"
                         GroupItem(
                             name = group,
                             count = groupCounts[group] ?: 0,
-                            selected = selectedFilter == "group:$group",
+                            selected = isSelected,
+                            modifier = if (isSelected) Modifier.focusRequester(categoryFocusRequester) else Modifier,
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            channelListFocusRequester = effectiveChannelFocusRequester,
                             onClick = { selectFilter("group:$group") }
                         )
                     }
@@ -9827,6 +10236,7 @@ private fun ChannelBrowser(
             Modifier
                 .weight(1f)
                 .fillMaxHeight()
+                .onFocusChanged { channelPaneHasFocus = it.hasFocus }
                 .padding(horizontal = if (isCompact) 12.dp else 24.dp, vertical = if (isCompact) 10.dp else 16.dp)
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = { hideKeyboard() })
@@ -9853,8 +10263,19 @@ private fun ChannelBrowser(
                             .onPreviewKeyEvent { keyEvent ->
                                 if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp)) {
                                     when (keyEvent.nativeKeyEvent.keyCode) {
+                                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                if (isSidebarExpanded) {
+                                                    val handled = runCatching { categoryFocusRequester.requestFocus() }.isSuccess
+                                                    if (!handled) runCatching { firstFilterFocusRequester.requestFocus() }
+                                                } else if (sidebarFocusRequester != null) {
+                                                    runCatching { sidebarFocusRequester.requestFocus() }
+                                                }
+                                            }
+                                            return@onPreviewKeyEvent true
+                                        }
                                         android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                            if (keyEvent.type == KeyEventType.KeyUp) {
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
                                                 try {
                                                     calendarButtonFocusRequester.requestFocus()
                                                 } catch (_: Throwable) {}
@@ -9862,10 +10283,9 @@ private fun ChannelBrowser(
                                             return@onPreviewKeyEvent true
                                         }
                                         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                            if (keyEvent.type == KeyEventType.KeyUp) {
-                                                try {
-                                                    effectiveContentFocusRequester.requestFocus()
-                                                } catch (_: Throwable) {}
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                val handled = runCatching { effectiveChannelFocusRequester.requestFocus() }.isSuccess
+                                                if (!handled) focusFirstChannelAfterFilter = true
                                             }
                                             return@onPreviewKeyEvent true
                                         }
@@ -9893,7 +10313,7 @@ private fun ChannelBrowser(
                                 if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp)) {
                                     when (keyEvent.nativeKeyEvent.keyCode) {
                                         android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
-                                            if (keyEvent.type == KeyEventType.KeyUp) {
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
                                                 try {
                                                     filterButtonFocusRequester.requestFocus()
                                                 } catch (_: Throwable) {}
@@ -9901,10 +10321,9 @@ private fun ChannelBrowser(
                                             return@onPreviewKeyEvent true
                                         }
                                         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                            if (keyEvent.type == KeyEventType.KeyUp) {
-                                                try {
-                                                    effectiveContentFocusRequester.requestFocus()
-                                                } catch (_: Throwable) {}
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                                val handled = runCatching { effectiveChannelFocusRequester.requestFocus() }.isSuccess
+                                                if (!handled) focusFirstChannelAfterFilter = true
                                             }
                                             return@onPreviewKeyEvent true
                                         }
@@ -9947,11 +10366,10 @@ private fun ChannelBrowser(
                             isCompact -> Modifier.weight(1f)
                             else -> Modifier.width(360.dp)
                         }).onPreviewKeyEvent { keyEvent ->
-                            if (isTv && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
-                                if (keyEvent.type == KeyEventType.KeyUp) {
-                                    try {
-                                        effectiveContentFocusRequester.requestFocus()
-                                    } catch (_: Throwable) {}
+                            if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    val handled = runCatching { effectiveChannelFocusRequester.requestFocus() }.isSuccess
+                                    if (!handled) focusFirstChannelAfterFilter = true
                                 }
                                 true
                             } else false
@@ -10076,17 +10494,19 @@ private fun ChannelBrowser(
                             key = { _, it -> "${it.position}:${it.streamUrl}" },
                             contentType = { _, _ -> "channel" }
                         ) { index, channel ->
+                            val isSelected = selectedChannel == channel
+                            val shouldAttachEffectiveFocus = index == channelEntryFocusIndex
                             GuideChannelRow(
                                 channel = channel,
                                 epgGuide = epgGuide,
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
-                                selected = selectedChannel == channel,
+                                selected = isSelected,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
-                                modifier = (if (index == 0) Modifier.focusRequester(effectiveContentFocusRequester) else Modifier)
+                                modifier = (if (shouldAttachEffectiveFocus) Modifier.focusRequester(effectiveChannelFocusRequester) else Modifier)
                                     .onPreviewKeyEvent { keyEvent ->
                                         if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && index == 0) {
-                                            if (keyEvent.type == KeyEventType.KeyUp) {
+                                            if (keyEvent.type == KeyEventType.KeyDown) {
                                                 try {
                                                     filterButtonFocusRequester.requestFocus()
                                                 } catch (_: Throwable) {}
@@ -10095,7 +10515,9 @@ private fun ChannelBrowser(
                                         }
                                         false
                                      },
-                                sidebarFocusRequester = filterButtonFocusRequester,
+                                sidebarFocusRequester = if (isSidebarExpanded) categoryFocusRequester else sidebarFocusRequester,
+                                fallbackFocusRequester = firstFilterFocusRequester,
+                                playerFocusRequester = if (selectedChannel != null) playerFocusRequester else null,
                                 onToggleFavorite = { onToggleFavorite(channel) },
                                 onClick = { selectChannel(channel) }
                             )
@@ -10171,6 +10593,8 @@ private fun GroupItem(
     count: Int?,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    sidebarFocusRequester: FocusRequester? = null,
+    channelListFocusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     val isTv = LocalFormFactor.current.isTelevision
@@ -10181,6 +10605,42 @@ private fun GroupItem(
         contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
         modifier = modifier
             .fillMaxWidth()
+            .focusProperties {
+                if (sidebarFocusRequester != null) {
+                    left = sidebarFocusRequester
+                }
+                if (channelListFocusRequester != null) {
+                    right = channelListFocusRequester
+                }
+            }
+            .onPreviewKeyEvent { keyEvent ->
+                if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp)) {
+                    when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (keyEvent.type == KeyEventType.KeyDown && sidebarFocusRequester != null) {
+                                runCatching { sidebarFocusRequester.requestFocus() }
+                            }
+                            return@onPreviewKeyEvent true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                if (!selected) {
+                                    onClick()
+                                } else {
+                                    val handled = channelListFocusRequester?.let { req ->
+                                        runCatching { req.requestFocus() }.isSuccess
+                                    } ?: false
+                                    if (!handled) {
+                                        onClick()
+                                    }
+                                }
+                            }
+                            return@onPreviewKeyEvent true
+                        }
+                    }
+                }
+                false
+            }
             .tvFocusHighlight(
                 shape = RoundedCornerShape(10.dp),
                 scaleOnFocus = if (isTv) 1.03f else 1.0f
@@ -10221,6 +10681,8 @@ private fun GuideChannelRow(
     isFavorite: Boolean = false,
     modifier: Modifier = Modifier,
     sidebarFocusRequester: FocusRequester? = null,
+    fallbackFocusRequester: FocusRequester? = null,
+    playerFocusRequester: FocusRequester? = null,
     onToggleFavorite: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
@@ -10259,6 +10721,8 @@ private fun GuideChannelRow(
         isFavorite = isFavorite,
         modifier = modifier,
         sidebarFocusRequester = sidebarFocusRequester,
+        fallbackFocusRequester = fallbackFocusRequester,
+        playerFocusRequester = playerFocusRequester,
         onToggleFavorite = onToggleFavorite,
         onClick = onClick
     )
@@ -10281,6 +10745,8 @@ private fun ChannelRow(
     isFavorite: Boolean = false,
     modifier: Modifier = Modifier,
     sidebarFocusRequester: FocusRequester? = null,
+    fallbackFocusRequester: FocusRequester? = null,
+    playerFocusRequester: FocusRequester? = null,
     onToggleFavorite: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
@@ -10313,7 +10779,7 @@ private fun ChannelRow(
                 isFocused = it.isFocused
             }
             .onPreviewKeyEvent { keyEvent ->
-                if (isTv) {
+                if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp)) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         android.view.KeyEvent.KEYCODE_MENU,
                         android.view.KeyEvent.KEYCODE_STAR -> {
@@ -10323,14 +10789,23 @@ private fun ChannelRow(
                             true
                         }
                         android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            if (keyEvent.type == KeyEventType.KeyUp) {
+                            if (keyEvent.type == KeyEventType.KeyDown) {
                                 if (sidebarFocusRequester != null) {
-                                    try {
-                                        sidebarFocusRequester.requestFocus()
-                                    } catch (_: Throwable) {}
+                                    val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                    if (!handled && fallbackFocusRequester != null) {
+                                        runCatching { fallbackFocusRequester.requestFocus() }
+                                    }
                                 }
                             }
                             true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (playerFocusRequester != null) {
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    runCatching { playerFocusRequester.requestFocus() }
+                                }
+                                true
+                            } else false
                         }
                         else -> false
                     }
@@ -10452,7 +10927,9 @@ private fun PlayerPanel(
     autoPictureInPicture: Boolean,
     onChannelSelected: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier,
-    compactPreview: Boolean = false
+    compactPreview: Boolean = false,
+    playerFocusRequester: FocusRequester? = null,
+    channelListFocusRequester: FocusRequester? = null
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -10468,6 +10945,7 @@ private fun PlayerPanel(
     }
     val liveNetworkGeneration = rememberPlaybackNetworkGeneration()
     val configuration = LocalConfiguration.current
+    val isTv = LocalFormFactor.current.isTelevision
     val isCompact = configuration.screenWidthDp < 600
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
 
@@ -10478,6 +10956,24 @@ private fun PlayerPanel(
     var manualFullscreen by rememberSaveable { mutableStateOf(autoEnterFullscreen) }
     var landscapeFullscreenDismissed by rememberSaveable(isPortrait) { mutableStateOf(false) }
     val fullscreen = manualFullscreen || (isCompact && !isPortrait && !landscapeFullscreenDismissed)
+    var wasFullscreen by remember { mutableStateOf(fullscreen) }
+
+    LaunchedEffect(fullscreen) {
+        if (wasFullscreen && !fullscreen) {
+            if (isTv && channelListFocusRequester != null) {
+                runCatching { channelListFocusRequester.requestFocus() }
+                for (attempt in 0..12) {
+                    delay(25)
+                    val success = runCatching {
+                        channelListFocusRequester.requestFocus()
+                    }.isSuccess
+                    if (success && attempt >= 2) break
+                }
+            }
+        }
+        wasFullscreen = fullscreen
+    }
+
     val inPictureInPicture = (activity as? MainActivity)?.pictureInPictureMode == true
     var previousWatchedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var currentTrackedChannel by remember { mutableStateOf(channel) }
@@ -10486,7 +10982,11 @@ private fun PlayerPanel(
         if (liveNetworkGeneration > 0 && player.currentMediaItem != null &&
             (player.playbackState == Player.STATE_BUFFERING || player.playerError != null || isFreezeReconnecting)
         ) {
+            val recoveringItem = player.currentMediaItem
             delay(750)
+            if (!player.playWhenReady || player.currentMediaItem != recoveringItem ||
+                (player.playbackState != Player.STATE_BUFFERING && player.playerError == null && !isFreezeReconnecting)
+            ) return@LaunchedEffect
             playbackError = null
             isFreezeReconnecting = false
             liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
@@ -10605,51 +11105,60 @@ private fun PlayerPanel(
         }
     }
 
-    LaunchedEffect(player, channel.streamUrl, playbackState) {
-        if (playbackState != Player.STATE_BUFFERING || !player.playWhenReady || playbackError != null) {
-            return@LaunchedEffect
+    LaunchedEffect(player, channel.streamUrl, playbackMode) {
+        val intervalMs = when (playbackMode) {
+            PlaybackMode.AUTO -> 15_000L
+            PlaybackMode.STABLE -> 25_000L
+            PlaybackMode.DATA_SAVER -> 18_000L
         }
-        val positionBefore = player.currentPosition
-        val bufferedBefore = player.bufferedPosition
-        val bytesBefore = liveTransferProgress.bytesObserved
-        delay(
-            when (playbackMode) {
-                PlaybackMode.AUTO -> 15_000L
-                PlaybackMode.STABLE -> 25_000L
-                PlaybackMode.DATA_SAVER -> 18_000L
+        fun isStillBuffering() = player.playbackState == Player.STATE_BUFFERING &&
+            player.playWhenReady && playbackError == null
+        while (isActive) {
+            val decision = awaitBufferingStall(intervalMs, sample = {
+                if (!isStillBuffering()) null else BufferingSample(
+                    player.currentPosition, player.bufferedPosition,
+                    liveTransferProgress.bytesObserved, context.isPlaybackNetworkAvailable(),
+                    consecutiveStallRecoveries
+                )
+            })
+            when (decision) {
+                StallDecision.GIVE_UP -> {
+                    playbackError = strings.playbackError
+                    player.stop()
+                }
+                StallDecision.RECOVER -> {
+                    val backoffMs = 1_000L shl consecutiveStallRecoveries.coerceAtMost(3)
+                    delay(backoffMs)
+                    // Playback or connectivity may have changed during backoff.
+                    if (isStillBuffering() && context.isPlaybackNetworkAvailable()) {
+                        consecutiveStallRecoveries++
+                        Log.w("FortressTV.Player", "Recovering stalled live playback; attempt=$consecutiveStallRecoveries")
+                        player.stop()
+                        player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+                        player.prepare()
+                        player.play()
+                    }
+                }
+                else -> Unit
             }
-        )
-        if (player.playbackState != Player.STATE_BUFFERING || !player.playWhenReady || playbackError != null) {
-            return@LaunchedEffect
-        }
-        val positionProgress = player.currentPosition - positionBefore
-        val bufferProgress = player.bufferedPosition - bufferedBefore
-        when (StallRecoveryPolicy.decide(
-            positionProgressMs = positionProgress,
-            bufferProgressMs = bufferProgress,
-            recoveryAttempts = consecutiveStallRecoveries,
-            networkAvailable = context.isPlaybackNetworkAvailable(),
-            bytesProgress = liveTransferProgress.bytesObserved - bytesBefore
-        )) {
-            StallDecision.WAIT -> Unit
-            StallDecision.GIVE_UP -> playbackError = strings.playbackError
-            StallDecision.RECOVER -> {
-                consecutiveStallRecoveries++
-                val backoffMs = 1_000L shl (consecutiveStallRecoveries - 1).coerceAtMost(3)
-                Log.w("FortressTV.Player", "Recovering stalled live playback; attempt=$consecutiveStallRecoveries")
-                delay(backoffMs)
-                if (!context.isPlaybackNetworkAvailable()) return@LaunchedEffect
-                player.stop()
-                player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
-                player.prepare()
-                player.play()
-            }
+            delay(1_000L)
         }
     }
 
     LaunchedEffect(player, channel.streamUrl) {
+        var diagnosticTicks = 0
         while (isActive) {
             delay(1_000L)
+            if (++diagnosticTicks % 10 == 0) {
+                player.videoDecoderCounters?.let { counters ->
+                    counters.ensureUpdated()
+                    Log.d(
+                        "FortressTV.QoE",
+                        "type=LIVE rendered=${counters.renderedOutputBufferCount} dropped=${counters.droppedBufferCount} " +
+                            "skipped=${counters.skippedOutputBufferCount} maxConsecutiveDropped=${counters.maxConsecutiveDroppedBufferCount}"
+                    )
+                }
+            }
             if (playbackError != null || !player.playWhenReady || playbackState == Player.STATE_BUFFERING) {
                 isFreezeReconnecting = false
                 continue
@@ -10728,6 +11237,9 @@ private fun PlayerPanel(
                 onExit = {
                     manualFullscreen = false
                     landscapeFullscreenDismissed = true
+                    if (isTv && channelListFocusRequester != null) {
+                        runCatching { channelListFocusRequester.requestFocus() }
+                    }
                 },
                 onChannelSelected = ::handleChannelSwitch,
                 onRetry = {
@@ -10745,23 +11257,40 @@ private fun PlayerPanel(
     Column(modifier) {
         if (!fullscreen) {
             val isTv = LocalFormFactor.current.isTelevision
-            var isVideoFocused by remember { mutableStateOf(false) }
+            var isPlayerFocused by remember { mutableStateOf(false) }
+            val borderStroke = if (isPlayerFocused) {
+                BorderStroke(3.5.dp, MaterialTheme.colorScheme.primary)
+            } else {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            }
             Surface(
                 onClick = { manualFullscreen = true; landscapeFullscreenDismissed = false },
-                shape = RoundedCornerShape(14.dp),
-                color = Color.Black,
-                border = if (isVideoFocused) BorderStroke(3.dp, MaterialTheme.colorScheme.primary) else null,
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                border = borderStroke,
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(14.dp))
-                    .onFocusChanged { isVideoFocused = it.isFocused }
-                    .tvFocusHighlight(
-                        shape = RoundedCornerShape(14.dp),
-                        scaleOnFocus = if (isTv) 1.04f else 1.0f
-                    )
+                    .then(if (playerFocusRequester != null) Modifier.focusRequester(playerFocusRequester) else Modifier)
+                    .onFocusChanged { isPlayerFocused = it.isFocused }
+                    .onPreviewKeyEvent { keyEvent ->
+                        if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp)) {
+                            if (keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                if (keyEvent.type == KeyEventType.KeyDown && channelListFocusRequester != null) {
+                                    runCatching { channelListFocusRequester.requestFocus() }
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+                        false
+                    }
             ) {
-                Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(if (isPlayerFocused) 4.dp else 1.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                ) {
                     VideoSurface(
                         player = player,
                         playbackState = playbackState,
@@ -10778,24 +11307,6 @@ private fun PlayerPanel(
                         isReconnecting = isFreezeReconnecting,
                         modifier = Modifier.fillMaxSize()
                     )
-                    if (isTv && isVideoFocused) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(56.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.Fullscreen,
-                                    contentDescription = strings.fullscreen,
-                                    modifier = Modifier.size(34.dp)
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -10954,7 +11465,13 @@ private fun PlayerPanel(
             onToggleFavorite = onToggleFavorite,
             previousWatchedChannel = previousWatchedChannel,
             onChannelSelected = ::handleChannelSwitch,
-            onExit = { manualFullscreen = false; landscapeFullscreenDismissed = true },
+            onExit = {
+                manualFullscreen = false
+                landscapeFullscreenDismissed = true
+                if (isTv && channelListFocusRequester != null) {
+                    runCatching { channelListFocusRequester.requestFocus() }
+                }
+            },
             onRetry = {
                 playbackError = null
                 player.prepare()
@@ -10983,6 +11500,7 @@ private fun VideoSurface(
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
     var gestureLevel by remember { mutableStateOf<GestureLevel?>(null) }
     LaunchedEffect(gestureLevel) {
         if (gestureLevel != null) {
@@ -11021,6 +11539,7 @@ private fun VideoSurface(
                     PlayerView(viewContext).apply {
                         isClickable = false
                         isFocusable = false
+                        descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
                     }
                 }
                 view.apply {
@@ -11030,7 +11549,12 @@ private fun VideoSurface(
                     controllerShowTimeoutMs = 3_500
                     this.resizeMode = resizeMode
                     keepScreenOn = true
-                    if (fullscreen) {
+                    if (isTv) {
+                        isClickable = false
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                        descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    } else if (fullscreen) {
                         setOnClickListener { onSurfaceClick() }
                     }
                     setControllerVisibilityListener(
@@ -11082,11 +11606,18 @@ private fun VideoSurface(
                     it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility = android.view.View.GONE
                     it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_basic_controls)?.visibility = android.view.View.GONE
                 }
-                (it as? GesturePlayerView)?.onGestureLevelChanged = { gestureLevel = it }
-                (it as? GesturePlayerView)?.onSingleTap = { onSurfaceClick() }
-                it.setOnClickListener { onSurfaceClick() }
+                if (isTv) {
+                    it.isClickable = false
+                    it.isFocusable = false
+                    it.isFocusableInTouchMode = false
+                    it.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                } else {
+                    (it as? GesturePlayerView)?.onGestureLevelChanged = { gestureLevel = it }
+                    (it as? GesturePlayerView)?.onSingleTap = { onSurfaceClick() }
+                    it.setOnClickListener { onSurfaceClick() }
+                }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().focusProperties { canFocus = false }
         )
         if (playbackState == Player.STATE_BUFFERING || isReconnecting) {
             Column(
@@ -11230,7 +11761,8 @@ private fun Modifier.tvFullscreenControl(
     leftTarget: FocusRequester? = null,
     rightTarget: FocusRequester? = null,
     upTarget: FocusRequester? = null,
-    downTarget: FocusRequester? = null
+    downTarget: FocusRequester? = null,
+    onFocused: (() -> Unit)? = null
 ): Modifier = if (!enabled) {
     this
 } else {
@@ -11243,6 +11775,7 @@ private fun Modifier.tvFullscreenControl(
                 downTarget?.let { down = it }
             }
             .focusRequester(requester)
+            .onFocusChanged { if (it.isFocused) onFocused?.invoke() }
             .tvFocusHighlight(shape = shape, scaleOnFocus = scaleOnFocus)
     )
 }
@@ -11330,21 +11863,39 @@ private fun FullscreenPlayer(
     val centerPrevFocusRequester = remember { FocusRequester() }
     val centerNextFocusRequester = remember { FocusRequester() }
     val favButtonFocusRequester = remember { FocusRequester() }
-    var lastInteractionEpoch by remember { mutableLongStateOf(0L) }
+    val previousWatchedFocusRequester = remember { FocusRequester() }
+    val interactionSignal = remember { Channel<Unit>(Channel.CONFLATED) }
+    var userNavigated by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        if (isTv) {
-            delay(100)
-            try { playerFocusRequester.requestFocus() } catch (_: Throwable) {}
-        }
-    }
+    var lastFocusedControlRequester by remember { mutableStateOf<FocusRequester?>(null) }
 
     LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) {
+            lastFocusedControlRequester = null
+        }
+        userNavigated = false
+    }
+
+    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, showSleepTimerDialog, showQuickZap) {
         if (controlsVisible && isTv && !showChannels && !showGuide && !showTracksDialog && !showSleepTimerDialog && !showQuickZap) {
-            delay(50)
-            try { controlsInitialFocusRequester.requestFocus() } catch (_: Throwable) {}
+            val target = lastFocusedControlRequester ?: controlsInitialFocusRequester
+            userNavigated = false
+            delay(100)
+            for (attempt in 0..15) {
+                if (userNavigated) break
+                val ok = runCatching { target.requestFocus() }.isSuccess
+                if (ok && attempt >= 2) break
+                delay(30)
+            }
         } else if (!controlsVisible && isTv && !showChannels && !showGuide && !showTracksDialog && !showSleepTimerDialog && !showQuickZap) {
-            try { playerFocusRequester.requestFocus() } catch (_: Throwable) {}
+            lastFocusedControlRequester = null
+            userNavigated = false
+            delay(50)
+            for (attempt in 0..15) {
+                val ok = runCatching { playerFocusRequester.requestFocus() }.isSuccess
+                if (ok && attempt >= 2) break
+                delay(30)
+            }
         }
     }
 
@@ -11365,10 +11916,18 @@ private fun FullscreenPlayer(
         dismissTopmostOverlay()
     }
 
-    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, showSleepTimerDialog, showQuickZap, locked, lastInteractionEpoch) {
+    LaunchedEffect(controlsVisible, showChannels, showGuide, showTracksDialog, showSleepTimerDialog, showQuickZap, locked) {
         if (controlsVisible && !showChannels && !showGuide && !showTracksDialog && !showSleepTimerDialog && !showQuickZap && !locked) {
-            delay(if (isTv) 8_000 else 3_500)
-            controlsVisible = false
+            val timeoutMs = if (isTv) 10_000L else 3_500L
+            while (true) {
+                val ping = withTimeoutOrNull(timeoutMs) {
+                    interactionSignal.receive()
+                }
+                if (ping == null) {
+                    controlsVisible = false
+                    break
+                }
+            }
         }
     }
     LaunchedEffect(channel, epgGuide) {
@@ -11409,12 +11968,27 @@ private fun FullscreenPlayer(
                 .fillMaxSize()
                 .background(Color.Black)
                 .focusRequester(playerFocusRequester)
+                .focusProperties {
+                    canFocus = !controlsVisible && !isOverlayActive
+                }
                 .focusable()
                 .onPreviewKeyEvent { keyEvent ->
+                    val isDpadDirection = when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_UP,
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> true
+                        else -> false
+                    }
+                    if (isTv && isOverlayActive && keyEvent.type == KeyEventType.KeyDown) {
+                        interactionSignal.trySend(Unit)
+                        if (isDpadDirection) {
+                            userNavigated = true
+                        }
+                    }
                     val isBackKey = keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK ||
                         keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE
                     if (isTv && isOverlayActive && isBackKey) {
-                        lastInteractionEpoch = System.currentTimeMillis()
                         if (keyEvent.type == KeyEventType.KeyUp) {
                             dismissTopmostOverlay()
                         }
@@ -11426,7 +12000,7 @@ private fun FullscreenPlayer(
                 .onKeyEvent { keyEvent ->
                     if (isOverlayActive) {
                         if (keyEvent.type == KeyEventType.KeyDown) {
-                            lastInteractionEpoch = System.currentTimeMillis()
+                            interactionSignal.trySend(Unit)
                             when (keyEvent.nativeKeyEvent.keyCode) {
                                 android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> { player.play(); true }
                                 android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> { player.pause(); true }
@@ -11448,7 +12022,7 @@ private fun FullscreenPlayer(
                             isLiveStream = true
                         )
                         if (action != null) {
-                            lastInteractionEpoch = System.currentTimeMillis()
+                            interactionSignal.trySend(Unit)
                             when (action) {
                                 TvPlayerAction.TOGGLE_CONTROLS -> {
                                     controlsVisible = true
@@ -11595,7 +12169,8 @@ private fun FullscreenPlayer(
                                         shape = CircleShape,
                                         scaleOnFocus = 1.15f,
                                         rightTarget = controlsInitialFocusRequester,
-                                        downTarget = centerPrevFocusRequester
+                                        downTarget = if (previousChannel != null) centerPrevFocusRequester else if (nextChannel != null) centerNextFocusRequester else favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = backButtonFocusRequester }
                                     )
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back, modifier = Modifier.size(if (isCompact) 18.dp else 20.dp))
@@ -11613,7 +12188,8 @@ private fun FullscreenPlayer(
                                         scaleOnFocus = 1.08f,
                                         leftTarget = backButtonFocusRequester,
                                         rightTarget = guideButtonFocusRequester,
-                                        downTarget = centerPrevFocusRequester
+                                        downTarget = if (previousChannel != null) centerPrevFocusRequester else if (nextChannel != null) centerNextFocusRequester else favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = controlsInitialFocusRequester }
                                     )
                             ) {
                                 Row(
@@ -11650,7 +12226,8 @@ private fun FullscreenPlayer(
                                         scaleOnFocus = 1.08f,
                                         leftTarget = controlsInitialFocusRequester,
                                         rightTarget = quickZapFocusRequester,
-                                        downTarget = favButtonFocusRequester
+                                        downTarget = favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = guideButtonFocusRequester }
                                     )
                             ) {
                                 Row(
@@ -11687,7 +12264,8 @@ private fun FullscreenPlayer(
                                         scaleOnFocus = 1.08f,
                                         leftTarget = guideButtonFocusRequester,
                                         rightTarget = if (audioTracks.isNotEmpty() || subtitleTracks.isNotEmpty()) audioButtonFocusRequester else sleepTimerFocusRequester,
-                                        downTarget = favButtonFocusRequester
+                                        downTarget = favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = quickZapFocusRequester }
                                     )
                             ) {
                                 Row(
@@ -11726,7 +12304,8 @@ private fun FullscreenPlayer(
                                             scaleOnFocus = 1.08f,
                                             leftTarget = quickZapFocusRequester,
                                             rightTarget = sleepTimerFocusRequester,
-                                            downTarget = favButtonFocusRequester
+                                            downTarget = favButtonFocusRequester,
+                                            onFocused = { lastFocusedControlRequester = audioButtonFocusRequester }
                                         )
                                 ) {
                                     Row(
@@ -11770,9 +12349,10 @@ private fun FullscreenPlayer(
                                         requester = sleepTimerFocusRequester,
                                         shape = if (isCompact && sleepTimerRemainingText == null && sleepTimerMinutes != -1) CircleShape else RoundedCornerShape(20.dp),
                                         scaleOnFocus = 1.08f,
-                                        leftTarget = if (audioTracks.isNotEmpty() || subtitleTracks.isNotEmpty()) audioButtonFocusRequester else guideButtonFocusRequester,
+                                        leftTarget = if (audioTracks.isNotEmpty() || subtitleTracks.isNotEmpty()) audioButtonFocusRequester else quickZapFocusRequester,
                                         rightTarget = aspectRatioFocusRequester,
-                                        downTarget = centerNextFocusRequester
+                                        downTarget = if (nextChannel != null) centerNextFocusRequester else if (previousChannel != null) centerPrevFocusRequester else favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = sleepTimerFocusRequester }
                                     )
                             ) {
                                 Row(
@@ -11833,7 +12413,8 @@ private fun FullscreenPlayer(
                                         scaleOnFocus = 1.08f,
                                         leftTarget = sleepTimerFocusRequester,
                                         rightTarget = lockButtonFocusRequester,
-                                        downTarget = centerNextFocusRequester
+                                        downTarget = if (nextChannel != null) centerNextFocusRequester else if (previousChannel != null) centerPrevFocusRequester else favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = aspectRatioFocusRequester }
                                     )
                             ) {
                                 Row(
@@ -11879,7 +12460,8 @@ private fun FullscreenPlayer(
                                         shape = CircleShape,
                                         scaleOnFocus = 1.15f,
                                         leftTarget = aspectRatioFocusRequester,
-                                        downTarget = centerNextFocusRequester
+                                        downTarget = if (nextChannel != null) centerNextFocusRequester else if (previousChannel != null) centerPrevFocusRequester else favButtonFocusRequester,
+                                        onFocused = { lastFocusedControlRequester = lockButtonFocusRequester }
                                     )
                             ) {
                                 Icon(Icons.Default.Lock, contentDescription = strings.lockControls, modifier = Modifier.size(if (isCompact) 18.dp else 20.dp))
@@ -11910,9 +12492,11 @@ private fun FullscreenPlayer(
                                     requester = centerPrevFocusRequester,
                                     shape = CircleShape,
                                     scaleOnFocus = 1.15f,
-                                    rightTarget = centerNextFocusRequester,
+                                    leftTarget = backButtonFocusRequester,
+                                    rightTarget = if (nextChannel != null) centerNextFocusRequester else favButtonFocusRequester,
                                     upTarget = controlsInitialFocusRequester,
-                                    downTarget = favButtonFocusRequester
+                                    downTarget = favButtonFocusRequester,
+                                    onFocused = { lastFocusedControlRequester = centerPrevFocusRequester }
                                 )
                         ) {
                             Icon(Icons.Default.SkipPrevious, contentDescription = null, modifier = Modifier.size(if (isCompact) 24.dp else 28.dp))
@@ -11934,9 +12518,11 @@ private fun FullscreenPlayer(
                                     requester = centerNextFocusRequester,
                                     shape = CircleShape,
                                     scaleOnFocus = 1.15f,
-                                    leftTarget = centerPrevFocusRequester,
+                                    leftTarget = if (previousChannel != null) centerPrevFocusRequester else controlsInitialFocusRequester,
+                                    rightTarget = lockButtonFocusRequester,
                                     upTarget = aspectRatioFocusRequester,
-                                    downTarget = favButtonFocusRequester
+                                    downTarget = if (previousWatchedChannel != null) previousWatchedFocusRequester else favButtonFocusRequester,
+                                    onFocused = { lastFocusedControlRequester = centerNextFocusRequester }
                                 )
                         ) {
                             Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(if (isCompact) 24.dp else 28.dp))
@@ -11978,7 +12564,10 @@ private fun FullscreenPlayer(
                                                     requester = favButtonFocusRequester,
                                                     shape = CircleShape,
                                                     scaleOnFocus = 1.15f,
-                                                    upTarget = centerPrevFocusRequester
+                                                    leftTarget = if (previousChannel != null) centerPrevFocusRequester else backButtonFocusRequester,
+                                                    rightTarget = if (previousWatchedChannel != null) previousWatchedFocusRequester else if (nextChannel != null) centerNextFocusRequester else null,
+                                                    upTarget = if (previousChannel != null) centerPrevFocusRequester else if (nextChannel != null) centerNextFocusRequester else controlsInitialFocusRequester,
+                                                    onFocused = { lastFocusedControlRequester = favButtonFocusRequester }
                                                 )
                                         ) {
                                             Icon(
@@ -12032,9 +12621,15 @@ private fun FullscreenPlayer(
                                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                                         contentColor = Color.White,
-                                        modifier = Modifier.tvFocusHighlight(
+                                        modifier = Modifier.tvFullscreenControl(
+                                            enabled = isTv,
+                                            requester = previousWatchedFocusRequester,
                                             shape = RoundedCornerShape(10.dp),
-                                            scaleOnFocus = if (isTv) 1.08f else 1.0f
+                                            scaleOnFocus = 1.08f,
+                                            leftTarget = favButtonFocusRequester,
+                                            rightTarget = if (nextChannel != null) centerNextFocusRequester else null,
+                                            upTarget = if (nextChannel != null) centerNextFocusRequester else aspectRatioFocusRequester,
+                                            onFocused = { lastFocusedControlRequester = previousWatchedFocusRequester }
                                         )
                                     ) {
                                         Row(
@@ -12343,13 +12938,58 @@ private fun QuickZapTray(
     onClose: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+    val tabFocusRequesters = remember { List(2) { FocusRequester() } }
+    val channelFocusRequester = remember { FocusRequester() }
+    val closeFocusRequester = remember { FocusRequester() }
     var selectedTab by remember(favoriteChannels.isEmpty(), recentChannels.isEmpty()) {
-        mutableIntStateOf(if (favoriteChannels.isNotEmpty()) 0 else 1)
+        mutableIntStateOf(if (favoriteChannels.isNotEmpty()) 0 else if (recentChannels.isNotEmpty()) 1 else 0)
     }
     val activeChannels = when (selectedTab) {
-        0 -> if (favoriteChannels.isNotEmpty()) favoriteChannels else channels.take(30)
-        else -> if (recentChannels.isNotEmpty()) recentChannels else channels.take(30)
+        0 -> if (favoriteChannels.isNotEmpty()) favoriteChannels else if (recentChannels.isEmpty()) channels.take(30) else emptyList()
+        else -> if (recentChannels.isNotEmpty()) recentChannels else if (favoriteChannels.isEmpty()) channels.take(30) else emptyList()
     }
+
+    var focusedChannelIndex by remember(selectedTab) {
+        val targetIdx = activeChannels.indexOfFirst { it == currentChannel }.takeIf { it >= 0 } ?: 0
+        mutableIntStateOf(targetIdx)
+    }
+
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(selectedTab) {
+        if (activeChannels.isNotEmpty()) {
+            val target = focusedChannelIndex.coerceIn(0, activeChannels.lastIndex)
+            runCatching { listState.scrollToItem(target) }
+        }
+    }
+
+    BackHandler {
+        onClose()
+    }
+
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            repeat(10) {
+                val success = runCatching {
+                    tabFocusRequesters[selectedTab.coerceIn(tabFocusRequesters.indices)].requestFocus()
+                }.isSuccess
+                if (success) return@LaunchedEffect
+                delay(30)
+            }
+        }
+    }
+
+    fun tabNavigation(index: Int) = Modifier
+        .focusRequester(tabFocusRequesters[index])
+        .focusProperties {
+            if (isTv) {
+                up = FocusRequester.Cancel
+                left = if (index == 0) FocusRequester.Cancel else tabFocusRequesters[0]
+                right = if (index == 0) tabFocusRequesters[1] else closeFocusRequester
+                down = if (activeChannels.isEmpty()) FocusRequester.Cancel else channelFocusRequester
+            }
+        }
 
     Surface(
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
@@ -12390,11 +13030,22 @@ private fun QuickZapTray(
                     )
                     Spacer(Modifier.width(8.dp))
                     Surface(
-                        onClick = { selectedTab = 0 },
+                        onClick = {
+                            selectedTab = 0
+                            if (activeChannels.isNotEmpty()) {
+                                runCatching { channelFocusRequester.requestFocus() }
+                            }
+                        },
                         shape = RoundedCornerShape(16.dp),
                         color = if (selectedTab == 0) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
                         contentColor = if (selectedTab == 0) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(16.dp), scaleOnFocus = 1.08f)
+                        modifier = tabNavigation(0)
+                            .onFocusChanged { state ->
+                                if (state.isFocused && isTv) {
+                                    selectedTab = 0
+                                }
+                            }
+                            .tvFocusHighlight(shape = RoundedCornerShape(16.dp), scaleOnFocus = 1.08f)
                     ) {
                         Text(
                             "${strings.quickZapFavorites} (${favoriteChannels.size})",
@@ -12404,11 +13055,22 @@ private fun QuickZapTray(
                         )
                     }
                     Surface(
-                        onClick = { selectedTab = 1 },
+                        onClick = {
+                            selectedTab = 1
+                            if (activeChannels.isNotEmpty()) {
+                                runCatching { channelFocusRequester.requestFocus() }
+                            }
+                        },
                         shape = RoundedCornerShape(16.dp),
                         color = if (selectedTab == 1) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
                         contentColor = if (selectedTab == 1) MaterialTheme.colorScheme.onPrimary else Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(16.dp), scaleOnFocus = 1.08f)
+                        modifier = tabNavigation(1)
+                            .onFocusChanged { state ->
+                                if (state.isFocused && isTv) {
+                                    selectedTab = 1
+                                }
+                            }
+                            .tvFocusHighlight(shape = RoundedCornerShape(16.dp), scaleOnFocus = 1.08f)
                     ) {
                         Text(
                             "${strings.quickZapRecent} (${recentChannels.size})",
@@ -12422,6 +13084,16 @@ private fun QuickZapTray(
                 IconButton(
                     onClick = onClose,
                     modifier = Modifier.size(32.dp)
+                        .focusRequester(closeFocusRequester)
+                        .focusProperties {
+                            if (isTv) {
+                                left = tabFocusRequesters[1]
+                                right = FocusRequester.Cancel
+                                up = FocusRequester.Cancel
+                                down = if (activeChannels.isEmpty()) FocusRequester.Cancel else channelFocusRequester
+                            }
+                        }
+                        .tvFocusHighlight(shape = CircleShape)
                 ) {
                     Icon(
                         Icons.Default.Close,
@@ -12448,21 +13120,27 @@ private fun QuickZapTray(
                     )
                 }
             } else {
-                val listState = rememberLazyListState()
                 LazyRow(
                     state = listState,
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(
+                    itemsIndexed(
                         items = activeChannels,
-                        key = { "zap-${it.position}:${it.streamUrl}" }
-                    ) { itemChannel ->
+                        key = { _, it -> "zap-${it.position}:${it.streamUrl}" }
+                    ) { index, itemChannel ->
                         val isCurrent = itemChannel == currentChannel
                         val schedule = remember(itemChannel, scheduleNow) {
                             epgGuide?.snapshot(itemChannel.tvgId, itemChannel.name, scheduleNow, epgTimeShiftHours)
                         }
+                        val isTargetFocusCard = index == focusedChannelIndex.coerceIn(0, activeChannels.lastIndex)
+                        val cardFocusModifier = if (isTargetFocusCard) {
+                            Modifier.focusRequester(channelFocusRequester)
+                        } else {
+                            Modifier
+                        }
+
                         Surface(
                             onClick = { onChannelSelected(itemChannel) },
                             shape = RoundedCornerShape(12.dp),
@@ -12474,6 +13152,20 @@ private fun QuickZapTray(
                             modifier = Modifier
                                 .width(190.dp)
                                 .height(68.dp)
+                                .then(cardFocusModifier)
+                                .onFocusChanged { state ->
+                                    if (state.isFocused) {
+                                        focusedChannelIndex = index
+                                    }
+                                }
+                                .focusProperties {
+                                    if (isTv) {
+                                        up = tabFocusRequesters[selectedTab.coerceIn(tabFocusRequesters.indices)]
+                                        down = FocusRequester.Cancel
+                                        if (index == 0) left = FocusRequester.Cancel
+                                        if (index == activeChannels.lastIndex) right = FocusRequester.Cancel
+                                    }
+                                }
                                 .tvFocusHighlight(
                                     shape = RoundedCornerShape(12.dp),
                                     scaleOnFocus = 1.05f

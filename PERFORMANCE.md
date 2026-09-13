@@ -9,6 +9,10 @@ a real multi-day EPG before release.
 - Playback uses separate live and VOD buffer profiles with Automatic, Stable, and Data Saver modes.
 - Live stall recovery preserves slowly arriving data, waits while the network is unavailable, and uses bounded backoff only when playback, buffer, and transfer progress have all stopped.
 - Playback diagnostics record sanitized stream type, adaptive-track availability, selected resolution and bitrate, bandwidth estimates, startup readiness, rebuffer count, network type, and Media3 error codes under `FortressTV.QoE`; source URLs and credentials are excluded.
+- Live playback diagnostics also report input frame-rate metadata, dropped-frame events,
+  cumulative decoder counters, and ten-second frame-submission timestamp samples.
+  Submission samples describe frames handed to the surface, not measured display refreshes;
+  unknown input frame rates must not be interpreted as zero FPS.
 - Wi-Fi and cellular handovers trigger one controlled recovery when a player is buffering or failed.
 
 - Channel lists use `LazyColumn`, so only visible and prefetched channels are composed.
@@ -49,7 +53,69 @@ a real multi-day EPG before release.
 - Stable M3U item identifiers are computed during the initial parse and persisted, avoiding a
   SHA-256 identity calculation for every channel during each subsequent source merge.
 
+## Mi Box playback investigation — 2026-09-12
+
+On the explicitly selected MIBOX4 (Android 9), the display was in 1080p60 mode.
+A user-selected live H.264 1080p stream reported unknown frame-rate metadata.
+Repeated ten-second samples measured 24.97–25.00 submitted frames per second,
+with 40,000 microsecond presentation steps. Decoder counters advanced from
+407 rendered / 403 skipped to 658 rendered / 654 skipped over approximately ten
+seconds, with zero dropped buffers. These are submission/decoder measurements,
+not physical display FPS. The skipped-buffer count needs further investigation;
+it does not establish that half the source's distinct pictures are missing.
+There is no before/after comparison proving a recent application regression yet.
+Compare the same channel at 50 Hz and inspect decoder output timestamps before
+changing playback policy.
+
+On 2026-09-13 the same selected Mi Box delivered a user-selected stream at
+49.97–50.05 submitted FPS with 20,000 microsecond presentation steps and zero
+dropped or skipped buffers, while its display remained at 1080p60. A subsequent
+720p stream also settled at 50 FPS. The previous day's 25 FPS / skipped-buffer
+behavior is therefore not universal across channels. A same-channel 50 Hz
+display comparison was then performed: Android confirmed 1080p50, but the user
+reported both tested channels still looked rough. Matching refresh rate alone is
+therefore insufficient. The second channel again showed 25 FPS with about one
+skipped buffer per rendered buffer.
+
+A local, unvalidated experiment disables Media3's identical-release-time buffer
+skip only for live playback on MIBOX4 / oneday / Android 9 using an OMX.amlogic
+decoder. Other devices and audio renderers retain their existing behavior.
+Compare both channels at 50 Hz and require visible motion improvement before
+retaining this workaround; counter changes alone do not demonstrate a fix.
+
+After installing the experiment, the 720p case remained near 50 submitted FPS
+with zero skips/drops. After switching to 1080p, rendered buffers advanced from
+423 to 924 in 10.041 seconds (about 49.90 output buffers/s), again with zero
+skips/drops. Previously the 1080p case showed about 25 rendered and 25 skipped
+buffers/s. Display output remained at 50 Hz. This confirms the skip rule changes
+buffer delivery; it does not confirm distinct-picture rate or visible smoothness.
+The user reported smoother motion with the experiment at 50 Hz. After restoring
+the user's original 1080p60 display mode (verified through Android), the 1080p
+rendered counter advanced from 858 to 1360 in 10.023 seconds, with zero skipped
+or dropped buffers. The user also confirmed smoother motion after restoring
+1080p60. The exact historical RC regression has not been isolated.
+
 ## Next profiling targets
+
+### RC8 remote-startup recovery correction
+
+The live buffering monitor now repeats its observation window after partial
+progress or an absent network route, instead of ending after a WAIT decision.
+It uses fresh deltas for each window, preserves progressing buffers, stops
+after retry exhaustion, and rechecks playback state after recovery backoff.
+Network validation is no longer a prerequisite for attempting a stream request;
+the presence of a default route allows the existing bounded recovery policy to
+try the actual source. Default-network capability transitions also notify recovery,
+including the first connection after starting offline and late validation.
+Duplicate capability callbacks do not repeatedly trigger recovery.
+
+Eight startup/network regression tests cover partial data followed by silence,
+continued buffer progress, disconnected startup, retry exhaustion, pause/error,
+coroutine cancellation, initial connectivity and network handover. These are
+deterministic logic tests, not evidence of successful playback on the reporting
+user's overseas 5G carrier. Physical cellular and Wi-Fi playback checks remain
+required before publishing the correction. The buffering label is now neutral
+in English and pt-PT; elapsed buffering time does not diagnose an unstable link.
 
 - Run the playback resilience matrix on an explicitly selected physical tablet with adaptive HLS, fixed HLS, MPEG-TS, and VOD sources. Measure startup time, rebuffer ratio, recovery time, channel-switch time, and live offset under gradual bandwidth reduction, short outages, and Wi-Fi/cellular handover.
 

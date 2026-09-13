@@ -116,10 +116,9 @@ object PlaybackProfiles {
 
 fun Context.isPlaybackNetworkAvailable(): Boolean {
     val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
-    val network = manager.activeNetwork ?: return false
-    val capabilities = manager.getNetworkCapabilities(network) ?: return false
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    // Validation probes can fail on an otherwise usable carrier/VPN/private route.
+    // Let the actual stream request determine reachability; no default route means wait.
+    return manager.activeNetwork != null
 }
 
 @Composable
@@ -129,18 +128,32 @@ fun rememberPlaybackNetworkGeneration(): Int {
     DisposableEffect(context) {
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val mainHandler = Handler(Looper.getMainLooper())
-        var initialNetworkSeen = manager.activeNetwork != null
+        val initialNetwork = manager.activeNetwork
+        val initialCapabilities = initialNetwork?.let(manager::getNetworkCapabilities)
+        val tracker = PlaybackNetworkTracker(
+            initialNetwork,
+            initialCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+            initialCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        )
+        var disposed = false
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                if (initialNetworkSeen) {
-                    mainHandler.post { generation++ }
-                } else {
-                    initialNetworkSeen = true
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                if (tracker.update(
+                    network,
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                )) {
+                    mainHandler.post { if (!disposed) generation++ }
                 }
             }
+
+            override fun onLost(network: Network) { tracker.lost(network) }
         }
         runCatching { manager.registerDefaultNetworkCallback(callback) }
-        onDispose { runCatching { manager.unregisterNetworkCallback(callback) } }
+        onDispose {
+            disposed = true
+            runCatching { manager.unregisterNetworkCallback(callback) }
+        }
     }
     return generation
 }
@@ -183,6 +196,26 @@ private class PlaybackDiagnosticsListener(
 
     override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: VideoSize) {
         Log.d("FortressTV.QoE", "type=$type video=${videoSize.width}x${videoSize.height}")
+    }
+
+    override fun onDroppedVideoFrames(
+        eventTime: AnalyticsListener.EventTime,
+        droppedFrames: Int,
+        elapsedMs: Long
+    ) {
+        Log.d("FortressTV.QoE", "type=$type droppedVideoFrames=$droppedFrames elapsedMs=$elapsedMs")
+    }
+
+    override fun onVideoInputFormatChanged(
+        eventTime: AnalyticsListener.EventTime,
+        format: androidx.media3.common.Format,
+        decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?
+    ) {
+        // Only technical format fields: never log Format itself or source identifiers.
+        Log.d(
+            "FortressTV.QoE",
+            "type=$type videoInput=${format.width}x${format.height} fps=${format.frameRate} mime=${format.sampleMimeType}"
+        )
     }
 
     override fun onTracksChanged(eventTime: AnalyticsListener.EventTime, tracks: Tracks) {
@@ -293,8 +326,13 @@ object FortressPlayerFactory {
                     .build()
             }
         }
-        val renderersFactory = DefaultRenderersFactory(context)
+        val miBoxExperiment = type == PlaybackContentType.LIVE &&
+            android.os.Build.MODEL == "MIBOX4" && android.os.Build.DEVICE == "oneday" &&
+            android.os.Build.VERSION.SDK_INT == 28
+        val renderersFactory = (if (miBoxExperiment) MiBoxRenderersFactory(context)
+            else DefaultRenderersFactory(context))
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        if (miBoxExperiment) Log.d("FortressTV.QoE", "MiBox identical-release skip experiment enabled")
         return ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -303,8 +341,33 @@ object FortressPlayerFactory {
             .apply {
                 addAnalyticsListener(PlaybackDiagnosticsListener(type, mode, transferProgress))
                 if (frameProgress != null) {
-                    setVideoFrameMetadataListener { _, _, _, _ ->
-                        frameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
+                    var sampleStartMs = 0L
+                    var sampleStartPresentationUs = 0L
+                    var previousPresentationUs = 0L
+                    var smallestFrameStepUs = Long.MAX_VALUE
+                    var sampledFrames = 0
+                    setVideoFrameMetadataListener { presentationUs, _, _, _ ->
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        frameProgress.recordFrame(now)
+                        if (sampledFrames == 0 || presentationUs <= previousPresentationUs) {
+                            sampleStartMs = now
+                            sampleStartPresentationUs = presentationUs
+                            smallestFrameStepUs = Long.MAX_VALUE
+                            sampledFrames = 0
+                        } else {
+                            smallestFrameStepUs = minOf(smallestFrameStepUs, presentationUs - previousPresentationUs)
+                        }
+                        previousPresentationUs = presentationUs
+                        sampledFrames++
+                        if (now - sampleStartMs >= 10_000L && sampledFrames > 1) {
+                            val mediaSpanUs = presentationUs - sampleStartPresentationUs
+                            Log.d(
+                                "FortressTV.QoE",
+                                "type=$type submittedFps=${(sampledFrames - 1) * 1000.0 / (now - sampleStartMs)} " +
+                                    "timestampFps=${(sampledFrames - 1) * 1_000_000.0 / mediaSpanUs} minFrameStepUs=$smallestFrameStepUs"
+                            )
+                            sampledFrames = 0
+                        }
                     }
                 }
             }
