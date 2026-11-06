@@ -15,7 +15,8 @@ data class XtreamMovie(
     val containerExtension: String,
     val rating: String?,
     val year: String?,
-    val plot: String?
+    val plot: String?,
+    val ageRating: String? = null
 )
 
 data class XtreamMovieDetails(
@@ -40,7 +41,8 @@ data class XtreamSeries(
     val coverUrl: String?,
     val rating: String?,
     val year: String?,
-    val plot: String?
+    val plot: String?,
+    val ageRating: String? = null
 )
 
 data class XtreamSeriesDetails(

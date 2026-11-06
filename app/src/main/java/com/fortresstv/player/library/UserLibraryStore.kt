@@ -5,8 +5,32 @@ import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.xtream.XtreamMovie
 import com.fortresstv.player.xtream.XtreamSeries
 
-class UserLibraryStore(context: Context) {
-    private val preferences = context.getSharedPreferences("fortress_user_library", Context.MODE_PRIVATE)
+import android.content.SharedPreferences
+
+class UserLibraryStore internal constructor(
+    private val prefsProvider: (String) -> SharedPreferences,
+    initialNamespace: String = "local"
+) {
+    constructor(context: Context, initialNamespace: String = "local") : this(
+        prefsProvider = { ns ->
+            if (ns == "local" || ns == "default") {
+                context.getSharedPreferences("fortress_user_library", Context.MODE_PRIVATE)
+            } else {
+                context.getSharedPreferences("fortress_user_library_$ns", Context.MODE_PRIVATE)
+            }
+        },
+        initialNamespace = initialNamespace
+    )
+
+    private var namespace = sanitize(initialNamespace)
+    private var preferences: SharedPreferences = prefsProvider(namespace)
+
+    private fun sanitize(raw: String): String = raw.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+
+    fun switchNamespace(newNamespace: String) {
+        namespace = sanitize(newNamespace)
+        preferences = prefsProvider(namespace)
+    }
 
     fun clearForRestore() {
         preferences.edit().clear().apply()
@@ -16,24 +40,51 @@ class UserLibraryStore(context: Context) {
         preferences.getStringSet(KEY_FAVORITE_CHANNELS, emptySet()).orEmpty().toSet()
 
     fun setChannelFavorite(channel: PlaylistChannel, favorite: Boolean): Set<String> {
-        val id = channel.libraryId()
-        if (id == null) return favoriteChannelIds()
+        val id = channel.libraryId() ?: return favoriteChannelIds()
+        val hashedKey = if (channel.sourceId.isNotBlank() && channel.sourceItemId.isNotBlank()) {
+            "channel:${channel.sourceId}:${CloudIdentityHasher.hashItemId(channel.sourceItemId)}"
+        } else null
         val updated = favoriteChannelIds().toMutableSet().apply {
-            if (favorite) add(id) else remove(id)
+            if (favorite) {
+                add(id)
+            } else {
+                remove(id)
+                hashedKey?.let { remove(it) }
+            }
         }
         preferences.edit().putStringSet(KEY_FAVORITE_CHANNELS, updated).apply()
         return updated
     }
 
-    fun isChannelFavorite(channel: PlaylistChannel, favorites: Set<String> = favoriteChannelIds()): Boolean =
-        channel.libraryId()?.let(favorites::contains) == true
+    fun isChannelFavorite(channel: PlaylistChannel, favorites: Set<String> = favoriteChannelIds()): Boolean {
+        val id = channel.libraryId()
+        if (id != null && favorites.contains(id)) return true
+        if (channel.sourceId.isNotBlank() && channel.sourceItemId.isNotBlank()) {
+            val hashedKey = "channel:${channel.sourceId}:${CloudIdentityHasher.hashItemId(channel.sourceItemId)}"
+            if (favorites.contains(hashedKey)) return true
+        }
+        return false
+    }
 
     fun movieWatchlistIds(): Set<String> =
         preferences.getStringSet(KEY_MOVIE_WATCHLIST, emptySet()).orEmpty().toSet()
 
+    fun isMovieWatchlisted(sourceId: String, movie: XtreamMovie, watchlist: Set<String> = movieWatchlistIds()): Boolean {
+        if (watchlist.contains(movie.libraryId(sourceId))) return true
+        val hashedKey = "movie:$sourceId:${CloudIdentityHasher.hashItemId(movie.id.toString())}"
+        return watchlist.contains(hashedKey)
+    }
+
     fun setMovieWatchlisted(sourceId: String, movie: XtreamMovie, watchlisted: Boolean): Set<String> {
+        val rawId = movie.libraryId(sourceId)
+        val hashedKey = "movie:$sourceId:${CloudIdentityHasher.hashItemId(movie.id.toString())}"
         val updated = movieWatchlistIds().toMutableSet().apply {
-            if (watchlisted) add(movie.libraryId(sourceId)) else remove(movie.libraryId(sourceId))
+            if (watchlisted) {
+                add(rawId)
+            } else {
+                remove(rawId)
+                remove(hashedKey)
+            }
         }
         preferences.edit().putStringSet(KEY_MOVIE_WATCHLIST, updated).apply()
         return updated
@@ -42,9 +93,22 @@ class UserLibraryStore(context: Context) {
     fun followedSeriesIds(): Set<String> =
         preferences.getStringSet(KEY_FOLLOWED_SERIES, emptySet()).orEmpty().toSet()
 
+    fun isSeriesFollowed(sourceId: String, series: XtreamSeries, followed: Set<String> = followedSeriesIds()): Boolean {
+        if (followed.contains(series.libraryId(sourceId))) return true
+        val hashedKey = "series:$sourceId:${CloudIdentityHasher.hashItemId(series.id.toString())}"
+        return followed.contains(hashedKey)
+    }
+
     fun setSeriesFollowed(sourceId: String, series: XtreamSeries, followed: Boolean): Set<String> {
+        val rawId = series.libraryId(sourceId)
+        val hashedKey = "series:$sourceId:${CloudIdentityHasher.hashItemId(series.id.toString())}"
         val updated = followedSeriesIds().toMutableSet().apply {
-            if (followed) add(series.libraryId(sourceId)) else remove(series.libraryId(sourceId))
+            if (followed) {
+                add(rawId)
+            } else {
+                remove(rawId)
+                remove(hashedKey)
+            }
         }
         preferences.edit().putStringSet(KEY_FOLLOWED_SERIES, updated).apply()
         return updated
@@ -54,15 +118,31 @@ class UserLibraryStore(context: Context) {
         preferences.getStringSet(KEY_WATCHED_ITEMS, emptySet()).orEmpty().toSet()
 
     fun setItemWatched(libraryId: String, watched: Boolean): Set<String> {
+        val parts = libraryId.split(":")
+        val hashedKey = if (parts.size >= 3) {
+            "${parts[0]}:${parts[1]}:${CloudIdentityHasher.hashItemId(parts[2])}"
+        } else null
         val updated = watchedItemIds().toMutableSet().apply {
-            if (watched) add(libraryId) else remove(libraryId)
+            if (watched) {
+                add(libraryId)
+            } else {
+                remove(libraryId)
+                hashedKey?.let { remove(it) }
+            }
         }
         preferences.edit().putStringSet(KEY_WATCHED_ITEMS, updated).apply()
         return updated
     }
 
-    fun isItemWatched(libraryId: String, watched: Set<String> = watchedItemIds()): Boolean =
-        watched.contains(libraryId)
+    fun isItemWatched(libraryId: String, watched: Set<String> = watchedItemIds()): Boolean {
+        if (watched.contains(libraryId)) return true
+        val parts = libraryId.split(":")
+        if (parts.size >= 3) {
+            val hashedKey = "${parts[0]}:${parts[1]}:${CloudIdentityHasher.hashItemId(parts[2])}"
+            if (watched.contains(hashedKey)) return true
+        }
+        return false
+    }
 
     fun recentChannelIds(): List<String> {
         val raw = preferences.getString(KEY_RECENT_CHANNELS, null) ?: return emptyList()

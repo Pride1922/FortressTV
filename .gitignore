@@ -14,6 +14,7 @@
 .cxx
 local.properties
 keystore.properties
+supabase.properties
 .idea/
 work/
 *.jks

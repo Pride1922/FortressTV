@@ -13,6 +13,13 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+val supabaseProperties = Properties().apply {
+    rootProject.file("supabase.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
+}
+fun accountConfig(name: String, property: String): String =
+    providers.environmentVariable(name).orNull ?: supabaseProperties.getProperty(property, "")
+fun buildConfigString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
 android {
     namespace = "com.fortresstv.player"
     compileSdk {
@@ -27,6 +34,8 @@ android {
         targetSdk = 36
         versionCode = 34
         versionName = "1.0.0-RC9"
+        buildConfigField("String", "SUPABASE_URL", buildConfigString(accountConfig("SUPABASE_URL", "projectUrl")))
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", buildConfigString(accountConfig("SUPABASE_PUBLISHABLE_KEY", "publishableKey")))
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

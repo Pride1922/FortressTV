@@ -282,6 +282,18 @@ interface Strings {
     val selectM3uError: String
 
     val settingsTitle: String
+    val tabAccount: String
+    val tabProfiles: String
+    val profiles: String
+    val switchProfile: String
+    val manageProfiles: String
+    val childProfile: String
+    val adultProfile: String
+    val pinProtected: String
+    val importLocalDataTitle: String
+    val importLocalDataMessage: String
+    val importLocalDataConfirm: String
+    val importLocalDataDismiss: String
     val tabPlaylists: String
     val tabEpg: String
     val tabGeneral: String
@@ -720,6 +732,18 @@ object EnglishStrings : Strings {
     override val selectM3uError = "Please enter an M3U URL or select a local file."
 
     override val settingsTitle = "Settings"
+    override val tabAccount = "Account"
+    override val tabProfiles = "Profiles"
+    override val profiles = "Profiles"
+    override val switchProfile = "Switch Profile"
+    override val manageProfiles = "Manage Profiles"
+    override val childProfile = "Child profile"
+    override val adultProfile = "Adult profile"
+    override val pinProtected = "PIN Protected"
+    override val importLocalDataTitle = "Import Local Device Data"
+    override val importLocalDataMessage = "Would you like to import this device's existing playlists and favorites into your household account?"
+    override val importLocalDataConfirm = "Import to Account"
+    override val importLocalDataDismiss = "Keep Local Only"
     override val tabPlaylists = "Playlists"
     override val tabEpg = "EPG Guide"
     override val tabGeneral = "General"
@@ -1160,6 +1184,18 @@ object PortugueseStrings : Strings {
     override val selectM3uError = "Por favor insira um URL M3U ou selecione um ficheiro local."
 
     override val settingsTitle = "Definições"
+    override val tabAccount = "Conta"
+    override val tabProfiles = "Perfis"
+    override val profiles = "Perfis"
+    override val switchProfile = "Mudar de Perfil"
+    override val manageProfiles = "Gerir Perfis"
+    override val childProfile = "Perfil de criança"
+    override val adultProfile = "Perfil de adulto"
+    override val pinProtected = "Protegido por PIN"
+    override val importLocalDataTitle = "Importar Dados do Dispositivo"
+    override val importLocalDataMessage = "Deseja importar as listas e os favoritos existentes deste dispositivo para a sua conta do agregado?"
+    override val importLocalDataConfirm = "Importar para a Conta"
+    override val importLocalDataDismiss = "Manter Apenas Local"
     override val tabPlaylists = "Listas"
     override val tabEpg = "Guia EPG"
     override val tabGeneral = "Geral"

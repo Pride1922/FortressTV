@@ -143,6 +143,20 @@ import com.fortresstv.player.update.UpdateManager
 import com.fortresstv.player.update.AppUpdateInfo
 import com.fortresstv.player.BuildConfig
 import com.fortresstv.player.ui.AppLanguage
+import com.fortresstv.player.account.AccountRepository
+import com.fortresstv.player.account.AccountTab
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.ChildCare
+import com.fortresstv.player.source.CloudSourceSyncService
+import com.fortresstv.player.profile.HouseholdProfile
+import com.fortresstv.player.profile.HouseholdPinDialogMode
+import com.fortresstv.player.profile.ParentalControls
+import com.fortresstv.player.profile.ParentalPinDialog
+import com.fortresstv.player.profile.ProfileAvatar
+import com.fortresstv.player.profile.ProfileRepository
+import com.fortresstv.player.profile.ProfileSelectionDialog
+import com.fortresstv.player.profile.ProfilesTab
 import com.fortresstv.player.ui.LocalAppStrings
 import com.fortresstv.player.ui.getStringsFor
 import com.fortresstv.player.ui.Strings
@@ -340,6 +354,8 @@ import coil.size.Precision
 class MainActivity : ComponentActivity() {
     private companion object {
         const val PIP_DISMISS_CONFIRMATION_DELAY_MS = 1_500L
+        const val INACTIVITY_LOCK_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
+        var lastBackgroundTimestamp = 0L
     }
 
     var pictureInPictureMode by mutableStateOf(false)
@@ -352,6 +368,7 @@ class MainActivity : ComponentActivity() {
     private var isActivityResumed = false
     private var transferDeepLink by mutableStateOf<String?>(null)
     private var foregroundGeneration by mutableIntStateOf(0)
+    private var inactivityLockTriggered by mutableStateOf(false)
 
     internal var sleepTimerState by mutableStateOf(PlaybackSleepTimerState())
         private set
@@ -470,6 +487,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         playbackSleepTimer.checkDeadline()
+        if (lastBackgroundTimestamp > 0L) {
+            val elapsed = android.os.SystemClock.elapsedRealtime() - lastBackgroundTimestamp
+            lastBackgroundTimestamp = 0L
+            if (elapsed > INACTIVITY_LOCK_TIMEOUT_MS) {
+                inactivityLockTriggered = true
+            }
+        }
         foregroundGeneration++
         isActivityResumed = true
         pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
@@ -479,11 +503,17 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         isActivityResumed = false
         super.onPause()
+        if (!pictureInPictureMode) {
+            lastBackgroundTimestamp = android.os.SystemClock.elapsedRealtime()
+        }
     }
 
     override fun onStop() {
         super.onStop()
         isActivityResumed = false
+        if (!pictureInPictureMode && lastBackgroundTimestamp == 0L) {
+            lastBackgroundTimestamp = android.os.SystemClock.elapsedRealtime()
+        }
         // Do not infer PiP dismissal from onStop: some vendors dispatch it while an
         // expanded PiP is rebuilding its fullscreen window. The confirmation callback
         // above distinguishes expansion (focus/resume returns) from an actual close.
@@ -564,7 +594,9 @@ class MainActivity : ComponentActivity() {
                     FortressTVApp(
                         transferDeepLink = transferDeepLink,
                         onTransferDeepLinkConsumed = { transferDeepLink = null },
-                        foregroundGeneration = foregroundGeneration
+                        foregroundGeneration = foregroundGeneration,
+                        inactivityLockTriggered = inactivityLockTriggered,
+                        onInactivityLockConsumed = { inactivityLockTriggered = false }
                     )
                 }
             }
@@ -593,7 +625,9 @@ class MainActivity : ComponentActivity() {
 private fun FortressTVApp(
     transferDeepLink: String?,
     onTransferDeepLinkConsumed: () -> Unit,
-    foregroundGeneration: Int
+    foregroundGeneration: Int,
+    inactivityLockTriggered: Boolean = false,
+    onInactivityLockConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -649,6 +683,7 @@ private fun FortressTVApp(
     var restoring by remember { mutableStateOf(true) }
 
     var showSettings by remember { mutableStateOf(false) }
+    var playbackResetGeneration by remember { mutableIntStateOf(0) }
     var settingsInitialTab by remember { mutableIntStateOf(0) }
     var showAddPlaylistDialog by remember { mutableStateOf(false) }
     var showTransferDialog by remember { mutableStateOf(false) }
@@ -664,7 +699,111 @@ private fun FortressTVApp(
     var parentalControlEnabled by remember { mutableStateOf(settings.parentalControlEnabled()) }
     var activePinDialog by remember { mutableStateOf<PinDialogMode?>(null) }
     var isAdultContentUnlockedByPin by remember { mutableStateOf(false) }
-    val effectiveHideAdultContent = if (parentalControlEnabled && !isAdultContentUnlockedByPin) true else hideAdultContent
+
+    val profileRepository = remember { ProfileRepository.get(context) }
+    val activeHouseholdProfile by profileRepository.activeProfile.collectAsState()
+    val householdProfiles by profileRepository.profiles.collectAsState()
+    var showProfileSelectionDialog by remember { mutableStateOf(false) }
+    var pinPromptAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var requireProfileSelection by rememberSaveable { mutableStateOf(true) }
+
+    val accountRepository = remember { com.fortresstv.player.account.AccountRepository.get(context) }
+    var currentUserId by remember { mutableStateOf(accountRepository.currentUserId()) }
+    val cloudSourceSyncService = remember { com.fortresstv.player.source.CloudSourceSyncService.get(context) }
+    val cloudLibrarySyncService = remember { com.fortresstv.player.library.CloudLibrarySyncService.get(context) }
+    val migrationService = remember { com.fortresstv.player.account.LocalDataMigrationService(context) }
+
+    val isFreshInstall = remember {
+        currentUserId == null && settings.getPlaylists().isEmpty()
+    }
+    var showOnboardingDialog by rememberSaveable { mutableStateOf(isFreshInstall) }
+    var showLocalImportDialog by remember { mutableStateOf(false) }
+
+    val pinStatus = profileRepository.getPinStatus()
+    val hasMultipleProfilesOrPin = (currentUserId != null || householdProfiles.size > 1 || pinStatus.hasPin)
+    val shouldGateWithProfilePicker = requireProfileSelection && hasMultipleProfilesOrPin
+
+    LaunchedEffect(inactivityLockTriggered) {
+        if (inactivityLockTriggered) {
+            profileRepository.revokeAdultUnlock()
+            requireProfileSelection = true
+            playbackResetGeneration++
+            onInactivityLockConsumed()
+        }
+    }
+
+    LaunchedEffect(profileRepository) {
+        val userId = withContext(Dispatchers.IO) {
+            accountRepository.currentUserId()
+        }
+        currentUserId = userId
+        profileRepository.onAccountChanged(userId)
+        profileRepository.refresh()
+    }
+
+    LaunchedEffect(currentUserId) {
+        val uid = currentUserId
+        cloudLibrarySyncService.onAccountChanged(uid)
+        if (uid != null) {
+            cloudLibrarySyncService.triggerSync()
+            if (migrationService.isMigrationNeeded(uid)) {
+                showLocalImportDialog = true
+            }
+        }
+    }
+
+    LaunchedEffect(activeHouseholdProfile.id, currentUserId) {
+        playbackResetGeneration++
+        isAdultContentUnlockedByPin = false
+
+        val targetProfileId = activeHouseholdProfile.id
+        val uid = currentUserId
+        val ns = if (uid != null && targetProfileId != "restricted_default") {
+            "${uid}_$targetProfileId"
+        } else {
+            "local"
+        }
+        userLibrary.switchNamespace(ns)
+        vodProgressStore.switchNamespace(ns)
+        favoriteChannelIds = userLibrary.favoriteChannelIds()
+        recentChannelIds = userLibrary.recentChannelIds()
+        movieWatchlistIds = userLibrary.movieWatchlistIds()
+        followedSeriesIds = userLibrary.followedSeriesIds()
+        watchedItemIds = userLibrary.watchedItemIds()
+
+        if (uid != null && targetProfileId != "restricted_default") {
+            cloudLibrarySyncService.triggerSync()
+            val profileLibrary = UserLibraryStore(context.applicationContext, ns)
+            val profileProgress = VodProgressStore(context.applicationContext, ns)
+            cloudLibrarySyncService.pullAndApplyProfileData(
+                profileId = targetProfileId,
+                userLibrary = profileLibrary,
+                progressStore = profileProgress,
+                onUpdated = {
+                    if (activeHouseholdProfile.id == targetProfileId) {
+                        favoriteChannelIds = profileLibrary.favoriteChannelIds()
+                        recentChannelIds = profileLibrary.recentChannelIds()
+                        movieWatchlistIds = profileLibrary.movieWatchlistIds()
+                        followedSeriesIds = profileLibrary.followedSeriesIds()
+                        watchedItemIds = profileLibrary.watchedItemIds()
+                    }
+                }
+            )
+        }
+    }
+
+    LaunchedEffect(activeHouseholdProfile.language) {
+        val target = if (activeHouseholdProfile.language.startsWith("pt")) AppLanguage.PORTUGUESE else AppLanguage.ENGLISH
+        if (appLanguage != target) {
+            appLanguage = target
+            settings.setLanguage(target.code)
+        }
+    }
+
+    val effectiveHideAdultContent = if (activeHouseholdProfile.isChild || (parentalControlEnabled && !isAdultContentUnlockedByPin)) true
+        else (activeHouseholdProfile.hideAdultContent || hideAdultContent)
+    val effectiveMaximumAge = if (activeHouseholdProfile.isChild) (activeHouseholdProfile.maximumAge ?: 12) else activeHouseholdProfile.maximumAge
+    val effectiveBlockUnrated = if (activeHouseholdProfile.isChild) true else activeHouseholdProfile.blockUnrated
 
     var startupUpdateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var startupUpdateProgress by remember { mutableFloatStateOf(-1f) }
@@ -811,6 +950,20 @@ private fun FortressTVApp(
                     val enabled = allPlaylists.filter { it.enabled }
                     playlist = mergeLivePlaylists(allPlaylists, loadedPlaylists)
                     activeProfile = enabled.minByOrNull { it.order }
+
+                    val favs = userLibrary.favoriteChannelIds().toMutableSet()
+                    var changed = false
+                    for (ch in parsed.channels) {
+                        val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId)
+                        if (favs.contains("channel:${updatedProfile.id}:$hash")) {
+                            favs.add("channel:${updatedProfile.id}:${ch.sourceItemId}")
+                            changed = true
+                        }
+                    }
+                    if (changed) {
+                        userLibrary.setFavoriteChannelIds(favs)
+                        favoriteChannelIds = userLibrary.favoriteChannelIds()
+                    }
                 }
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
@@ -836,6 +989,71 @@ private fun FortressTVApp(
                 restoring = false
             }
         }
+    }
+
+    fun reconnectFavouritesAndProgress(sourceId: String, catalog: XtreamCatalog) {
+        val favs = userLibrary.favoriteChannelIds().toMutableSet()
+        val watchlist = userLibrary.movieWatchlistIds().toMutableSet()
+        val followed = userLibrary.followedSeriesIds().toMutableSet()
+        val watched = userLibrary.watchedItemIds().toMutableSet()
+
+        for (channel in catalog.liveChannels) {
+            val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(channel.sourceItemId)
+            if (favs.contains("channel:$sourceId:$hash")) {
+                favs.add("channel:$sourceId:${channel.sourceItemId}")
+            }
+        }
+
+        for (movie in catalog.movies) {
+            val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(movie.id.toString())
+            if (watchlist.contains("movie:$sourceId:$hash")) {
+                watchlist.add("movie:$sourceId:${movie.id}")
+            }
+            if (watched.contains("movie:$sourceId:$hash")) {
+                watched.add("movie:$sourceId:${movie.id}")
+            }
+        }
+
+        for (series in catalog.series) {
+            val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(series.id.toString())
+            if (followed.contains("series:$sourceId:$hash")) {
+                followed.add("series:$sourceId:${series.id}")
+            }
+        }
+
+        userLibrary.setFavoriteChannelIds(favs)
+        userLibrary.setMovieWatchlistIds(watchlist)
+        userLibrary.setFollowedSeriesIds(followed)
+        userLibrary.setWatchedItemIds(watched)
+
+        val currentEntries = vodProgressStore.entries().toMutableList()
+        var progressChanged = false
+        for (i in currentEntries.indices) {
+            val entry = currentEntries[i]
+            if (entry.sourceId == sourceId) {
+                if (entry.kind == com.fortresstv.player.library.VodProgressKind.MOVIE) {
+                    val matchingMovie = catalog.movies.firstOrNull {
+                        it.id.toString() == entry.itemId || com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id.toString()) == entry.itemId
+                    }
+                    if (matchingMovie != null && entry.title.isBlank()) {
+                        currentEntries[i] = entry.copy(
+                            title = matchingMovie.name,
+                            posterUrl = matchingMovie.posterUrl,
+                            containerExtension = matchingMovie.containerExtension.ifBlank { "mp4" }
+                        )
+                        progressChanged = true
+                    }
+                }
+            }
+        }
+        if (progressChanged) {
+            vodProgressStore.setAll(currentEntries)
+        }
+
+        favoriteChannelIds = userLibrary.favoriteChannelIds()
+        movieWatchlistIds = userLibrary.movieWatchlistIds()
+        followedSeriesIds = userLibrary.followedSeriesIds()
+        watchedItemIds = userLibrary.watchedItemIds()
     }
 
     fun loadXtreamProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
@@ -867,6 +1085,7 @@ private fun FortressTVApp(
                     if (activeProfile == null) {
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
+                    reconnectFavouritesAndProgress(profile.id, catalog)
                 }
             }.onFailure { failure ->
                 withContext(Dispatchers.Main) {
@@ -1154,6 +1373,24 @@ private fun FortressTVApp(
             loadXtreamProfile(profile)
         }
 
+        // Restore cloud sources for authenticated households
+        val cloudSourceService = CloudSourceSyncService.get(context)
+        val accountState = AccountRepository.get(context).getAccountState()
+        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+            scope.launch(Dispatchers.IO) {
+                val restoredResult = cloudSourceService.restoreSourcesFromCloud(profileRepository.currentUnlockToken())
+                val restored = restoredResult.getOrDefault(emptyList())
+                if (restored.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        playlists = settings.getPlaylists()
+                        restored.filter { it.enabled && it.source is ContentSource.Xtream }.forEach { p ->
+                            loadXtreamProfile(p)
+                        }
+                    }
+                }
+            }
+        }
+
         val savedEpg = settings.epgSource()
         if (savedEpg is ContentSource.RemoteUrl) {
             val isEpgFresh = SourceReader.isCacheFresh(context, "epg", settings.lastEpgUpdate())
@@ -1401,7 +1638,60 @@ private fun FortressTVApp(
         LocalPlaybackMode provides playbackMode
     ) {
         Box(Modifier.fillMaxSize()) {
-            if (restoring) {
+            if (showOnboardingDialog) {
+                com.fortresstv.player.account.OnboardingDialog(
+                    onDismiss = { showOnboardingDialog = false },
+                    onComplete = {
+                        showOnboardingDialog = false
+                        val uid = accountRepository.currentUserId()
+                        currentUserId = uid
+                        requireProfileSelection = true
+                        scope.launch {
+                            val all = settings.getPlaylists()
+                            playlists = all
+                            for (p in all.filter { it.enabled }) {
+                                if (p.source is ContentSource.Xtream) loadXtreamProfile(p)
+                                else loadPlaylistProfile(p)
+                            }
+                        }
+                    }
+                )
+            } else if (showLocalImportDialog && currentUserId != null) {
+                com.fortresstv.player.account.LocalDataImportDialog(
+                    householdId = currentUserId!!,
+                    onDismiss = { showLocalImportDialog = false },
+                    onComplete = {
+                        showLocalImportDialog = false
+                        scope.launch {
+                            val all = settings.getPlaylists()
+                            playlists = all
+                            for (p in all.filter { it.enabled }) {
+                                if (p.source is ContentSource.Xtream) loadXtreamProfile(p)
+                                else loadPlaylistProfile(p)
+                            }
+                        }
+                    }
+                )
+            } else if (shouldGateWithProfilePicker) {
+                BackHandler(enabled = shouldGateWithProfilePicker) {
+                    (context as? Activity)?.finish()
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ProfileSelectionDialog(
+                        isMandatory = true,
+                        onProfileSelected = {
+                            requireProfileSelection = false
+                            playbackResetGeneration++
+                        },
+                        onDismiss = {}
+                    )
+                }
+            } else if (restoring) {
                 WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
             } else if (playlist == null || activeProfile == null) {
                 WelcomeScreen(
@@ -1410,11 +1700,26 @@ private fun FortressTVApp(
                     error = error,
                     onRetry = retryLoad,
                     onAddSource = { showAddPlaylistDialog = true },
-                    onRestoreBackup = { triggerRestoreBackup() },
+                    onRestoreBackup = {
+                        val status = profileRepository.getPinStatus()
+                        if ((activeHouseholdProfile.isChild || status.hasPin) && !profileRepository.isAdultUnlocked()) {
+                            pinPromptAction = { triggerRestoreBackup() }
+                        } else {
+                            triggerRestoreBackup()
+                        }
+                    },
                     onEditPlaylist = (activeProfile ?: playlists.firstOrNull())?.let { prof -> { editingProfile = prof } },
                     onOpenSettings = {
-                        settingsInitialTab = 1
-                        showSettings = true
+                        val status = profileRepository.getPinStatus()
+                        if (activeHouseholdProfile.isChild && status.hasPin && !profileRepository.isAdultUnlocked()) {
+                            pinPromptAction = {
+                                settingsInitialTab = 1
+                                showSettings = true
+                            }
+                        } else {
+                            settingsInitialTab = 1
+                            showSettings = true
+                        }
                     }
                 )
             } else {
@@ -1442,6 +1747,7 @@ private fun FortressTVApp(
                     error = error,
                     onRetryLoad = retryLoad,
                     userLibrary = userLibrary,
+                    progressStore = vodProgressStore,
                     favoriteChannelIds = favoriteChannelIds,
                     recentChannelIds = recentChannelIds,
                     onRecordChannelWatched = { channel ->
@@ -1454,35 +1760,120 @@ private fun FortressTVApp(
                     xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
                     onToggleFavorite = { channel ->
                         val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true
-                        favoriteChannelIds = userLibrary.setChannelFavorite(channel, !isFavorite)
+                        val newFavorite = !isFavorite
+                        favoriteChannelIds = userLibrary.setChannelFavorite(channel, newFavorite)
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            cloudLibrarySyncService.recordLibraryMutation(
+                                profileId = activeHouseholdProfile.id,
+                                sourceId = channel.sourceId,
+                                itemKind = "channel",
+                                itemId = channel.sourceItemId,
+                                isFavourite = newFavorite,
+                                isWatchlisted = false,
+                                isWatched = false
+                            )
+                        }
                     },
                     onToggleMovieWatchlist = { sourceId, movie ->
                         val isWatchlisted = movie.libraryId(sourceId) in movieWatchlistIds
-                        movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, !isWatchlisted)
+                        val newWatchlisted = !isWatchlisted
+                        movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, newWatchlisted)
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            cloudLibrarySyncService.recordLibraryMutation(
+                                profileId = activeHouseholdProfile.id,
+                                sourceId = sourceId,
+                                itemKind = "movie",
+                                itemId = movie.id.toString(),
+                                isFavourite = false,
+                                isWatchlisted = newWatchlisted,
+                                isWatched = movie.libraryId(sourceId) in watchedItemIds
+                            )
+                        }
                     },
                     onToggleMovieWatched = { sourceId, movie ->
                         val key = movie.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            cloudLibrarySyncService.recordLibraryMutation(
+                                profileId = activeHouseholdProfile.id,
+                                sourceId = sourceId,
+                                itemKind = "movie",
+                                itemId = movie.id.toString(),
+                                isFavourite = false,
+                                isWatchlisted = key in movieWatchlistIds,
+                                isWatched = willBeWatched
+                            )
+                        }
                     },
                     onToggleSeriesFollow = { sourceId, series ->
                         val isFollowed = series.libraryId(sourceId) in followedSeriesIds
-                        followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, !isFollowed)
+                        val newFollowed = !isFollowed
+                        followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, newFollowed)
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            cloudLibrarySyncService.recordLibraryMutation(
+                                profileId = activeHouseholdProfile.id,
+                                sourceId = sourceId,
+                                itemKind = "series",
+                                itemId = series.id.toString(),
+                                isFavourite = false,
+                                isWatchlisted = newFollowed,
+                                isWatched = false
+                            )
+                        }
                     },
                     onToggleEpisodeWatched = { sourceId, episode ->
                         val key = episode.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            cloudLibrarySyncService.recordLibraryMutation(
+                                profileId = activeHouseholdProfile.id,
+                                sourceId = sourceId,
+                                itemKind = "episode",
+                                itemId = episode.id.toString(),
+                                isFavourite = false,
+                                isWatchlisted = false,
+                                isWatched = willBeWatched
+                            )
+                        }
                     },
                     onMarkItemWatched = { key, watched ->
                         watchedItemIds = userLibrary.setItemWatched(key, watched)
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            val parts = key.split(":")
+                            if (parts.size >= 3) {
+                                cloudLibrarySyncService.recordLibraryMutation(
+                                    profileId = activeHouseholdProfile.id,
+                                    sourceId = parts[1],
+                                    itemKind = parts[0],
+                                    itemId = parts[2],
+                                    isFavourite = false,
+                                    isWatchlisted = key in movieWatchlistIds || key in followedSeriesIds,
+                                    isWatched = watched
+                                )
+                            }
+                        }
                     },
+                    activeHouseholdProfile = activeHouseholdProfile,
+                    onOpenProfiles = { showProfileSelectionDialog = true },
                     onOpenSettings = { tab ->
                         settingsInitialTab = tab
                         showSettings = true
                     }
                 )
             }
+
+        if (showProfileSelectionDialog) {
+            ProfileSelectionDialog(
+                isMandatory = false,
+                onProfileSelected = {
+                    showProfileSelectionDialog = false
+                    playbackResetGeneration++
+                },
+                onDismiss = { showProfileSelectionDialog = false }
+            )
+        }
 
         if (showSettings) {
             SettingsDialog(
@@ -1654,7 +2045,12 @@ private fun FortressTVApp(
                     showCreateBackupDialog = true
                 },
                 onRestoreBackup = {
-                    triggerRestoreBackup()
+                    val status = profileRepository.getPinStatus()
+                    if ((activeHouseholdProfile.isChild || status.hasPin) && !profileRepository.isAdultUnlocked()) {
+                        pinPromptAction = { triggerRestoreBackup() }
+                    } else {
+                        triggerRestoreBackup()
+                    }
                 }
             )
         }
@@ -1708,6 +2104,12 @@ private fun FortressTVApp(
                         showSettings = false
                         loading = false
                         error = null
+                    }
+                    val accountState = AccountRepository.get(context).getAccountState()
+                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                        scope.launch(Dispatchers.IO) {
+                            CloudSourceSyncService.get(context).deleteSourceFromCloud(profile.id, profileRepository.currentUnlockToken())
+                        }
                     }
                 }
             )
@@ -1773,6 +2175,12 @@ private fun FortressTVApp(
                         order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                     )
                     loadXtreamProfile(profile, forceRefresh = true)
+                    val accountState = AccountRepository.get(context).getAccountState()
+                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                        scope.launch(Dispatchers.IO) {
+                            CloudSourceSyncService.get(context).syncSourcesToCloud(profileRepository.currentUnlockToken())
+                        }
+                    }
                 },
                 onPickFile = {
                     showAddPlaylistDialog = false
@@ -1850,6 +2258,12 @@ private fun FortressTVApp(
                                 order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                             )
                             loadXtreamProfile(profile, forceRefresh = true)
+                    val accountState = AccountRepository.get(context).getAccountState()
+                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                        scope.launch(Dispatchers.IO) {
+                            CloudSourceSyncService.get(context).syncSourcesToCloud(profileRepository.currentUnlockToken())
+                        }
+                    }
                         }
                     }
                     payload.epgUrl?.takeIf { it.isNotBlank() }?.let { transferredEpgUrl ->
@@ -3457,6 +3871,7 @@ private fun FortressLibrary(
     loading: Boolean,
     error: String?,
     userLibrary: UserLibraryStore,
+    progressStore: VodProgressStore,
     favoriteChannelIds: Set<String>,
     recentChannelIds: List<String>,
     onRecordChannelWatched: (PlaylistChannel) -> Unit,
@@ -3472,11 +3887,14 @@ private fun FortressLibrary(
     onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
     onMarkItemWatched: (String, Boolean) -> Unit,
     onRetryLoad: (() -> Unit)?,
+    maximumAge: Int? = null,
+    blockUnrated: Boolean = false,
+    activeHouseholdProfile: HouseholdProfile? = null,
+    onOpenProfiles: (() -> Unit)? = null,
     onOpenSettings: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
-    val progressStore = remember { VodProgressStore(context.applicationContext) }
     var progressEntries by remember { mutableStateOf(progressStore.entries()) }
     var hiddenCategories by remember(activeProfile.id) {
         mutableStateOf(userLibrary.hiddenCategories(activeProfile.id))
@@ -3558,10 +3976,29 @@ private fun FortressLibrary(
                 if (compactLibraryNavigation) globalSidebarExpanded = false
                 onOpenSettings(0)
             },
+            activeHouseholdProfile = activeHouseholdProfile,
+            onOpenProfiles = onOpenProfiles,
             onFocusChanged = { sidebarHasFocus = it },
             selectedItemFocusRequester = selectedItemFocusRequester,
             contentFocusRequester = contentFocusRequester
         )
+        val onRemoveContinueWatchingEntry: (VodProgressEntry) -> Unit = { entry ->
+            progressEntries = progressStore.remove(entry.key)
+            if (activeHouseholdProfile != null && activeHouseholdProfile.id != "restricted_default") {
+                val cloudSync = com.fortresstv.player.library.CloudLibrarySyncService.get(context)
+                cloudSync.recordProgressMutation(
+                    profileId = activeHouseholdProfile.id,
+                    sourceId = entry.sourceId,
+                    itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                    itemId = entry.itemId,
+                    positionMs = 0L,
+                    durationMs = entry.durationMs,
+                    completed = false,
+                    isDeleted = true
+                )
+            }
+        }
+
         Box(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.background)) {
             when (destination) {
                 LibraryDestination.HOME -> HomeScreen(
@@ -3579,10 +4016,12 @@ private fun FortressLibrary(
                     movieWatchlistIds = movieWatchlistIds,
                     progressEntries = progressEntries,
                     hideAdultContent = hideAdultContent,
+                    maximumAge = maximumAge,
+                    blockUnrated = blockUnrated,
                     onContinueWatching = { entry ->
                         vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
                     },
-                    onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
+                    onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleMovieWatchlist = onToggleMovieWatchlist,
                     onToggleMovieWatched = { sourceId, movie ->
                         val key = movie.libraryId(sourceId)
@@ -3689,8 +4128,10 @@ private fun FortressLibrary(
                     onContinueWatching = { entry ->
                         vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
                     },
-                    onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
+                    onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     hideAdultContent = hideAdultContent,
+                    maximumAge = maximumAge,
+                    blockUnrated = blockUnrated,
                     gridState = movieGridState,
                     movieWatchlistIds = movieWatchlistIds,
                     onToggleWatchlist = onToggleMovieWatchlist,
@@ -3721,6 +4162,8 @@ private fun FortressLibrary(
                     profiles = xtreamProfiles,
                     contentFocusRequester = contentFocusRequester,
                     hideAdultContent = hideAdultContent,
+                    maximumAge = maximumAge,
+                    blockUnrated = blockUnrated,
                     gridState = seriesGridState,
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
@@ -3729,7 +4172,7 @@ private fun FortressLibrary(
                     onContinueWatching = { entry ->
                         vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
                     },
-                    onRemoveContinueWatching = { entry -> progressEntries = progressStore.remove(entry.key) },
+                    onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleFollow = onToggleSeriesFollow,
                     onToggleEpisodeWatched = { sourceId, ep ->
                         val key = ep.libraryId(sourceId)
@@ -3767,6 +4210,8 @@ private fun FortressLibrary(
                     watchedItemIds = watchedItemIds,
                     progressEntries = progressEntries,
                     hideAdultContent = hideAdultContent,
+                    maximumAge = maximumAge,
+                    blockUnrated = blockUnrated,
                     onToggleFavorite = onToggleFavorite,
                     onToggleMovieWatchlist = onToggleMovieWatchlist,
                     onToggleMovieWatched = { sourceId, movie ->
@@ -3840,6 +4285,18 @@ private fun FortressLibrary(
                             durationMs = durationMs, updatedAtMs = System.currentTimeMillis()
                         )
                     )
+                    if (activeHouseholdProfile != null && activeHouseholdProfile.id != "restricted_default") {
+                        val cloudSync = com.fortresstv.player.library.CloudLibrarySyncService.get(context)
+                        cloudSync.recordProgressMutation(
+                            profileId = activeHouseholdProfile.id,
+                            sourceId = request.sourceId,
+                            itemKind = if (request.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                            itemId = request.itemId,
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            completed = isCompleted
+                        )
+                    }
                 },
                 onDismiss = { vodPlayback = null }
             )
@@ -3855,6 +4312,8 @@ private fun GlobalLibrarySidebar(
     onDestinationSelected: (LibraryDestination) -> Unit,
     onToggleExpanded: () -> Unit,
     onOpenSettings: () -> Unit,
+    activeHouseholdProfile: HouseholdProfile? = null,
+    onOpenProfiles: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     onFocusChanged: ((Boolean) -> Unit)? = null,
     selectedItemFocusRequester: FocusRequester? = null,
@@ -3977,6 +4436,39 @@ private fun GlobalLibrarySidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider(Modifier.padding(horizontal = 4.dp))
             Spacer(Modifier.height(10.dp))
+            if (activeHouseholdProfile != null && onOpenProfiles != null) {
+                LibraryNavigationItem(
+                    label = activeHouseholdProfile.name,
+                    leadingContent = {
+                        ProfileAvatar(
+                            name = activeHouseholdProfile.name,
+                            isChild = activeHouseholdProfile.isChild,
+                            isRestrictedDefault = activeHouseholdProfile.id == "restricted_default",
+                            size = 28.dp,
+                            fontSize = 14.sp
+                        )
+                    },
+                    expanded = effectiveExpanded,
+                    selected = false,
+                    modifier = Modifier
+                        .focusProperties {
+                            if (contentFocusRequester != null) {
+                                right = contentFocusRequester
+                            }
+                        }
+                        .onPreviewKeyEvent { keyEvent ->
+                            if (isTv && (keyEvent.type == KeyEventType.KeyDown || keyEvent.type == KeyEventType.KeyUp) && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && contentFocusRequester != null) {
+                                if (keyEvent.type == KeyEventType.KeyDown) {
+                                    runCatching { contentFocusRequester.requestFocus() }
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                            false
+                        },
+                    onClick = onOpenProfiles
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             LibraryNavigationItem(
                 label = strings.settings,
                 icon = Icons.Default.Settings,
@@ -4006,7 +4498,8 @@ private fun GlobalLibrarySidebar(
 @Composable
 private fun LibraryNavigationItem(
     label: String,
-    icon: ImageVector,
+    icon: ImageVector? = null,
+    leadingContent: (@Composable () -> Unit)? = null,
     expanded: Boolean,
     selected: Boolean,
     testTag: String? = null,
@@ -4057,7 +4550,11 @@ private fun LibraryNavigationItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
         ) {
-            Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
+            if (leadingContent != null) {
+                leadingContent()
+            } else if (icon != null) {
+                Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
+            }
             if (expanded) {
                 Spacer(Modifier.width(12.dp))
                 Text(
@@ -4391,6 +4888,8 @@ private fun XtreamMoviesScreen(
     onContinueWatching: (VodProgressEntry) -> Unit,
     onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     hideAdultContent: Boolean = false,
+    maximumAge: Int? = null,
+    blockUnrated: Boolean = false,
     gridState: LazyGridState,
     movieWatchlistIds: Set<String>,
     onToggleWatchlist: (String, XtreamMovie) -> Unit,
@@ -4419,7 +4918,7 @@ private fun XtreamMoviesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, sortOption) {
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption) {
         isCatalogLoading = true
         visibleMovies = withContext(Dispatchers.Default) {
             val filtered = catalogs.flatMap { catalog ->
@@ -4429,7 +4928,10 @@ private fun XtreamMoviesScreen(
                         selectedCategory == null ||
                             (catalog.sourceId == selectedCategory?.sourceId && it.categoryId == selectedCategory?.category?.id)
                     }
-                    .filter { !hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]) }
+                    .filter {
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                            ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                    }
                     .filter { appliedQuery.isBlank() || it.name.contains(appliedQuery, ignoreCase = true) }
                     .map { CatalogMovie(catalog, it) }
                     .toList()
@@ -4518,6 +5020,8 @@ private fun XtreamSeriesScreen(
     profiles: List<PlaylistProfile>,
     contentFocusRequester: FocusRequester,
     hideAdultContent: Boolean = false,
+    maximumAge: Int? = null,
+    blockUnrated: Boolean = false,
     gridState: LazyGridState,
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
@@ -4550,7 +5054,7 @@ private fun XtreamSeriesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, sortOption) {
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption) {
         isCatalogLoading = true
         visibleSeries = withContext(Dispatchers.Default) {
             val filtered = catalogs.flatMap { catalog ->
@@ -4560,7 +5064,10 @@ private fun XtreamSeriesScreen(
                         selectedCategory == null ||
                             (catalog.sourceId == selectedCategory?.sourceId && it.categoryId == selectedCategory?.category?.id)
                     }
-                    .filter { !hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]) }
+                    .filter {
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                            ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                    }
                     .filter { appliedQuery.isBlank() || it.name.contains(appliedQuery, ignoreCase = true) }
                     .map { CatalogSeries(catalog, it) }
                     .toList()
@@ -8613,6 +9120,8 @@ private fun HomeScreen(
     movieWatchlistIds: Set<String>,
     progressEntries: List<VodProgressEntry>,
     hideAdultContent: Boolean,
+    maximumAge: Int? = null,
+    blockUnrated: Boolean = false,
     onContinueWatching: (VodProgressEntry) -> Unit,
     onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
@@ -8654,12 +9163,13 @@ private fun HomeScreen(
         recentChannelIds.mapNotNull { id -> channels.firstOrNull { it.libraryId() == id } }
     }
 
-    val followedSeries = remember(catalogs, followedSeriesIds, hideAdultContent) {
+    val followedSeries = remember(catalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
         catalogs.flatMap { catalog ->
             val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
             catalog.series.filter {
                 it.libraryId(catalog.sourceId) in followedSeriesIds &&
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                    ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
             }.map { CatalogSeries(catalog, it) }
         }
     }
@@ -8676,7 +9186,7 @@ private fun HomeScreen(
     val searchTrimmed = searchQuery.trim()
 
     var searchResults by remember { mutableStateOf(HomeSearchResults()) }
-    LaunchedEffect(channels, catalogs, searchTrimmed, hideAdultContent) {
+    LaunchedEffect(channels, catalogs, searchTrimmed, hideAdultContent, maximumAge, blockUnrated) {
         if (!isSearching) {
             searchResults = HomeSearchResults()
             return@LaunchedEffect
@@ -8689,14 +9199,16 @@ private fun HomeScreen(
                 val categoryNames = catalog.movieCategories.associate { it.id to it.name }
                 catalog.movies.asSequence().filter {
                     it.name.contains(searchTrimmed, ignoreCase = true) &&
-                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
                 }.map { CatalogMovie(catalog, it) }
             }.take(25).toList()
             val matchingSeries = catalogs.asSequence().flatMap { catalog ->
                 val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
                 catalog.series.asSequence().filter {
                     it.name.contains(searchTrimmed, ignoreCase = true) &&
-                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
                 }.map { CatalogSeries(catalog, it) }
             }.take(25).toList()
             HomeSearchResults(matchingChannels, matchingMovies, matchingSeries)
@@ -9290,6 +9802,8 @@ private fun FavoriteLibraryScreen(
     watchedItemIds: Set<String>,
     progressEntries: List<VodProgressEntry>,
     hideAdultContent: Boolean,
+    maximumAge: Int? = null,
+    blockUnrated: Boolean = false,
     onToggleFavorite: (PlaylistChannel) -> Unit,
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
     onToggleMovieWatched: (String, XtreamMovie) -> Unit,
@@ -9312,21 +9826,23 @@ private fun FavoriteLibraryScreen(
     }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var selectedSeries by remember { mutableStateOf<CatalogSeries?>(null) }
-    val movies = remember(catalogs, movieWatchlistIds, hideAdultContent) {
+    val movies = remember(catalogs, movieWatchlistIds, hideAdultContent, maximumAge, blockUnrated) {
         catalogs.flatMap { catalog ->
             val categoryNames = catalog.movieCategories.associate { it.id to it.name }
             catalog.movies.filter {
                 it.libraryId(catalog.sourceId) in movieWatchlistIds &&
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                    ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
             }.map { CatalogMovie(catalog, it) }
         }
     }
-    val series = remember(catalogs, followedSeriesIds, hideAdultContent) {
+    val series = remember(catalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
         catalogs.flatMap { catalog ->
             val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
             catalog.series.filter {
                 it.libraryId(catalog.sourceId) in followedSeriesIds &&
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId]))
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                    ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
             }.map { CatalogSeries(catalog, it) }
         }
     }

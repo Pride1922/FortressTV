@@ -1,6 +1,7 @@
 package com.fortresstv.player.library
 
 import android.content.Context
+import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -25,13 +26,45 @@ data class VodProgressEntry(
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 }
 
-class VodProgressStore(context: Context) {
-    private val preferences = context.getSharedPreferences("fortress_vod_progress", Context.MODE_PRIVATE)
+class VodProgressStore internal constructor(
+    private val prefsProvider: (String) -> SharedPreferences,
+    initialNamespace: String = "local"
+) {
+    constructor(context: Context, initialNamespace: String = "local") : this(
+        prefsProvider = { ns ->
+            if (ns == "local" || ns == "default") {
+                context.getSharedPreferences("fortress_vod_progress", Context.MODE_PRIVATE)
+            } else {
+                context.getSharedPreferences("fortress_vod_progress_$ns", Context.MODE_PRIVATE)
+            }
+        },
+        initialNamespace = initialNamespace
+    )
+
+    private var namespace = sanitize(initialNamespace)
+    private var preferences: SharedPreferences = prefsProvider(namespace)
+
+    private fun sanitize(raw: String): String = raw.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+
+    fun switchNamespace(newNamespace: String) {
+        namespace = sanitize(newNamespace)
+        preferences = prefsProvider(namespace)
+    }
 
     fun entries(): List<VodProgressEntry> = decode(preferences.getString(KEY_ENTRIES, null))
 
+    fun findProgress(kind: VodProgressKind, sourceId: String, rawItemId: String): VodProgressEntry? {
+        val hash = CloudIdentityHasher.hashItemId(rawItemId)
+        return entries().firstOrNull {
+            it.kind == kind && it.sourceId == sourceId && (it.itemId == rawItemId || it.itemId == hash)
+        }
+    }
+
     fun save(entry: VodProgressEntry): List<VodProgressEntry> {
-        val updated = entries().filterNot { it.key == entry.key }.toMutableList()
+        val hash = CloudIdentityHasher.hashItemId(entry.itemId)
+        val updated = entries().filterNot {
+            it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (it.itemId == entry.itemId || it.itemId == hash))
+        }.toMutableList()
         if (entry.positionMs >= MINIMUM_PROGRESS_MS &&
             (entry.durationMs <= 0 || entry.positionMs < entry.durationMs * COMPLETED_FRACTION)
         ) {
@@ -43,7 +76,13 @@ class VodProgressStore(context: Context) {
     }
 
     fun remove(key: String): List<VodProgressEntry> {
-        val updated = entries().filterNot { it.key == key }
+        val parts = key.split(":")
+        val hashedKey = if (parts.size >= 3) {
+            "${parts[0]}:${parts[1]}:${CloudIdentityHasher.hashItemId(parts[2])}"
+        } else null
+        val updated = entries().filterNot {
+            it.key == key || (hashedKey != null && it.key == hashedKey)
+        }
         preferences.edit().putString(KEY_ENTRIES, encode(updated)).apply()
         return updated
     }

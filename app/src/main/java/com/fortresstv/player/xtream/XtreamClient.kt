@@ -179,7 +179,8 @@ class XtreamClient(
             containerExtension = item.optString("container_extension").ifBlank { "mp4" },
             rating = item.nullableString("rating"),
             year = item.nullableString("year"),
-            plot = item.nullableString("plot")
+            plot = item.nullableString("plot"),
+            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating")
         )
     }
 
@@ -222,7 +223,8 @@ class XtreamClient(
             coverUrl = item.nullableString("cover"),
             rating = item.nullableString("rating"),
             year = item.nullableString("releaseDate") ?: item.nullableString("year"),
-            plot = item.nullableString("plot")
+            plot = item.nullableString("plot"),
+            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating")
         )
     }
 
