@@ -17,6 +17,7 @@ The primary target is an Android tablet, with Android TV and D-pad support consi
 - Stable public APK filename: `fortresstv.apk`
 - OTA metadata filename: `version.json`
 - Release command: `scripts\New-FortressTvRelease.ps1`
+- GitHub Actions build alternative: see `GITHUB_ACTIONS.md`. The manual signed-build workflow stages a release bundle; it does not publish to Nextcloud or change the live update feed.
 
 Never rename the published APK. Nextcloud must overwrite `fortresstv.apk` so the established share URL remains valid.
 

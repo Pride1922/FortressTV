@@ -1,0 +1,87 @@
+name: Build signed release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: Release notes for this version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0' 'platform-tools'
+      - name: Run checks before loading the signing key
+        run: bash ./gradlew --no-daemon --max-workers=2 :app:compileDebugKotlin :app:testDebugUnitTest :app:lintDebug
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          names = ('ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD',
+                   'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD')
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Missing GitHub secrets: ' + ', '.join(missing))
+          key = Path(os.environ['RUNNER_TEMP']) / 'fortresstv-release.jks'
+          key.write_bytes(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+          key.chmod(0o600)
+          values = {
+              'storeFile': str(key),
+              'storePassword': os.environ['ANDROID_KEYSTORE_PASSWORD'],
+              'keyAlias': os.environ['ANDROID_KEY_ALIAS'],
+              'keyPassword': os.environ['ANDROID_KEY_PASSWORD'],
+          }
+          def escape(value):
+              data = value.encode('utf-16-be')
+              return ''.join('\\u' + data[i:i+2].hex() for i in range(0, len(data), 2))
+          properties = Path('keystore.properties')
+          properties.write_text(''.join(k + '=' + escape(v) + '\n' for k, v in values.items()), encoding='ascii')
+          properties.chmod(0o600)
+          PY
+      - name: Build and verify signed APK
+        run: |
+          bash ./gradlew --no-daemon --max-workers=2 :app:assembleRelease
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+      - name: Prepare Nextcloud release bundle
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          APK_DOWNLOAD_URL: ${{ vars.FORTRESSTV_APK_DOWNLOAD_URL }}
+        run: python3 scripts/prepare-release-bundle.py --apk app/build/outputs/apk/release/app-release.apk --output work/release-bundle --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt"
+      - name: Remove signing material
+        if: always()
+        run: rm -f keystore.properties "$RUNNER_TEMP/fortresstv-release.jks"
+      - name: Save release bundle for download
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: FortressTV-release-${{ github.run_number }}
+          path: work/release-bundle/
+          if-no-files-found: error
+          retention-days: 30
