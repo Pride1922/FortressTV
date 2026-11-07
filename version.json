@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC6",
-    "versionCode":  40,
-    "notes":  "FortressTV 2.0.0-RC6\n\n- Mask OpenSubtitles API key by default with show/hide password toggle\n- Fix cross-device series, movies, and channels favorites and watchlist matching\n- Remove parental PIN gate requirement on adult profile startup sessions for seamless cloud sync\n- Reconnect and map cloud hashed IDs to local catalog items on sync pull",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC6/fortresstv.apk",
-    "sha256":  "28270FD0975C2175B2199A1CD0D5E5A3AF450AEE3C7650E0E78FFF6A1519D27E"
+    "version":  "2.0.0-RC7",
+    "versionCode":  41,
+    "notes":  "FortressTV 2.0.0-RC7\n\n- Fix cross-device library favorites synchronization\n- Fix Continue Watching and Recently Watched synchronization and reactive updates on the Home page\n- Automatic profile session token retrieval and persistence on startup and background sync\n- Cross-device VOD progress title, poster, and series/episode resolution\n- Bi-directional merging of existing local library items into account profile namespace\n- Source ID UUID normalization to prevent PostgreSQL type mismatch errors",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC7/fortresstv.apk",
+    "sha256":  "85289A3319F4CF5171BB2206F49CA0EAB30E6FCAB0317DCA2F77AD039918C5AC"
 }
