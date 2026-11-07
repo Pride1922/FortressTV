@@ -8172,7 +8172,13 @@ private fun VodPlayerDialog(
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize()
             ) {
-                Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { controlsVisible = false })
+                        }
+                ) {
                     val configuration = LocalConfiguration.current
                     val isCompact = configuration.screenWidthDp < 600
 
@@ -12696,7 +12702,7 @@ private fun VideoSurface(
                         isFocusable = false
                         isFocusableInTouchMode = false
                         descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                    } else if (fullscreen) {
+                    } else if (!fullscreen) {
                         setOnClickListener { onSurfaceClick() }
                     }
                     setControllerVisibilityListener(
@@ -12753,15 +12759,15 @@ private fun VideoSurface(
                     it.isFocusable = false
                     it.isFocusableInTouchMode = false
                     it.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                } else if (it is GesturePlayerView) {
+                    it.onGestureLevelChanged = { gestureLevel = it }
+                    it.onSingleTap = { onSurfaceClick() }
+                    it.onCenterSwipeUp = onCenterSwipeUp
+                    it.onCenterSwipeDown = onCenterSwipeDown
+                    it.onEdgeSwipeRight = onEdgeSwipeRight
+                    it.onHorizontalSeek = onHorizontalSeek
+                    it.setOnClickListener(null)
                 } else {
-                    (it as? GesturePlayerView)?.apply {
-                        this.onGestureLevelChanged = { gestureLevel = it }
-                        this.onSingleTap = { onSurfaceClick() }
-                        this.onCenterSwipeUp = onCenterSwipeUp
-                        this.onCenterSwipeDown = onCenterSwipeDown
-                        this.onEdgeSwipeRight = onEdgeSwipeRight
-                        this.onHorizontalSeek = onHorizontalSeek
-                    }
                     it.setOnClickListener { onSurfaceClick() }
                 }
             },
@@ -13296,7 +13302,13 @@ private fun FullscreenPlayer(
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize()
             ) {
-                Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { controlsVisible = false })
+                        }
+                ) {
                     // TOP BAR
                     val configuration = LocalConfiguration.current
                     val isCompact = configuration.screenWidthDp < 600

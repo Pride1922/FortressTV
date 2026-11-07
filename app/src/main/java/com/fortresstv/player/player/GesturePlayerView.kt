@@ -41,6 +41,7 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var downX = 0f
     private var downY = 0f
+    private var downTime = 0L
     private var initialLevel = 0f
     private var dragAction = DragAction.NONE
     private var swipeTriggered = false
@@ -51,44 +52,69 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
                 downY = event.y
+                downTime = event.eventTime
                 dragAction = DragAction.NONE
                 swipeTriggered = false
+                parent?.requestDisallowInterceptTouchEvent(false)
             }
 
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.x - downX
                 val dy = downY - event.y // Positive = moving upwards, Negative = moving downwards
+                val absDy = abs(dy)
+                val absDx = abs(dx)
+
+                val screenWidth = width.toFloat().coerceAtLeast(1f)
+                val fractionX = downX / screenWidth
+                val sideDragSlop = (touchSlop * 2f).coerceAtLeast(30f)
+                val centerSwipeSlop = (touchSlop * 3.5f).coerceAtLeast(80f)
+                val edgeSwipeSlop = (touchSlop * 3f).coerceAtLeast(60f)
+                val seekSlop = touchSlop * 2f
 
                 if (dragAction == DragAction.NONE) {
-                    val absDy = abs(dy)
-                    val absDx = abs(dx)
-                    if (absDy > touchSlop && absDy > absDx) {
-                        val screenWidth = width.toFloat().coerceAtLeast(1f)
-                        val fractionX = downX / screenWidth
-                        when {
-                            fractionX < 0.32f -> {
+                    when {
+                        // Left 32%: Brightness
+                        fractionX < 0.32f -> {
+                            if (absDy > sideDragSlop && absDy > absDx) {
                                 dragAction = DragAction.BRIGHTNESS
                                 initialLevel = currentBrightness()
                                 parent?.requestDisallowInterceptTouchEvent(true)
-                            }
-                            fractionX > 0.68f -> {
-                                dragAction = DragAction.VOLUME
-                                initialLevel = currentVolume()
+                            } else if (downX < screenWidth * 0.15f && dx > edgeSwipeSlop && absDx > absDy) {
+                                dragAction = DragAction.EDGE_SWIPE_RIGHT
+                                swipeTriggered = true
+                                onEdgeSwipeRight?.invoke()
                                 parent?.requestDisallowInterceptTouchEvent(true)
-                            }
-                            else -> {
-                                dragAction = DragAction.CENTER_VERTICAL
+                            } else if (onHorizontalSeek != null && absDx > seekSlop && absDx > absDy) {
+                                dragAction = DragAction.HORIZONTAL_SEEK
                                 parent?.requestDisallowInterceptTouchEvent(true)
                             }
                         }
-                    } else if (absDx > touchSlop && absDx > absDy) {
-                        val screenWidth = width.toFloat().coerceAtLeast(1f)
-                        if (downX < screenWidth * 0.15f && dx > 0) {
-                            dragAction = DragAction.EDGE_SWIPE_RIGHT
-                            parent?.requestDisallowInterceptTouchEvent(true)
-                        } else if (onHorizontalSeek != null) {
-                            dragAction = DragAction.HORIZONTAL_SEEK
-                            parent?.requestDisallowInterceptTouchEvent(true)
+                        // Right 32%: Volume
+                        fractionX > 0.68f -> {
+                            if (absDy > sideDragSlop && absDy > absDx) {
+                                dragAction = DragAction.VOLUME
+                                initialLevel = currentVolume()
+                                parent?.requestDisallowInterceptTouchEvent(true)
+                            } else if (onHorizontalSeek != null && absDx > seekSlop && absDx > absDy) {
+                                dragAction = DragAction.HORIZONTAL_SEEK
+                                parent?.requestDisallowInterceptTouchEvent(true)
+                            }
+                        }
+                        // Center 36%: QuickZap swipe or horizontal seek
+                        else -> {
+                            if (absDy > centerSwipeSlop && absDy > absDx) {
+                                dragAction = DragAction.CENTER_VERTICAL
+                                swipeTriggered = true
+                                parent?.requestDisallowInterceptTouchEvent(true)
+                                if (dy > 0) {
+                                    onCenterSwipeUp?.invoke()
+                                } else {
+                                    onCenterSwipeDown?.invoke()
+                                }
+                            } else if (onHorizontalSeek != null && absDx > seekSlop && absDx > absDy) {
+                                dragAction = DragAction.HORIZONTAL_SEEK
+                                parent?.requestDisallowInterceptTouchEvent(true)
+                            }
                         }
                     }
                 }
@@ -109,22 +135,9 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
                             return true
                         }
                         DragAction.CENTER_VERTICAL -> {
-                            if (!swipeTriggered) {
-                                if (dy > touchSlop * 2) {
-                                    swipeTriggered = true
-                                    onCenterSwipeUp?.invoke()
-                                } else if (dy < -touchSlop * 2) {
-                                    swipeTriggered = true
-                                    onCenterSwipeDown?.invoke()
-                                }
-                            }
                             return true
                         }
                         DragAction.EDGE_SWIPE_RIGHT -> {
-                            if (!swipeTriggered && dx > touchSlop * 2) {
-                                swipeTriggered = true
-                                onEdgeSwipeRight?.invoke()
-                            }
                             return true
                         }
                         DragAction.HORIZONTAL_SEEK -> {
@@ -132,7 +145,7 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
                             return true
                         }
                         DragAction.NONE -> {
-                            // Waiting to exceed touchSlop
+                            // Waiting to exceed threshold
                         }
                     }
                 }
@@ -141,21 +154,30 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
             MotionEvent.ACTION_UP -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
                 val wasAction = dragAction
-                val dx = abs(event.x - downX)
-                val dy = abs(event.y - downY)
+                val wasSwipeTriggered = swipeTriggered
+                val totalDx = abs(event.x - downX)
+                val totalDy = abs(event.y - downY)
+                val maxTapDistance = (touchSlop * 3f).coerceAtLeast(60f)
+                val duration = event.eventTime - downTime
+
+                dragAction = DragAction.NONE
+                swipeTriggered = false
 
                 if (wasAction == DragAction.HORIZONTAL_SEEK) {
                     onHorizontalSeek?.invoke(event.x - downX, true)
-                    dragAction = DragAction.NONE
                     return true
                 }
 
-                dragAction = DragAction.NONE
-                if (wasAction == DragAction.NONE && dx <= touchSlop && dy <= touchSlop) {
+                val isTap = !wasSwipeTriggered &&
+                    wasAction != DragAction.EDGE_SWIPE_RIGHT &&
+                    (wasAction == DragAction.NONE || wasAction == DragAction.CENTER_VERTICAL || (duration < 500L && totalDy <= maxTapDistance)) &&
+                    totalDx <= maxTapDistance && totalDy <= maxTapDistance
+
+                if (isTap) {
                     onSingleTap?.invoke()
-                    performClick()
                     return true
                 }
+
                 if (wasAction != DragAction.NONE) {
                     return true
                 }
@@ -179,7 +201,10 @@ class GesturePlayerView(context: Context) : PlayerView(context) {
     }
 
     override fun performClick(): Boolean {
-        super.performClick()
+        val handled = super.performClick()
+        if (!handled) {
+            onSingleTap?.invoke()
+        }
         return true
     }
 
