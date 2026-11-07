@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.BatteryManager
 import android.util.Rational
+import kotlin.math.roundToInt
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
@@ -107,7 +108,11 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.BrightnessLow
 import androidx.compose.material.icons.filled.BrightnessMedium
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
@@ -7624,6 +7629,8 @@ private fun VodPlayerDialog(
     var userManuallySelectedTracks by remember(request.key) { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var selectedTrackTab by remember { mutableIntStateOf(0) }
+    var seekOverlayPositionMs by remember { mutableLongStateOf(-1L) }
+    var seekOverlayDeltaMs by remember { mutableLongStateOf(0L) }
 
     var allEpisodes by remember(request.seriesId) { mutableStateOf<List<VodPlaybackRequest>>(emptyList()) }
     var showEpisodesDrawer by remember { mutableStateOf(false) }
@@ -8112,8 +8119,52 @@ private fun VodPlayerDialog(
                 onToggleControls = { controlsVisible = !controlsVisible },
                 onRetry = { playbackError = null; player.prepare(); player.play() },
                 showTrackSettings = false,
+                onHorizontalSeek = { distanceX, finished ->
+                    if (!finished) {
+                        val deltaMs = ((distanceX / 600f) * 60_000L).toLong()
+                        seekOverlayDeltaMs = deltaMs
+                        seekOverlayPositionMs = (player.currentPosition + deltaMs).coerceIn(0L, player.duration.coerceAtLeast(0L))
+                    } else {
+                        if (seekOverlayPositionMs >= 0L) {
+                            player.seekTo(seekOverlayPositionMs)
+                        }
+                        seekOverlayPositionMs = -1L
+                    }
+                },
                 modifier = Modifier.fillMaxSize()
             )
+
+            AnimatedVisibility(
+                visible = seekOverlayPositionMs >= 0L,
+                enter = fadeIn() + scaleIn(initialScale = 0.9f),
+                exit = fadeOut() + scaleOut(targetScale = 0.9f),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (seekOverlayDeltaMs >= 0) Icons.Default.FastForward else Icons.Default.FastRewind,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "${if (seekOverlayDeltaMs >= 0) "+" else ""}${seekOverlayDeltaMs / 1000}s (${formatPlaybackTime(seekOverlayPositionMs)} / ${formatPlaybackTime(totalDurationMs)})",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
 
             AnimatedVisibility(
                 visible = controlsVisible && !showEpisodesDrawer,
@@ -12580,6 +12631,10 @@ private fun VideoSurface(
     onRetry: () -> Unit,
     showTrackSettings: Boolean = false,
     isReconnecting: Boolean = false,
+    onCenterSwipeUp: (() -> Unit)? = null,
+    onCenterSwipeDown: (() -> Unit)? = null,
+    onEdgeSwipeRight: (() -> Unit)? = null,
+    onHorizontalSeek: ((distanceX: Float, finished: Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalAppStrings.current
@@ -12615,8 +12670,12 @@ private fun VideoSurface(
             factory = { viewContext ->
                 val view = if (fullscreen) {
                     GesturePlayerView(viewContext).apply {
-                        onGestureLevelChanged = { gestureLevel = it }
-                        onSingleTap = { onSurfaceClick() }
+                        this.onGestureLevelChanged = { gestureLevel = it }
+                        this.onSingleTap = { onSurfaceClick() }
+                        this.onCenterSwipeUp = onCenterSwipeUp
+                        this.onCenterSwipeDown = onCenterSwipeDown
+                        this.onEdgeSwipeRight = onEdgeSwipeRight
+                        this.onHorizontalSeek = onHorizontalSeek
                     }
                 } else {
                     PlayerView(viewContext).apply {
@@ -12695,8 +12754,14 @@ private fun VideoSurface(
                     it.isFocusableInTouchMode = false
                     it.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
                 } else {
-                    (it as? GesturePlayerView)?.onGestureLevelChanged = { gestureLevel = it }
-                    (it as? GesturePlayerView)?.onSingleTap = { onSurfaceClick() }
+                    (it as? GesturePlayerView)?.apply {
+                        this.onGestureLevelChanged = { gestureLevel = it }
+                        this.onSingleTap = { onSurfaceClick() }
+                        this.onCenterSwipeUp = onCenterSwipeUp
+                        this.onCenterSwipeDown = onCenterSwipeDown
+                        this.onEdgeSwipeRight = onEdgeSwipeRight
+                        this.onHorizontalSeek = onHorizontalSeek
+                    }
                     it.setOnClickListener { onSurfaceClick() }
                 }
             },
@@ -12734,42 +12799,64 @@ private fun VideoSurface(
         }
         AnimatedVisibility(
             visible = gestureLevel != null,
-            enter = fadeIn() + scaleIn(initialScale = 0.9f),
-            exit = fadeOut() + scaleOut(targetScale = 0.9f),
+            enter = fadeIn() + scaleIn(initialScale = 0.85f),
+            exit = fadeOut() + scaleOut(targetScale = 0.85f),
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 44.dp)
+                .align(
+                    if (gestureLevel?.control == GestureControl.BRIGHTNESS) Alignment.CenterStart else Alignment.CenterEnd
+                )
+                .padding(horizontal = 36.dp)
         ) {
             val level = gestureLevel
             if (level != null) {
                 Surface(
-                    color = Color.Black.copy(alpha = 0.78f),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                    color = Color.Black.copy(alpha = 0.82f),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                    shadowElevation = 8.dp
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
+                        val icon = if (level.control == GestureControl.BRIGHTNESS) {
+                            when {
+                                level.value < 0.33f -> Icons.Default.BrightnessLow
+                                level.value < 0.66f -> Icons.Default.BrightnessMedium
+                                else -> Icons.Default.BrightnessHigh
+                            }
+                        } else {
+                            when {
+                                level.value <= 0.001f -> Icons.AutoMirrored.Filled.VolumeMute
+                                level.value < 0.5f -> Icons.AutoMirrored.Filled.VolumeDown
+                                else -> Icons.AutoMirrored.Filled.VolumeUp
+                            }
+                        }
                         Icon(
-                            if (level.control == GestureControl.BRIGHTNESS) Icons.Default.BrightnessMedium else Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = null,
+                            icon,
+                            contentDescription = if (level.control == GestureControl.BRIGHTNESS) strings.brightness else strings.volume,
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(28.dp)
                         )
-                        Spacer(Modifier.width(10.dp))
-                        LinearProgressIndicator(
-                            progress = { level.value.coerceIn(0f, 1f) },
+                        Box(
                             modifier = Modifier
-                                .width(100.dp)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp)),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = Color.White.copy(alpha = 0.2f)
-                        )
-                        Spacer(Modifier.width(12.dp))
+                                .width(8.dp)
+                                .height(120.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.White.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.BottomCenter
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(level.value.coerceIn(0f, 1f))
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
                         Text(
-                            "${(level.value * 100).toInt()}%",
+                            "${(level.value * 100).roundToInt()}%",
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
@@ -13145,28 +13232,6 @@ private fun FullscreenPlayer(
                         } else false
                     }
                 }
-                .then(
-                    if (!isTv) {
-                        Modifier
-                            .pointerInput(Unit) {
-                                detectHorizontalDragGestures { change, dragAmount ->
-                                    if (change.position.x < 160f && dragAmount > 18f && !showChannels && !locked && !inPictureInPicture) {
-                                        showChannels = true
-                                    }
-                                }
-                            }
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures { _, dragAmount ->
-                                    if (dragAmount < -20f && !showQuickZap && !showChannels && !showGuide && !locked && !inPictureInPicture) {
-                                        showQuickZap = true
-                                        controlsVisible = false
-                                    } else if (dragAmount > 20f && showQuickZap) {
-                                        showQuickZap = false
-                                    }
-                                }
-                            }
-                    } else Modifier
-                )
         ) {
             VideoSurface(
                 player = player,
@@ -13178,6 +13243,22 @@ private fun FullscreenPlayer(
                 onToggleControls = { controlsVisible = !controlsVisible },
                 onRetry = onRetry,
                 isReconnecting = isReconnecting,
+                onCenterSwipeUp = {
+                    if (!showQuickZap && !showChannels && !showGuide && !locked && !inPictureInPicture) {
+                        showQuickZap = true
+                        controlsVisible = false
+                    }
+                },
+                onCenterSwipeDown = {
+                    if (showQuickZap) {
+                        showQuickZap = false
+                    }
+                },
+                onEdgeSwipeRight = {
+                    if (!showChannels && !locked && !inPictureInPicture) {
+                        showChannels = true
+                    }
+                },
                 modifier = Modifier.fillMaxSize()
             )
 
