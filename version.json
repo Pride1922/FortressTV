@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC4",
-    "versionCode":  38,
-    "notes":  "FortressTV 2.0.0-RC4\n\n- Frictionless PIN and parental control: active profile resumes automatically without PIN on launch\n- Single unified loading screen with user greeting and playlist status\n- Seamless profile switching\n- Removed Agregado terminology across pt-PT UI\n- Fixed crash in Settings tab\n- Automatic cloud backup and restore of OpenSubtitles account and API key",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC4/fortresstv.apk",
-    "sha256":  "E65B38F60AFCC111A9CAF5511A957C756B503CD8C83EE41638242E7198624A39"
+    "version":  "2.0.0-RC5",
+    "versionCode":  39,
+    "notes":  "FortressTV 2.0.0-RC5\n\n- OpenSubtitles cloud sync and cross-device restoration fixes\n- Phone-optimized OpenSubtitles settings layout with full-width fields\n- Automatic sync on settings dismiss and startup",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC5/fortresstv.apk",
+    "sha256":  "2F07765497C63B4488AD483660972BD80E26980317D12338D1D292C94F29D588"
 }
