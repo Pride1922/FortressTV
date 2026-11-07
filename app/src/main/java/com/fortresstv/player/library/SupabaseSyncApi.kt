@@ -47,14 +47,33 @@ data class CloudProfilePreferences(
 )
 
 object CloudIdentityHasher {
+    private val HEX_CHARS = "0123456789abcdef".toCharArray()
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>(2048)
+
     /**
      * Preserves exact raw source item identity without extra prefixes.
      * Raw input is UTF-8 encoded and hashed with SHA-256 to a 64-character lowercase hex string.
+     * Uses a fast hex converter and an in-memory cache to eliminate repetitive allocations.
      */
     fun hashItemId(rawSourceItemId: String): String {
+        val trimmed = rawSourceItemId.trim()
+        val cached = cache[trimmed]
+        if (cached != null) return cached
+
         val digest = MessageDigest.getInstance("SHA-256")
-        val bytes = digest.digest(rawSourceItemId.trim().toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }
+        val bytes = digest.digest(trimmed.toByteArray(Charsets.UTF_8))
+        val chars = CharArray(bytes.size * 2)
+        var i = 0
+        for (b in bytes) {
+            val v = b.toInt() and 0xFF
+            chars[i++] = HEX_CHARS[v ushr 4]
+            chars[i++] = HEX_CHARS[v and 0x0F]
+        }
+        val result = String(chars)
+        if (cache.size < 30000) {
+            cache[trimmed] = result
+        }
+        return result
     }
 }
 

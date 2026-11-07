@@ -68,7 +68,9 @@ data class XtreamEpisode(
     val episodeNumber: Int,
     val containerExtension: String,
     val posterUrl: String?,
-    val plot: String?
+    val plot: String?,
+    val durationSecs: Int? = null,
+    val rating: String? = null
 )
 
 data class XtreamCatalog(

@@ -43,6 +43,8 @@ interface Strings {
     val homeChannelsCategory: String
     val homeMoviesCategory: String
     val homeSeriesCategory: String
+    val homeFeaturedMovies: String
+    val homeFeaturedSeries: String
     val homeNothingFound: String
     val homeStartupScreen: String
     val homeStartupScreenHome: String
@@ -90,6 +92,7 @@ interface Strings {
     val ageRating: String
     val noEpisodesAvailable: String
     fun seasonLabel(season: Int): String
+    fun seasonsCount(count: Int): String
     fun episodeLabel(season: Int, episode: Int): String
     val markWatched: String
     val markUnwatched: String
@@ -478,6 +481,8 @@ object EnglishStrings : Strings {
     override val homeChannelsCategory = "Channels"
     override val homeMoviesCategory = "Movies"
     override val homeSeriesCategory = "Series"
+    override val homeFeaturedMovies = "Recently Added Movies"
+    override val homeFeaturedSeries = "Featured Series"
     override val homeNothingFound = "No results found"
     override val homeStartupScreen = "Startup Screen"
     override val homeStartupScreenHome = "Home"
@@ -525,6 +530,7 @@ object EnglishStrings : Strings {
     override val ageRating = "Age rating"
     override val noEpisodesAvailable = "No episodes are available for this Series."
     override fun seasonLabel(season: Int) = "Season $season"
+    override fun seasonsCount(count: Int) = if (count == 1) "1 Season" else "$count Seasons"
     override fun episodeLabel(season: Int, episode: Int) = "S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
     override val markWatched = "Mark as watched"
     override val markUnwatched = "Mark as unwatched"
@@ -916,6 +922,8 @@ object PortugueseStrings : Strings {
     override val homeChannelsCategory = "Canais"
     override val homeMoviesCategory = "Filmes"
     override val homeSeriesCategory = "Séries"
+    override val homeFeaturedMovies = "Filmes adicionados recentemente"
+    override val homeFeaturedSeries = "Séries em destaque"
     override val homeNothingFound = "Nenhum resultado encontrado"
     override val homeStartupScreen = "Ecrã inicial"
     override val homeStartupScreenHome = "Início"
@@ -963,6 +971,7 @@ object PortugueseStrings : Strings {
     override val ageRating = "Classificação etária"
     override val noEpisodesAvailable = "Não existem episódios disponíveis para esta Série."
     override fun seasonLabel(season: Int) = "Temporada $season"
+    override fun seasonsCount(count: Int) = if (count == 1) "1 Temporada" else "$count Temporadas"
     override fun episodeLabel(season: Int, episode: Int) = "T${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')}"
     override val markWatched = "Marcar como visto"
     override val markUnwatched = "Marcar como não visto"

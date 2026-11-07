@@ -57,25 +57,21 @@ class UserLibraryStore internal constructor(
     }
 
     fun isChannelFavorite(channel: PlaylistChannel, favorites: Set<String> = favoriteChannelIds()): Boolean {
+        if (favorites.isEmpty()) return false
         val id = channel.libraryId()
         if (id != null && favorites.contains(id)) return true
-        if (channel.sourceId.isNotBlank() && channel.sourceItemId.isNotBlank()) {
-            val hashedKey = "channel:${channel.sourceId}:${CloudIdentityHasher.hashItemId(channel.sourceItemId)}"
-            if (favorites.contains(hashedKey)) return true
-        }
-        val hashOnly = CloudIdentityHasher.hashItemId(channel.sourceItemId)
-        return favorites.any { it.endsWith(":$hashOnly") || it.endsWith(":${channel.sourceItemId}") }
+        if (channel.sourceItemId.isBlank()) return false
+        return FastIdMatcher(favorites).matches(id, channel.sourceItemId)
     }
 
     fun movieWatchlistIds(): Set<String> =
         preferences.getStringSet(KEY_MOVIE_WATCHLIST, emptySet()).orEmpty().toSet()
 
     fun isMovieWatchlisted(sourceId: String, movie: XtreamMovie, watchlist: Set<String> = movieWatchlistIds()): Boolean {
-        if (watchlist.contains(movie.libraryId(sourceId))) return true
-        val hashedKey = "movie:$sourceId:${CloudIdentityHasher.hashItemId(movie.id.toString())}"
-        if (watchlist.contains(hashedKey)) return true
-        val hashOnly = CloudIdentityHasher.hashItemId(movie.id.toString())
-        return watchlist.any { it.endsWith(":$hashOnly") || it.endsWith(":${movie.id}") }
+        if (watchlist.isEmpty()) return false
+        val id = movie.libraryId(sourceId)
+        if (watchlist.contains(id)) return true
+        return FastIdMatcher(watchlist).matches(id, movie.id.toString())
     }
 
     fun setMovieWatchlisted(sourceId: String, movie: XtreamMovie, watchlisted: Boolean): Set<String> {
@@ -97,11 +93,10 @@ class UserLibraryStore internal constructor(
         preferences.getStringSet(KEY_FOLLOWED_SERIES, emptySet()).orEmpty().toSet()
 
     fun isSeriesFollowed(sourceId: String, series: XtreamSeries, followed: Set<String> = followedSeriesIds()): Boolean {
-        if (followed.contains(series.libraryId(sourceId))) return true
-        val hashedKey = "series:$sourceId:${CloudIdentityHasher.hashItemId(series.id.toString())}"
-        if (followed.contains(hashedKey)) return true
-        val hashOnly = CloudIdentityHasher.hashItemId(series.id.toString())
-        return followed.any { it.endsWith(":$hashOnly") || it.endsWith(":${series.id}") }
+        if (followed.isEmpty()) return false
+        val id = series.libraryId(sourceId)
+        if (followed.contains(id)) return true
+        return FastIdMatcher(followed).matches(id, series.id.toString())
     }
 
     fun setSeriesFollowed(sourceId: String, series: XtreamSeries, followed: Boolean): Set<String> {
@@ -250,5 +245,25 @@ class UserLibraryStore internal constructor(
         fun XtreamSeries.libraryId(sourceId: String): String = "series:$sourceId:$id"
 
         fun com.fortresstv.player.xtream.XtreamEpisode.libraryId(sourceId: String): String = "episode:$sourceId:$id"
+    }
+}
+
+/**
+ * High-performance ID matcher that avoids computing SHA-256 in linear scans.
+ * Pre-indexes suffixes and checks O(1) hash sets first.
+ */
+class FastIdMatcher(private val idSet: Set<String>) {
+    private val suffixIds: Set<String> = idSet.map { it.substringAfterLast(':') }.toSet()
+    private val hasSha256: Boolean = suffixIds.any { it.length == 64 }
+
+    fun matches(libraryId: String?, rawItemId: String): Boolean {
+        if (idSet.isEmpty()) return false
+        if (libraryId != null && idSet.contains(libraryId)) return true
+        if (rawItemId.isNotEmpty() && suffixIds.contains(rawItemId)) return true
+        if (hasSha256 && rawItemId.isNotEmpty()) {
+            val hash = CloudIdentityHasher.hashItemId(rawItemId)
+            return suffixIds.contains(hash)
+        }
+        return false
     }
 }

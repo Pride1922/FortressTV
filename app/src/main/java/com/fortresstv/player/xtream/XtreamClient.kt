@@ -293,14 +293,30 @@ class XtreamClient(
                 val info = item.optJSONObject("info")
                 val epId = item.optString("id").ifBlank { item.optString("stream_id") }
                 if (epId.isBlank()) return@mapNotNull null
+                val epPoster = info?.nullableString("movie_image")
+                    ?: info?.nullableString("cover")
+                    ?: info?.nullableString("image")
+                    ?: info?.nullableString("screenshot_uri")
+                    ?: item.nullableString("movie_image")
+                    ?: item.nullableString("cover")
+                val epPlot = info?.nullableString("plot")
+                    ?: info?.nullableString("description")
+                    ?: item.nullableString("plot")
+                val epDuration = info?.optInt("duration_secs", 0)?.takeIf { it > 0 }
+                    ?: info?.optInt("duration", 0)?.takeIf { it > 0 }
+                    ?: item.optInt("duration_secs", 0)?.takeIf { it > 0 }
+                val epRating = info?.nullableString("rating")
+                    ?: info?.nullableString("rating_5based")
                 XtreamEpisode(
                     id = epId,
                     title = item.optString("title").ifBlank { "Episode ${item.optInt("episode_num", index + 1)}" },
                     season = item.optInt("season", season),
                     episodeNumber = item.optInt("episode_num", index + 1),
                     containerExtension = item.optString("container_extension").ifBlank { "mp4" },
-                    posterUrl = info?.nullableString("movie_image"),
-                    plot = info?.nullableString("plot")
+                    posterUrl = epPoster,
+                    plot = epPlot,
+                    durationSecs = epDuration,
+                    rating = epRating
                 )
             }
         }.sortedWith(compareBy<XtreamEpisode> { it.season }.thenBy { it.episodeNumber }).toList()

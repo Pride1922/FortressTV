@@ -316,6 +316,7 @@ import com.fortresstv.player.subtitles.openSubtitlesLanguageQuery
 import com.fortresstv.player.subtitles.shouldAutoSearchOpenSubtitles
 import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
+import com.fortresstv.player.ui.theme.FortressBackgroundBrush
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -526,6 +527,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         transferDeepLink = intent?.dataString
         enableEdgeToEdge()
+        FormFactorDetector.detect(this)
 
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
@@ -539,11 +541,7 @@ class MainActivity : ComponentActivity() {
                     .maxSizePercent(0.05)
                     .build()
             }
-            // A large VOD catalogue can expose dozens of new posters during one fling.
-            // Keep bitmap decoding from competing with Compose for every available core.
-            .bitmapFactoryMaxParallelism(2)
-            // Channel logos are shown in fast-scrolling lazy lists. Crossfading every
-            // newly visible logo adds animation and drawing work to the scroll frame.
+            .bitmapFactoryMaxParallelism(4)
             .crossfade(false)
             .build()
         Coil.setImageLoader(imageLoader)
@@ -555,36 +553,11 @@ class MainActivity : ComponentActivity() {
 
             val isTvDevice = FormFactorDetector.detectFromConfiguration(resources.configuration).isTelevision
 
-            val keyboardDismissNestedScroll = remember(keyboardController, isTvDevice) {
-                object : NestedScrollConnection {
-                    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                        if (!isTvDevice && source == NestedScrollSource.UserInput && (available.x != 0f || available.y != 0f)) {
-                            keyboardController?.hide()
-                        }
-                        return Offset.Zero
-                    }
-                }
-            }
-
             FortressTVTheme {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .semantics { testTagsAsResourceId = true }
-                        .then(if (!isTvDevice) Modifier.nestedScroll(keyboardDismissNestedScroll) else Modifier)
-                        .then(
-                            if (!isTvDevice) {
-                                Modifier.pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            keyboardController?.hide()
-                                            val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                                            imm?.hideSoftInputFromWindow(view.windowToken, 0)
-                                        }
-                                    )
-                                }
-                            } else Modifier
-                        )
                 ) {
                     FortressTVApp(
                         transferDeepLink = transferDeepLink,
@@ -4333,7 +4306,7 @@ private fun FortressLibrary(
     Row(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(FortressBackgroundBrush)
             .systemBarsPadding()
     ) {
         GlobalLibrarySidebar(
@@ -4372,7 +4345,63 @@ private fun FortressLibrary(
             }
         }
 
-        Box(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.background)) {
+        val homeFavoriteChannels = remember(effectivePlaylist.channels, favoriteChannelIds) {
+            if (favoriteChannelIds.isEmpty()) emptyList()
+            else {
+                val matcher = com.fortresstv.player.library.FastIdMatcher(favoriteChannelIds)
+                effectivePlaylist.channels.filter { ch -> matcher.matches(ch.libraryId(), ch.sourceItemId) }
+            }
+        }
+
+        val homeRecentChannels = remember(effectivePlaylist.channels, recentChannelIds) {
+            if (recentChannelIds.isEmpty()) emptyList()
+            else {
+                recentChannelIds.mapNotNull { id ->
+                    val raw = id.substringAfterLast(':')
+                    effectivePlaylist.channels.firstOrNull { ch ->
+                        ch.libraryId() == id || "${ch.sourceId}:${ch.sourceItemId}" == id || ch.sourceItemId == id || ch.sourceItemId == raw
+                    }
+                }
+            }
+        }
+
+        val homeFollowedSeries = remember(xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
+            if (followedSeriesIds.isEmpty()) emptyList()
+            else {
+                val matcher = com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
+                xtreamCatalogs.flatMap { catalog ->
+                    val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+                    catalog.series.filter {
+                        matcher.matches(it.libraryId(catalog.sourceId), it.id.toString()) &&
+                            (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                            ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                    }.map { CatalogSeries(catalog, it) }
+                }
+            }
+        }
+
+        val homeRecentMovies = remember(xtreamCatalogs, hideAdultContent, maximumAge, blockUnrated) {
+            xtreamCatalogs.flatMap { catalog ->
+                val categoryNames = catalog.movieCategories.associate { it.id to it.name }
+                catalog.movies.asReversed().asSequence().filter {
+                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                }.take(25).map { CatalogMovie(catalog, it) }.toList()
+            }.take(25)
+        }
+
+        val homeFeaturedSeries = remember(xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
+            xtreamCatalogs.flatMap { catalog ->
+                val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+                catalog.series.asSequence().filter {
+                    it.libraryId(catalog.sourceId) !in followedSeriesIds &&
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                }.take(25).map { CatalogSeries(catalog, it) }.toList()
+            }.take(25)
+        }
+
+        Box(Modifier.weight(1f).fillMaxHeight()) {
             when (destination) {
                 LibraryDestination.HOME -> HomeScreen(
                     channels = effectivePlaylist.channels,
@@ -4384,8 +4413,11 @@ private fun FortressLibrary(
                     epgTimeShiftHours = epgTimeShiftHours,
                     epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
                     epgMappings = epgMappings,
-                    favoriteChannelIds = favoriteChannelIds,
-                    recentChannelIds = recentChannelIds,
+                    favoriteChannels = homeFavoriteChannels,
+                    recentChannelsList = homeRecentChannels,
+                    followedSeries = homeFollowedSeries,
+                    recentMovies = homeRecentMovies,
+                    featuredSeries = homeFeaturedSeries,
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
                     movieWatchlistIds = movieWatchlistIds,
@@ -4595,7 +4627,7 @@ private fun FortressLibrary(
                     }
                 )
                 LibraryDestination.FAVORITES -> FavoriteLibraryScreen(
-                    channels = effectivePlaylist.channels.filter { userLibrary.isChannelFavorite(it, favoriteChannelIds) },
+                    channels = homeFavoriteChannels,
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
                     userLibrary = userLibrary,
@@ -5348,6 +5380,9 @@ private fun XtreamMoviesScreen(
     LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
+    val fastScrollNames = remember(visibleMovies, sortOption) {
+        if (sortOption == VodSortOption.ALPHABETICAL) visibleMovies.map { it.movie.name } else emptyList()
+    }
     LibraryCatalogScaffold(
         title = strings.navMovies,
         query = query,
@@ -5364,7 +5399,7 @@ private fun XtreamMoviesScreen(
         isContentLoading = isCatalogLoading,
         gridState = gridState,
         gridTestTag = "movies_grid",
-        fastScrollItems = visibleMovies.map { it.movie.name },
+        fastScrollItems = fastScrollNames,
         onFastScrollJump = { targetIndex ->
             gridState.scrollToItem(targetIndex)
         },
@@ -5484,6 +5519,9 @@ private fun XtreamSeriesScreen(
     LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
+    val fastScrollNames = remember(visibleSeries, sortOption) {
+        if (sortOption == VodSortOption.ALPHABETICAL) visibleSeries.map { it.series.name } else emptyList()
+    }
     LibraryCatalogScaffold(
         title = strings.navSeries,
         query = query,
@@ -5500,7 +5538,7 @@ private fun XtreamSeriesScreen(
         isContentLoading = isCatalogLoading,
         gridState = gridState,
         gridTestTag = "series_grid",
-        fastScrollItems = visibleSeries.map { it.series.name },
+        fastScrollItems = fastScrollNames,
         onFastScrollJump = { targetIndex ->
             gridState.scrollToItem(targetIndex)
         },
@@ -5633,7 +5671,7 @@ private fun LibraryCatalogScaffold(
                     }
                 } else Modifier
             ),
-        color = MaterialTheme.colorScheme.background
+        color = Color.Transparent
     ) {
         Row(Modifier.fillMaxSize()) {
             // 1. Collapsible Categories Sidebar Drawer
@@ -6110,8 +6148,8 @@ private fun LibraryCatalogScaffold(
                     }
                 } else {
                     val coroutineScope = rememberCoroutineScope()
-                    val letterIndices = remember(fastScrollItems) {
-                        if (fastScrollItems.size < 20) emptyMap()
+                    val letterIndices = remember(fastScrollItems, sortOption) {
+                        if (sortOption != VodSortOption.ALPHABETICAL || fastScrollItems.size < 20) emptyMap()
                         else {
                             val map = linkedMapOf<Char, Int>()
                             fastScrollItems.forEachIndexed { index, rawName ->
@@ -6292,12 +6330,12 @@ private fun VodPosterCard(
     val posterRequest = remember(posterUrl) {
         posterUrl?.takeIf(String::isNotBlank)?.let { url ->
             ImageRequest.Builder(context)
-                // Cards are 150dp wide. This is sharp enough for tablet grids without
-                // decoding provider artwork at its often multi-megapixel source size.
                 .data(url)
-                .size(360, 540)
+                .size(240, 360)
                 .precision(Precision.INEXACT)
+                .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                 .allowHardware(true)
+                .crossfade(false)
                 .build()
         }
     }
@@ -9515,8 +9553,11 @@ private fun HomeScreen(
     epgTimeShiftHours: Int = 0,
     epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
     epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
-    favoriteChannelIds: Set<String>,
-    recentChannelIds: List<String>,
+    favoriteChannels: List<PlaylistChannel>,
+    recentChannelsList: List<PlaylistChannel>,
+    followedSeries: List<CatalogSeries>,
+    recentMovies: List<CatalogMovie>,
+    featuredSeries: List<CatalogSeries>,
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
     movieWatchlistIds: Set<String>,
@@ -9557,37 +9598,8 @@ private fun HomeScreen(
         }
     }
 
-    val favoriteChannels = remember(channels, favoriteChannelIds) {
-        channels.filter { ch ->
-            val lid = ch.libraryId()
-            (lid != null && lid in favoriteChannelIds) ||
-                favoriteChannelIds.contains("channel:${ch.sourceId}:${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId)}") ||
-                favoriteChannelIds.any { f -> f.endsWith(":${ch.sourceItemId}") || f.endsWith(":${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId)}") }
-        }
-    }
-
-    val recentChannelsList = remember(channels, recentChannelIds) {
-        recentChannelIds.mapNotNull { id ->
-            val rawItemId = id.substringAfterLast(':')
-            channels.firstOrNull { ch ->
-                ch.libraryId() == id ||
-                    (ch.sourceItemId.isNotBlank() && (ch.sourceItemId == rawItemId || com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId) == rawItemId))
-            }
-        }
-    }
-
-    val followedSeries = remember(catalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
-        catalogs.flatMap { catalog ->
-            val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
-            catalog.series.filter {
-                (it.libraryId(catalog.sourceId) in followedSeriesIds || followedSeriesIds.any { f -> f.endsWith(":${it.id}") || f.endsWith(":${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id.toString())}") }) &&
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                    ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-            }.map { CatalogSeries(catalog, it) }
-        }
-    }
-
-    val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty()
+    val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
+    val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty() || recentMovies.isNotEmpty() || featuredSeries.isNotEmpty()
 
     BackHandler(enabled = isTv && isTvSearchActive) {
         isTvSearchActive = false
@@ -9633,7 +9645,7 @@ private fun HomeScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+        color = Color.Transparent
     ) {
         Column(
             Modifier
@@ -9908,25 +9920,24 @@ private fun HomeScreen(
                     }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(22.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(22.dp)
                 ) {
                     if (progressEntries.isNotEmpty()) {
-                        item {
-                            ContinueWatchingRow(
-                                entries = progressEntries,
-                                onClick = onContinueWatching,
-                                onRemove = onRemoveContinueWatching,
-                                firstItemFocusRequester = contentFocusRequester,
-                                sidebarFocusRequester = sidebarFocusRequester
-                            )
-                        }
+                        ContinueWatchingRow(
+                            entries = progressEntries,
+                            onClick = onContinueWatching,
+                            onRemove = onRemoveContinueWatching,
+                            firstItemFocusRequester = contentFocusRequester,
+                            sidebarFocusRequester = sidebarFocusRequester
+                        )
                     }
 
                     if (favoriteChannels.isNotEmpty()) {
-                        item {
+                        Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(22.dp))
                                 Spacer(Modifier.width(8.dp))
@@ -9944,7 +9955,8 @@ private fun HomeScreen(
                                 )
                             }
                             Spacer(Modifier.height(10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            val favRowState = rememberLazyListState()
+                            LazyRow(state = favRowState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 itemsIndexed(favoriteChannels, key = { _, it -> "fav_now:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
                                     val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
                                     val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId) {
@@ -9987,7 +9999,7 @@ private fun HomeScreen(
                                                 }
                                                 false
                                             }
-                                            .tvFocusHighlight(shape = RoundedCornerShape(14.dp), scaleOnFocus = 1.04f)
+                                            .tvFocusHighlight(shape = RoundedCornerShape(14.dp), scaleOnFocus = if (isTv) 1.04f else 1.0f)
                                     ) {
                                         Column(Modifier.fillMaxSize().padding(12.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -10040,7 +10052,7 @@ private fun HomeScreen(
                     }
 
                     if (recentChannelsList.isNotEmpty()) {
-                        item {
+                        Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Replay, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
@@ -10052,7 +10064,8 @@ private fun HomeScreen(
                                 )
                             }
                             Spacer(Modifier.height(10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            val recentRowState = rememberLazyListState()
+                            LazyRow(state = recentRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(recentChannelsList, key = { _, it -> "recent:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
                                     Surface(
                                         onClick = { onWatchChannel(channel) },
@@ -10081,7 +10094,7 @@ private fun HomeScreen(
                                                 }
                                                 false
                                             }
-                                            .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.04f)
+                                            .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.04f else 1.0f)
                                     ) {
                                         Row(
                                             Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -10104,7 +10117,7 @@ private fun HomeScreen(
                     }
 
                     if (followedSeries.isNotEmpty()) {
-                        item {
+                        Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
@@ -10116,7 +10129,8 @@ private fun HomeScreen(
                                 )
                             }
                             Spacer(Modifier.height(10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            val followedRowState = rememberLazyListState()
+                            LazyRow(state = followedRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(followedSeries, key = { _, it -> "home_series:${it.catalog.sourceId}:${it.series.id}" }) { index, entry ->
                                     VodPosterCard(
                                         title = entry.series.name,
@@ -10149,6 +10163,78 @@ private fun HomeScreen(
                             }
                         }
                     }
+
+                    if (recentMovies.isNotEmpty()) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Movie, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.homeFeaturedMovies,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "(${recentMovies.size})",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            val moviesRowState = rememberLazyListState()
+                            LazyRow(state = moviesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                itemsIndexed(recentMovies, key = { _, it -> "home_movie:${it.catalog.sourceId}:${it.movie.id}" }) { index, entry ->
+                                    val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                    VodPosterCard(
+                                        title = entry.movie.name,
+                                        posterUrl = entry.movie.posterUrl,
+                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                        isWatched = libraryId in watchedItemIds,
+                                        progressFraction = progressByKey[libraryId]?.progressFraction,
+                                        onClick = { selectedMovie = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (featuredSeries.isNotEmpty()) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.homeFeaturedSeries,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "(${featuredSeries.size})",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            val seriesRowState = rememberLazyListState()
+                            LazyRow(state = seriesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                itemsIndexed(featuredSeries, key = { _, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}" }) { index, entry ->
+                                    VodPosterCard(
+                                        title = entry.series.name,
+                                        posterUrl = entry.series.coverUrl,
+                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        onClick = { selectedSeries = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(32.dp))
                 }
             }
         }
@@ -10244,23 +10330,31 @@ private fun FavoriteLibraryScreen(
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var selectedSeries by remember { mutableStateOf<CatalogSeries?>(null) }
     val movies = remember(catalogs, movieWatchlistIds, hideAdultContent, maximumAge, blockUnrated) {
-        catalogs.flatMap { catalog ->
-            val categoryNames = catalog.movieCategories.associate { it.id to it.name }
-            catalog.movies.filter {
-                userLibrary.isMovieWatchlisted(catalog.sourceId, it, movieWatchlistIds) &&
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                    ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-            }.map { CatalogMovie(catalog, it) }
+        if (movieWatchlistIds.isEmpty()) emptyList()
+        else {
+            val matcher = com.fortresstv.player.library.FastIdMatcher(movieWatchlistIds)
+            catalogs.flatMap { catalog ->
+                val categoryNames = catalog.movieCategories.associate { it.id to it.name }
+                catalog.movies.filter {
+                    matcher.matches(it.libraryId(catalog.sourceId), it.id.toString()) &&
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                }.map { CatalogMovie(catalog, it) }
+            }
         }
     }
     val series = remember(catalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
-        catalogs.flatMap { catalog ->
-            val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
-            catalog.series.filter {
-                userLibrary.isSeriesFollowed(catalog.sourceId, it, followedSeriesIds) &&
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                    ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-            }.map { CatalogSeries(catalog, it) }
+        if (followedSeriesIds.isEmpty()) emptyList()
+        else {
+            val matcher = com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
+            catalogs.flatMap { catalog ->
+                val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
+                catalog.series.filter {
+                    matcher.matches(it.libraryId(catalog.sourceId), it.id.toString()) &&
+                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
+                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
+                }.map { CatalogSeries(catalog, it) }
+            }
         }
     }
     val selectedSectionIsEmpty = when (section) {
@@ -10277,7 +10371,7 @@ private fun FavoriteLibraryScreen(
     }
     if (channels.isEmpty() && movies.isEmpty() && series.isEmpty()) {
         Box(
-            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(32.dp),
+            Modifier.fillMaxSize().padding(32.dp),
             contentAlignment = Alignment.Center
         ) {
             Surface(
@@ -10295,7 +10389,8 @@ private fun FavoriteLibraryScreen(
             }
         }
     } else {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp)) {
+        val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
+        Column(Modifier.fillMaxSize().padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                     Spacer(Modifier.width(10.dp))
@@ -10385,7 +10480,7 @@ private fun FavoriteLibraryScreen(
                                 posterUrl = entry.movie.posterUrl,
                                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
                                 isWatched = libraryId in watchedItemIds,
-                                progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
+                                progressFraction = progressByKey[libraryId]?.progressFraction,
                                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                                 onClick = { selectedMovie = entry }
                             )
@@ -10649,8 +10744,15 @@ private fun ChannelBrowser(
         allVisibleChannels.groupingBy { it.sourceId }.eachCount()
     }
     val recentChannels = remember(allVisibleChannels, recentChannelIds) {
-        val channelMap = allVisibleChannels.associateBy { it.libraryId() }
-        recentChannelIds.mapNotNull { channelMap[it] }
+        if (recentChannelIds.isEmpty()) emptyList()
+        else {
+            recentChannelIds.mapNotNull { id ->
+                val raw = id.substringAfterLast(':')
+                allVisibleChannels.firstOrNull { ch ->
+                    ch.libraryId() == id || "${ch.sourceId}:${ch.sourceItemId}" == id || ch.sourceItemId == id || ch.sourceItemId == raw
+                }
+            }
+        }
     }
     val selectedFilterLabel = when {
         selectedFilter == allFilter -> strings.allChannels
@@ -10848,7 +10950,7 @@ private fun ChannelBrowser(
                     }
                 } else Modifier
             ),
-        color = MaterialTheme.colorScheme.background
+        color = Color.Transparent
     ) {
         Box(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxSize()) {
@@ -11859,15 +11961,27 @@ private fun ChannelLogo(
     epgChannel: com.fortresstv.player.epg.EpgChannel?,
     modifier: Modifier = Modifier.size(48.dp)
 ) {
+    val context = LocalContext.current
     val logoUrl = remember(channel.logoUrl, epgChannel?.iconUrl) { channel.logoUrl ?: epgChannel?.iconUrl }
+    val logoRequest = remember(logoUrl) {
+        logoUrl?.takeIf(String::isNotBlank)?.let { url ->
+            ImageRequest.Builder(context)
+                .data(url)
+                .size(96, 96)
+                .precision(Precision.INEXACT)
+                .allowHardware(true)
+                .crossfade(false)
+                .build()
+        }
+    }
     var failed by remember(logoUrl) { mutableStateOf(false) }
     Box(
         modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
-        if (logoUrl != null && !failed) {
+        if (logoRequest != null && !failed) {
             AsyncImage(
-                model = logoUrl,
+                model = logoRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 filterQuality = FilterQuality.Low,

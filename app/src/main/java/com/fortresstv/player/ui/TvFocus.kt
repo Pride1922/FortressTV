@@ -32,40 +32,66 @@ fun Modifier.tvFocusHighlight(
     focusedBorderColor: Color? = null,
     scaleOnFocus: Float = 1.02f,
     onFocusChanged: ((Boolean) -> Unit)? = null
-): Modifier = composed {
-    var isFocused by remember { mutableStateOf(false) }
+): Modifier {
+    if (!FormFactorDetector.isTelevisionDevice && onFocusChanged == null) {
+        return this
+    }
+    if (scaleOnFocus <= 1.0f && onFocusChanged == null) {
+        return this
+    }
+    return composed {
+        val isTv = LocalFormFactor.current.isTelevision
+        if (!isTv && onFocusChanged == null) {
+            return@composed this
+        }
 
-    val borderColor = focusedBorderColor ?: MaterialTheme.colorScheme.primary
-    val animatedScale by animateFloatAsState(
-        targetValue = if (isFocused) scaleOnFocus else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "tv_focus_scale"
-    )
+        var isFocused by remember { mutableStateOf(false) }
 
-    this
-        .onFocusChanged { state ->
+        val borderColor = focusedBorderColor ?: MaterialTheme.colorScheme.primary
+        val animatedScale by animateFloatAsState(
+            targetValue = if (isFocused && isTv) scaleOnFocus else 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "tv_focus_scale"
+        )
+
+        val baseModifier = this.onFocusChanged { state ->
             isFocused = state.isFocused
             onFocusChanged?.invoke(state.isFocused)
         }
-        .graphicsLayer {
-            scaleX = animatedScale
-            scaleY = animatedScale
-            if (isFocused && scaleOnFocus > 1f) {
-                shadowElevation = 8f
-                this.shape = shape
-                clip = false
-            }
+
+        if (isTv && scaleOnFocus > 1f) {
+            baseModifier
+                .graphicsLayer {
+                    scaleX = animatedScale
+                    scaleY = animatedScale
+                    if (isFocused) {
+                        shadowElevation = 8f
+                        this.shape = shape
+                        clip = false
+                    }
+                }
+                .border(
+                    BorderStroke(
+                        width = if (isFocused) focusedBorderWidth else 0.dp,
+                        color = if (isFocused) borderColor else Color.Transparent
+                    ),
+                    shape = shape
+                )
+        } else if (isTv) {
+            baseModifier.border(
+                BorderStroke(
+                    width = if (isFocused) focusedBorderWidth else 0.dp,
+                    color = if (isFocused) borderColor else Color.Transparent
+                ),
+                shape = shape
+            )
+        } else {
+            baseModifier
         }
-        .border(
-            BorderStroke(
-                width = if (isFocused) focusedBorderWidth else 0.dp,
-                color = if (isFocused) borderColor else Color.Transparent
-            ),
-            shape = shape
-        )
+    }
 }
 
 /**

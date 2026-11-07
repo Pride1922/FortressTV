@@ -14,9 +14,13 @@ enum class AppFormFactor {
 }
 
 object FormFactorDetector {
+    @Volatile
+    var isTelevisionDevice: Boolean = false
+
     fun detect(context: Context): AppFormFactor {
         val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
         if (uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) {
+            isTelevisionDevice = true
             return AppFormFactor.TELEVISION
         }
         val config = context.resources.configuration
@@ -24,7 +28,9 @@ object FormFactorDetector {
     }
 
     fun detectFromConfiguration(configuration: Configuration): AppFormFactor {
-        return if ((configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION) {
+        val isTv = (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+        isTelevisionDevice = isTv
+        return if (isTv) {
             AppFormFactor.TELEVISION
         } else {
             AppFormFactor.HANDHELD
