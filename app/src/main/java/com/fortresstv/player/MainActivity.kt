@@ -1521,8 +1521,8 @@ private fun FortressTVApp(
 
         // Restore cloud sources for authenticated households
         val cloudSourceService = CloudSourceSyncService.get(context)
-        val accountState = AccountRepository.get(context).getAccountState()
-        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+        val authenticatedUid = currentUserId ?: AccountRepository.get(context).currentUserId()
+        if (authenticatedUid != null) {
             scope.launch(Dispatchers.IO) {
                 val restoredResult = cloudSourceService.restoreSourcesFromCloud(profileRepository.currentUnlockToken())
                 val restored = restoredResult.getOrDefault(emptyList())
@@ -1555,12 +1555,12 @@ private fun FortressTVApp(
                     }
                 }
                 val restoredSubs = cloudSourceService.restoreOpenSubtitlesFromCloud(profileRepository.currentUnlockToken())
-                if (restoredSubs != null) {
+                if (restoredSubs != null && (restoredSubs.apiKey.isNotBlank() || restoredSubs.username.isNotBlank())) {
                     openSubtitlesStore.saveSettings(restoredSubs)
                     withContext(Dispatchers.Main) {
                         openSubtitlesSettings = restoredSubs
                     }
-                } else if (openSubtitlesSettings.apiKey.isNotBlank()) {
+                } else if (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank()) {
                     cloudSourceService.syncOpenSubtitlesToCloud(openSubtitlesSettings, profileRepository.currentUnlockToken())
                 }
             }
@@ -1926,12 +1926,12 @@ private fun FortressTVApp(
                         cloudSourceSyncService.restoreSourcesFromCloud(token)
                         cloudSourceSyncService.syncSourcesToCloud(token)
                         val restoredSubs = cloudSourceSyncService.restoreOpenSubtitlesFromCloud(token)
-                        if (restoredSubs != null) {
+                        if (restoredSubs != null && (restoredSubs.apiKey.isNotBlank() || restoredSubs.username.isNotBlank())) {
                             openSubtitlesStore.saveSettings(restoredSubs)
                             withContext(Dispatchers.Main) {
                                 openSubtitlesSettings = restoredSubs
                             }
-                        } else if (openSubtitlesSettings.apiKey.isNotBlank()) {
+                        } else if (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank()) {
                             cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings, token)
                         }
                     }
@@ -2055,7 +2055,14 @@ private fun FortressTVApp(
                 epgGuide = epgGuide,
                 hiddenCategories = hiddenCategories,
                 loading = loading,
-                onDismiss = { showSettings = false },
+                onDismiss = {
+                    showSettings = false
+                    if (currentUserId != null && (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank())) {
+                        scope.launch(Dispatchers.IO) {
+                            cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings)
+                        }
+                    }
+                },
                 onPlaylistEnabledChanged = { profile, enabled ->
                     if (enabled || playlists.count { it.enabled } > 1) {
                         val updated = profile.copy(enabled = enabled)
@@ -15699,43 +15706,41 @@ private fun GeneralTab(
                     var usernameText by remember(openSubtitlesSettings.username) { mutableStateOf(openSubtitlesSettings.username) }
                     var passwordText by remember(openSubtitlesSettings.password) { mutableStateOf(openSubtitlesSettings.password) }
                     var passwordVisible by remember { mutableStateOf(false) }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = usernameText,
-                            onValueChange = {
-                                usernameText = it
-                                onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(username = it))
-                            },
-                            label = { Text(strings.openSubtitlesUsername) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = passwordText,
-                            onValueChange = {
-                                passwordText = it
-                                onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(password = it))
-                            },
-                            label = { Text(strings.openSubtitlesPassword) },
-                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                    Icon(
-                                        if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = if (passwordVisible) strings.hidePassword else strings.showPassword
-                                    )
-                                }
-                            },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    OutlinedTextField(
+                        value = usernameText,
+                        onValueChange = {
+                            usernameText = it
+                            onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(username = it))
+                        },
+                        label = { Text(strings.openSubtitlesUsername) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = passwordText,
+                        onValueChange = {
+                            passwordText = it
+                            onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(password = it))
+                        },
+                        label = { Text(strings.openSubtitlesPassword) },
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (passwordVisible) strings.hidePassword else strings.showPassword
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     var isTesting by remember { mutableStateOf(false) }
                     var testMessage by remember { mutableStateOf<String?>(null) }
                     val coroutineScope = rememberCoroutineScope()
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedButton(
                             onClick = {
                                 if (apiKeyText.isBlank()) {
@@ -15769,10 +15774,9 @@ private fun GeneralTab(
                         }
 
                         testMessage?.let { msg ->
-                            Spacer(Modifier.width(8.dp))
                             Text(
                                 msg,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 color = if (msg == strings.openSubtitlesConnectionSuccess) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
                             )
                         }
