@@ -414,6 +414,13 @@ class SourceSettingsStore internal constructor(
         return Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
     }
 
+    fun hasSeenCloudOnboardingPrompt(): Boolean =
+        preferences.getBoolean("seen_cloud_onboarding_v2", false)
+
+    fun setSeenCloudOnboardingPrompt(seen: Boolean) {
+        preferences.edit().putBoolean("seen_cloud_onboarding_v2", seen).apply()
+    }
+
     private fun decrypt(value: String): String? = runCatching {
         val payload = Base64.decode(value, Base64.NO_WRAP)
         val iv = payload.copyOfRange(0, IV_SIZE)

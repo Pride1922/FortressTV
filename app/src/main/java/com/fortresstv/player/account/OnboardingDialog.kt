@@ -122,10 +122,10 @@ fun OnboardingDialog(
     }
 
     Dialog(
-        onDismissRequest = {},
+        onDismissRequest = { onDismiss?.invoke() },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            dismissOnBackPress = false,
+            dismissOnBackPress = onDismiss != null,
             dismissOnClickOutside = false
         )
     ) {
@@ -204,6 +204,20 @@ fun OnboardingDialog(
                                         .tvFocusHighlight()
                                 ) {
                                     Text(if (languageTag.startsWith("pt")) "Continuar" else "Continue")
+                                }
+                            }
+
+                            if (onDismiss != null && !busy) {
+                                TextButton(
+                                    onClick = onDismiss,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .tvFocusHighlight()
+                                ) {
+                                    Text(
+                                        text = if (languageTag.startsWith("pt")) "Continuar localmente" else "Continue locally",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }

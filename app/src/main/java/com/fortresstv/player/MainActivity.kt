@@ -748,10 +748,10 @@ private fun FortressTVApp(
         }
     }
 
-    val isFreshInstall = remember {
-        currentUserId == null && settings.getPlaylists().isEmpty()
+    val shouldShowCloudOnboarding = remember {
+        currentUserId == null && !settings.hasSeenCloudOnboardingPrompt()
     }
-    var showOnboardingDialog by rememberSaveable { mutableStateOf(isFreshInstall) }
+    var showOnboardingDialog by rememberSaveable { mutableStateOf(shouldShowCloudOnboarding) }
     var showLocalImportDialog by remember { mutableStateOf(false) }
 
     val pinStatus = remember(currentUserId, householdProfiles, requireProfileSelection) { profileRepository.getPinStatus() }
@@ -1588,9 +1588,13 @@ private fun FortressTVApp(
         Box(Modifier.fillMaxSize()) {
             if (showOnboardingDialog) {
                 com.fortresstv.player.account.OnboardingDialog(
-                    onDismiss = { showOnboardingDialog = false },
+                    onDismiss = {
+                        showOnboardingDialog = false
+                        settings.setSeenCloudOnboardingPrompt(true)
+                    },
                     onComplete = {
                         showOnboardingDialog = false
+                        settings.setSeenCloudOnboardingPrompt(true)
                         val uid = accountRepository.currentUserId()
                         currentUserId = uid
                         requireProfileSelection = true
@@ -1852,6 +1856,10 @@ private fun FortressTVApp(
                     showProfileSelectionDialog = false
                     playbackResetGeneration++
                 },
+                onOpenAccount = {
+                    settingsInitialTab = 4
+                    showSettings = true
+                },
                 onDismiss = { showProfileSelectionDialog = false }
             )
         }
@@ -1859,6 +1867,25 @@ private fun FortressTVApp(
         if (showSettings) {
             SettingsDialog(
                 initialTab = settingsInitialTab,
+                onAccountSignedOut = {
+                    currentUserId = null
+                    playbackResetGeneration++
+                    scope.launch(Dispatchers.IO) {
+                        profileRepository.onAccountChanged(null)
+                    }
+                },
+                onAccountSignedIn = {
+                    val uid = accountRepository.currentUserId()
+                    currentUserId = uid
+                    playbackResetGeneration++
+                    scope.launch(Dispatchers.IO) {
+                        profileRepository.onAccountChanged(uid)
+                        profileRepository.refresh()
+                        val token = profileRepository.currentUnlockToken()
+                        cloudSourceSyncService.restoreSourcesFromCloud(token)
+                        cloudSourceSyncService.syncSourcesToCloud(token)
+                    }
+                },
                 playlists = playlists,
                 activeProfile = activeProfile,
                 appLanguage = appLanguage,
@@ -14737,6 +14764,8 @@ private fun formatLastUpdated(timestamp: Long, strings: Strings): String {
 @Composable
 private fun SettingsDialog(
     initialTab: Int = 0,
+    onAccountSignedOut: () -> Unit = {},
+    onAccountSignedIn: () -> Unit = {},
     playlists: List<PlaylistProfile>,
     activeProfile: PlaylistProfile?,
     appLanguage: AppLanguage,
@@ -14820,6 +14849,7 @@ private fun SettingsDialog(
         Pair(strings.tabPlaylists, Icons.Default.FolderOpen),
         Pair(strings.tabEpg, Icons.Default.DateRange),
         Pair(strings.tabSubtitles, Icons.Default.Subtitles),
+        Pair(strings.tabAccount, Icons.Default.AccountCircle),
         Pair(strings.tabAbout, Icons.Default.Info)
     )
 
@@ -15047,7 +15077,12 @@ private fun SettingsDialog(
                                     onRemoveParentalPin = onRemoveParentalPin,
                                     subtitlesOnly = true
                                 )
-                                4 -> AboutTab()
+                                4 -> AccountTab(
+                                    showHeader = false,
+                                    onSignedOut = onAccountSignedOut,
+                                    onSignedIn = onAccountSignedIn
+                                )
+                                5 -> AboutTab()
                             }
                         }
                     }
@@ -15165,7 +15200,12 @@ private fun SettingsDialog(
                                 onRemoveParentalPin = onRemoveParentalPin,
                                 subtitlesOnly = true
                             )
-                            4 -> AboutTab()
+                            4 -> AccountTab(
+                                showHeader = false,
+                                onSignedOut = onAccountSignedOut,
+                                onSignedIn = onAccountSignedIn
+                            )
+                            5 -> AboutTab()
                         }
                     }
                 }

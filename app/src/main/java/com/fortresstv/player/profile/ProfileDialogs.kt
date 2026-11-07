@@ -70,7 +70,8 @@ import kotlinx.coroutines.launch
 fun ProfileSelectionDialog(
     onProfileSelected: (HouseholdProfile) -> Unit,
     onDismiss: () -> Unit,
-    isMandatory: Boolean = false
+    isMandatory: Boolean = false,
+    onOpenAccount: (() -> Unit)? = null
 ) {
     val repository = ProfileRepository.get(androidx.compose.ui.platform.LocalContext.current)
     val languageTag = LocalAppStrings.current.languageTag
@@ -227,25 +228,49 @@ fun ProfileSelectionDialog(
 
                 Spacer(Modifier.height(24.dp))
 
-                OutlinedButton(
-                    onClick = {
-                        val status = repository.getPinStatus()
-                        if (status.hasPin && !repository.isAdultUnlocked()) {
-                            showPinDialogForManagement = true
-                        } else {
-                            showManagementDialog = true
-                        }
-                    },
-                    shape = RoundedCornerShape(4.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-                    modifier = Modifier.tvFocusHighlight()
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = copy.manageProfiles,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp,
-                        letterSpacing = 1.sp
-                    )
+                    OutlinedButton(
+                        onClick = {
+                            val status = repository.getPinStatus()
+                            if (status.hasPin && !repository.isAdultUnlocked()) {
+                                showPinDialogForManagement = true
+                            } else {
+                                showManagementDialog = true
+                            }
+                        },
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                        modifier = Modifier.tvFocusHighlight()
+                    ) {
+                        Text(
+                            text = copy.manageProfiles,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            letterSpacing = 1.sp
+                        )
+                    }
+
+                    if (!isMandatory && onOpenAccount != null) {
+                        OutlinedButton(
+                            onClick = {
+                                onDismiss()
+                                onOpenAccount()
+                            },
+                            shape = RoundedCornerShape(4.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                            modifier = Modifier.tvFocusHighlight()
+                        ) {
+                            Text(
+                                text = if (languageTag.startsWith("pt")) "Conta Cloud" else "Cloud Account",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
                 }
 
                 if (!isMandatory) {
