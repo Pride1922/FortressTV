@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC2",
-    "versionCode":  36,
-    "notes":  "Add Account tab to settings, cloud account access in profile switcher, and update onboarding prompt",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC2/fortresstv.apk",
-    "sha256":  "9C1EF5B7BD2E0DA92A5C17F56FDEE24B76E566122D039FE4F5190D2AC9883A3A"
+    "version":  "2.0.0-RC3",
+    "versionCode":  37,
+    "notes":  "Configure cloud account access with Supabase client credentials",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC3/fortresstv.apk",
+    "sha256":  "184AD5C54F3BB48BF825B52E0D69C9D980923C6397504BA1B4D2C9A95DEBF203"
 }
