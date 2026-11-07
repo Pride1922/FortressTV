@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC8",
-    "versionCode":  42,
-    "notes":  "Optimize tablet responsiveness, smooth scrolling, and instant tab switching. Fix Home screen scroll stutter and lift discovery data caching to prevent UI thread blocking.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC8/fortresstv.apk",
-    "sha256":  "F526B436AF194550A2306A221DD9DF3C801318BBBCDCD0359776D2857F1D5EF1"
+    "version":  "2.0.0-RC9",
+    "versionCode":  43,
+    "notes":  "Rework fullscreen gestures with 3-zone controls, side HUD overlays, QuickZap swipe, and fix center tap controls toggle",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC9/fortresstv.apk",
+    "sha256":  "17BDF1081141411D5B0289287099FE79A4700680FCA5CEF486DDC4B99C28F49E"
 }
