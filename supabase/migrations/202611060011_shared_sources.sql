@@ -157,6 +157,9 @@ $$;
 grant execute on function public.fortress_delete_household_source(uuid, uuid) to authenticated;
 
 -- 5. fortress_create_profile & fortress_update_profile: avatar_url persistence
+alter table public.household_profiles
+    add column if not exists avatar_url text;
+
 create or replace function public.fortress_create_profile(
     p_name text,
     p_kind text default 'adult',

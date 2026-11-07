@@ -767,7 +767,7 @@ private fun FortressTVApp(
     var showOnboardingDialog by rememberSaveable { mutableStateOf(isFreshInstall) }
     var showLocalImportDialog by remember { mutableStateOf(false) }
 
-    val pinStatus = profileRepository.getPinStatus()
+    val pinStatus = remember(currentUserId, householdProfiles, requireProfileSelection) { profileRepository.getPinStatus() }
     val hasMultipleProfilesOrPin = (currentUserId != null || householdProfiles.size > 1 || pinStatus.hasPin)
     val shouldGateWithProfilePicker = requireProfileSelection && hasMultipleProfilesOrPin
 
@@ -1041,51 +1041,73 @@ private fun FortressTVApp(
         }
     }
 
-    fun reconnectFavouritesAndProgress(sourceId: String, catalog: XtreamCatalog) {
+    suspend fun reconnectFavouritesAndProgress(sourceId: String, catalog: XtreamCatalog) = withContext(Dispatchers.Default) {
         val favs = userLibrary.favoriteChannelIds().toMutableSet()
         val watchlist = userLibrary.movieWatchlistIds().toMutableSet()
         val followed = userLibrary.followedSeriesIds().toMutableSet()
         val watched = userLibrary.watchedItemIds().toMutableSet()
 
-        for (channel in catalog.liveChannels) {
-            val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(channel.sourceItemId)
-            if (favs.contains("channel:$sourceId:$hash")) {
-                favs.add("channel:$sourceId:${channel.sourceItemId}")
+        val channelPrefix = "channel:$sourceId:"
+        val moviePrefix = "movie:$sourceId:"
+        val seriesPrefix = "series:$sourceId:"
+
+        val hasHashedChannels = favs.any { it.startsWith(channelPrefix) && it.length > channelPrefix.length + 32 }
+        if (hasHashedChannels) {
+            for (channel in catalog.liveChannels) {
+                val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(channel.sourceItemId)
+                if (favs.contains("$channelPrefix$hash")) {
+                    favs.add("$channelPrefix${channel.sourceItemId}")
+                }
             }
+            userLibrary.setFavoriteChannelIds(favs)
         }
 
-        for (movie in catalog.movies) {
-            val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(movie.id.toString())
-            if (watchlist.contains("movie:$sourceId:$hash")) {
-                watchlist.add("movie:$sourceId:${movie.id}")
+        val hasHashedMovies = watchlist.any { it.startsWith(moviePrefix) && it.length > moviePrefix.length + 32 } ||
+                watched.any { it.startsWith(moviePrefix) && it.length > moviePrefix.length + 32 }
+        if (hasHashedMovies) {
+            for (movie in catalog.movies) {
+                val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(movie.id.toString())
+                val movieKey = "$moviePrefix$hash"
+                if (watchlist.contains(movieKey)) {
+                    watchlist.add("$moviePrefix${movie.id}")
+                }
+                if (watched.contains(movieKey)) {
+                    watched.add("$moviePrefix${movie.id}")
+                }
             }
-            if (watched.contains("movie:$sourceId:$hash")) {
-                watched.add("movie:$sourceId:${movie.id}")
-            }
+            userLibrary.setMovieWatchlistIds(watchlist)
+            userLibrary.setWatchedItemIds(watched)
         }
 
-        for (series in catalog.series) {
-            val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(series.id.toString())
-            if (followed.contains("series:$sourceId:$hash")) {
-                followed.add("series:$sourceId:${series.id}")
+        val hasHashedSeries = followed.any { it.startsWith(seriesPrefix) && it.length > seriesPrefix.length + 32 }
+        if (hasHashedSeries) {
+            for (series in catalog.series) {
+                val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(series.id.toString())
+                if (followed.contains("$seriesPrefix$hash")) {
+                    followed.add("$seriesPrefix${series.id}")
+                }
             }
+            userLibrary.setFollowedSeriesIds(followed)
         }
-
-        userLibrary.setFavoriteChannelIds(favs)
-        userLibrary.setMovieWatchlistIds(watchlist)
-        userLibrary.setFollowedSeriesIds(followed)
-        userLibrary.setWatchedItemIds(watched)
 
         val currentEntries = vodProgressStore.entries().toMutableList()
-        var progressChanged = false
-        for (i in currentEntries.indices) {
-            val entry = currentEntries[i]
-            if (entry.sourceId == sourceId) {
-                if (entry.kind == com.fortresstv.player.library.VodProgressKind.MOVIE) {
-                    val matchingMovie = catalog.movies.firstOrNull {
-                        it.id.toString() == entry.itemId || com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id.toString()) == entry.itemId
+        val needsTitleResolution = currentEntries.any { it.sourceId == sourceId && it.title.isBlank() && it.kind == com.fortresstv.player.library.VodProgressKind.MOVIE }
+        if (needsTitleResolution) {
+            val movieMap = mutableMapOf<String, XtreamMovie>()
+            for (movie in catalog.movies) {
+                movieMap[movie.id.toString()] = movie
+            }
+            var progressChanged = false
+            for (i in currentEntries.indices) {
+                val entry = currentEntries[i]
+                if (entry.sourceId == sourceId && entry.title.isBlank() && entry.kind == com.fortresstv.player.library.VodProgressKind.MOVIE) {
+                    var matchingMovie = movieMap[entry.itemId]
+                    if (matchingMovie == null) {
+                        matchingMovie = catalog.movies.firstOrNull {
+                            com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id.toString()) == entry.itemId
+                        }
                     }
-                    if (matchingMovie != null && entry.title.isBlank()) {
+                    if (matchingMovie != null) {
                         currentEntries[i] = entry.copy(
                             title = matchingMovie.name,
                             posterUrl = matchingMovie.posterUrl,
@@ -1095,15 +1117,17 @@ private fun FortressTVApp(
                     }
                 }
             }
-        }
-        if (progressChanged) {
-            vodProgressStore.setAll(currentEntries)
+            if (progressChanged) {
+                vodProgressStore.setAll(currentEntries)
+            }
         }
 
-        favoriteChannelIds = userLibrary.favoriteChannelIds()
-        movieWatchlistIds = userLibrary.movieWatchlistIds()
-        followedSeriesIds = userLibrary.followedSeriesIds()
-        watchedItemIds = userLibrary.watchedItemIds()
+        withContext(Dispatchers.Main) {
+            favoriteChannelIds = userLibrary.favoriteChannelIds()
+            movieWatchlistIds = userLibrary.movieWatchlistIds()
+            followedSeriesIds = userLibrary.followedSeriesIds()
+            watchedItemIds = userLibrary.watchedItemIds()
+        }
     }
 
     fun loadXtreamProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
@@ -1125,6 +1149,7 @@ private fun FortressTVApp(
                 )
                 settings.savePlaylistProfile(updated)
                 val all = settings.getPlaylists()
+                reconnectFavouritesAndProgress(profile.id, catalog)
                 withContext(Dispatchers.Main) {
                     xtreamCatalogs[profile.id] = catalog
                     if (catalog.liveChannels.isNotEmpty()) {
@@ -1135,7 +1160,6 @@ private fun FortressTVApp(
                     if (activeProfile == null) {
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
-                    reconnectFavouritesAndProgress(profile.id, catalog)
                 }
             }.onFailure { failure ->
                 withContext(Dispatchers.Main) {
@@ -1263,8 +1287,28 @@ private fun FortressTVApp(
         }
         playlists = savedPlaylists
         activeProfile = enabledPlaylists.firstOrNull()
+    }
 
-        var hasFastLoadedPlaylist = false
+    var sourcesLoadedForSession by rememberSaveable { mutableStateOf(false) }
+    var isProfileLoadingScreenVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(shouldGateWithProfilePicker) {
+        if (shouldGateWithProfilePicker) return@LaunchedEffect
+        if (sourcesLoadedForSession) {
+            isProfileLoadingScreenVisible = false
+            return@LaunchedEffect
+        }
+        sourcesLoadedForSession = true
+        isProfileLoadingScreenVisible = true
+
+        try {
+            val (savedPlaylists, enabledPlaylists) = withContext(Dispatchers.IO) {
+                val all = settings.getPlaylists()
+                all to settings.getEnabledPlaylists()
+            }
+            playlists = savedPlaylists
+            activeProfile = enabledPlaylists.firstOrNull()
+
+            var hasFastLoadedPlaylist = false
         val fastLoadedSourceIds = mutableSetOf<String>()
         val startupSourceErrors = mutableListOf<String>()
 
@@ -1465,6 +1509,12 @@ private fun FortressTVApp(
                         withContext(Dispatchers.Main) { epgGuide = guide }
                     }
                 }
+            }
+        }
+        } finally {
+            withContext(Dispatchers.Main) {
+                delay(300)
+                isProfileLoadingScreenVisible = false
             }
         }
     }
@@ -1746,11 +1796,17 @@ private fun FortressTVApp(
                         isMandatory = true,
                         onProfileSelected = {
                             requireProfileSelection = false
+                            isProfileLoadingScreenVisible = true
                             playbackResetGeneration++
                         },
                         onDismiss = {}
                     )
                 }
+            } else if (isProfileLoadingScreenVisible && activeHouseholdProfile.id != "restricted_default") {
+                ProfileLoadingScreen(
+                    profile = activeHouseholdProfile,
+                    statusText = strings.loadingPlaylistAndSettings
+                )
             } else if (restoring) {
                 WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
             } else if (playlist == null || activeProfile == null) {
@@ -2534,6 +2590,59 @@ private data class GuideProgrammeBlock(
 )
 
 private const val GUIDE_CHANNEL_BATCH_SIZE = 2
+
+@Composable
+private fun ProfileLoadingScreen(
+    profile: HouseholdProfile,
+    statusText: String
+) {
+    val strings = LocalAppStrings.current
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                ProfileAvatar(
+                    name = profile.name,
+                    isChild = profile.isChild,
+                    size = 96.dp,
+                    fontSize = 44.sp,
+                    shape = RoundedCornerShape(16.dp),
+                    usePalette = true,
+                    avatarUrl = profile.avatarUrl
+                )
+
+                Text(
+                    text = strings.welcomeUser(profile.name),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                CircularProgressIndicator(
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun WelcomeScreen(

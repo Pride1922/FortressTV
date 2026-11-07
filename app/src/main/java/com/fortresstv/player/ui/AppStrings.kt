@@ -278,6 +278,8 @@ interface Strings {
     val enterXmltvUrl: String
     val loadPlaylist: String
     val loadingPlaylist: String
+    val loadingPlaylistAndSettings: String
+    fun welcomeUser(name: String): String
     val loadingSavedData: String
     val restoringSecureSession: String
     val selectM3uError: String
@@ -744,6 +746,8 @@ object EnglishStrings : Strings {
     override val enterXmltvUrl = "https://example.com/epg.xml"
     override val loadPlaylist = "Load Playlist"
     override val loadingPlaylist = "Loading playlist..."
+    override val loadingPlaylistAndSettings = "Loading playlist and settings..."
+    override fun welcomeUser(name: String) = "Welcome, $name"
     override val loadingSavedData = "Loading saved playlist and programme guide..."
     override val restoringSecureSession = "Restoring secure session..."
     override val selectM3uError = "Please enter an M3U URL or select a local file."
@@ -1213,6 +1217,8 @@ object PortugueseStrings : Strings {
     override val enterXmltvUrl = "https://exemplo.com/epg.xml"
     override val loadPlaylist = "Carregar Lista"
     override val loadingPlaylist = "A carregar lista..."
+    override val loadingPlaylistAndSettings = "A carregar lista e definições..."
+    override fun welcomeUser(name: String) = "Bem-vindo, $name"
     override val loadingSavedData = "A carregar a lista e o guia de programação guardados..."
     override val restoringSecureSession = "A restaurar sessão segura..."
     override val selectM3uError = "Por favor insira um URL M3U ou selecione um ficheiro local."
