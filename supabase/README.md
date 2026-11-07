@@ -1,20 +1,28 @@
 # FortressTV accounts: schema and implementation plan
 
-Status: the database foundation has been applied to the user's development
+Status: the database foundation and cloud sync extensions have been applied to the
 project. Migration `202611060002_profiles_and_parental_pin.sql` introduced
 parental controls and profile RPCs. Corrective migration
-`202611060003_harden_profile_authorization.sql` hardens authorization: it eliminates
-PIN rollback on failed protected RPCs, serializes attempts with row-level locking
-(`SELECT ... FOR UPDATE`), requires valid adult unlock tokens for management RPCs,
-enforces scoped profile sessions on library and watch progress tables via RLS,
-and guarantees atomic invalidation on PIN changes. Corrective migration
-`202611060004_bind_sessions_and_child_invalidation.sql` binds unlocks and active profile
-sessions to the device's authenticated session (`auth_session_id`), server-invalidates
+`202611060003_harden_profile_authorization.sql` hardened authorization: it eliminated
+PIN rollback on failed protected RPCs, serialized attempts with row-level locking
+(`SELECT ... FOR UPDATE`), required valid adult unlock tokens for management RPCs,
+enforced scoped profile sessions on library and watch progress tables via RLS,
+and guaranteed atomic invalidation on PIN changes. Migration
+`202611060004_bind_sessions_and_child_invalidation.sql` bound unlocks and active profile
+sessions to the device's authenticated session (`auth_session_id`), server-invalidated
 adult unlocks and active adult profile sessions upon entering child mode for that device,
-and exposes `fortress_leave_adult_mode()`. Corrective migration
-`202611060005_revoke_target_auth_session.sql` adds targeted revocation (`p_target_auth_session_id`)
-to `fortress_leave_adult_mode()` and `fortress_revoke_adult_session()` so offline departing sessions
-can be revoked by subsequent authenticated sessions of the same household. State sync is the following stage.
+and exposed `fortress_leave_adult_mode()`. Migration
+`202611060005_revoke_target_auth_session.sql` added targeted revocation (`p_target_auth_session_id`)
+to `fortress_leave_adult_mode()` and `fortress_revoke_adult_session()`. Migration
+`202611060006_reset_parental_pin_after_recovery.sql` handled PIN resets following recovery.
+Migration `202611060007_household_sources.sql` added AES-256 encrypted source backup and restore.
+Migration `202611060008_client_sync_versioning.sql` and `202611060009_clock_skew_and_versioning.sql`
+added server-managed sequence numbers and monotonic clock resolution for durable synchronization.
+Migration `202611060010_categories_preferences_history.sql` added categories customization and history sync.
+Migration `202611060011_shared_sources.sql` added cross-household source sharing.
+Migration `202611060012_opensubtitles_and_extended_preferences.sql` added encrypted OpenSubtitles credential storage and subtitle preferences.
+Migration `202611060013_epg_mappings_and_correction.sql` added custom EPG mappings synchronization.
+Migration `202611060014_opensubtitles_auth_fix.sql` eliminated PIN barriers on profile session acquisition and OpenSubtitles sync so auto-resumed profiles sync favorites, watchlist, and subtitle accounts seamlessly. Alternatively, `CONSOLIDATED_SETUP.sql` contains the complete cumulative schema for fresh deployments.
 
 ## Findings from the Android project
 

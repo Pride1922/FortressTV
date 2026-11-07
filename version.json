@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC5",
-    "versionCode":  39,
-    "notes":  "FortressTV 2.0.0-RC5\n\n- OpenSubtitles cloud sync and cross-device restoration fixes\n- Phone-optimized OpenSubtitles settings layout with full-width fields\n- Automatic sync on settings dismiss and startup",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC5/fortresstv.apk",
-    "sha256":  "2F07765497C63B4488AD483660972BD80E26980317D12338D1D292C94F29D588"
+    "version":  "2.0.0-RC6",
+    "versionCode":  40,
+    "notes":  "FortressTV 2.0.0-RC6\n\n- Mask OpenSubtitles API key by default with show/hide password toggle\n- Fix cross-device series, movies, and channels favorites and watchlist matching\n- Remove parental PIN gate requirement on adult profile startup sessions for seamless cloud sync\n- Reconnect and map cloud hashed IDs to local catalog items on sync pull",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC6/fortresstv.apk",
+    "sha256":  "28270FD0975C2175B2199A1CD0D5E5A3AF450AEE3C7650E0E78FFF6A1519D27E"
 }

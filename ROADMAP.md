@@ -7,7 +7,8 @@
 - Phase 2: complete — primary library navigation, persistent favorite channels, Movie Watchlist, followed Series, persistent watched/unwatched state, and VOD Continue Watching (resume position & auto-complete at 95%)
 - Phase 3: complete — encrypted Xtream sources, cached Movie catalogues, poster grids, search, Movie playback, and watched status
 - Phase 4: complete — Xtream Series catalogues, lazy episode loading/playback, followed series, watched episodes, and Next Unwatched Episode detection
-- Phase 5: in progress — Adult (XXX) content filtering, EPG smart normalized auto-matching (fuzzy fallback for channels missing tvg-id), unmatched channels exporter, source credential/role editor with password visibility toggles
+- Phase 5: complete — Adult (XXX) content filtering, EPG smart normalized auto-matching (fuzzy fallback for channels missing tvg-id), unmatched channels exporter, source credential/role editor with password visibility toggles, unified Favorites across Live TV, Movies, and Series
+- Phase 6: complete — Optional cloud account (Supabase), household profiles with parental controls, encrypted cloud source backup/restore, cross-device favorites and watchlist synchronization, and OpenSubtitles cloud sync with password-masked API key
 
 ## Product direction
 
@@ -168,16 +169,25 @@ Completed in Phase 5:
 - Persistent watched/unwatched items and Next Unwatched Episode detection
 - Unified Favorites sections for channels, Movie Watchlist, and followed Series
 
+### Phase 6 — Cloud Accounts, Profiles & Cross-Device Sync
+
+Completed in Phase 6:
+- Optional Supabase household account and profile architecture
+- Household profiles with parental controls (Adult & Child profiles, age ceilings, unrated blocking, PIN protection)
+- Encrypted cloud source backup and restore with AES-256 (`household_sources`)
+- Cross-device library synchronization for favorite channels, movie watchlist, followed series, and VOD progress
+- OpenSubtitles account and API key cloud synchronization with password-masked input and toggle
+- Automatic profile session management on device launch and cross-device ID-to-hash catalog reconnection
+
 Prioritized Next:
-1. Recently Watched and live-channel watch counts
-2. Hidden channels, movies, series, and categories
-3. Manual EPG channel assignment
-4. Backup and restore for settings, favorites, watchlists, and viewing progress
-5. D-pad and Android TV navigation
-6. Advanced per-source headers, Referer, User-Agent, and timeout options
-7. Category reorder/rename where safe
-8. Audio and subtitle track selection
-9. Sanitized playback diagnostics
+1. D-pad and Android TV navigation improvements
+2. Recently Watched and live-channel watch counts
+3. Hidden channels, movies, series, and categories
+4. Manual EPG channel assignment
+5. Advanced per-source headers, Referer, User-Agent, and timeout options
+6. Category reorder/rename where safe
+7. Audio and subtitle track selection
+8. Sanitized playback diagnostics
 
 ## Deferred features
 
