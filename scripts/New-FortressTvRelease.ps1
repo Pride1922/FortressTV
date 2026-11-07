@@ -11,10 +11,14 @@ Set-StrictMode -Version Latest
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $gradleFile = Join-Path $projectRoot "app\build.gradle.kts"
 $keystoreProperties = Join-Path $projectRoot "keystore.properties"
+$supabaseProperties = Join-Path $projectRoot "supabase.properties"
 $ffmpegSourceRoot = Join-Path $projectRoot "third_party\ffmpeg"
 
 if (-not (Test-Path -LiteralPath $keystoreProperties -PathType Leaf)) {
     throw "keystore.properties is missing. A signed release cannot be created."
+}
+if (-not (Test-Path -LiteralPath $supabaseProperties -PathType Leaf) -and -not $env:SUPABASE_URL) {
+    throw "supabase.properties is missing and SUPABASE_URL environment variable is not set."
 }
 $requiredSourceFiles = @(
     "ffmpeg-6.0-source.tar.gz",
