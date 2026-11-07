@@ -27,6 +27,12 @@ internal class LocalDataMigrationService(
     fun isMigrationNeeded(householdId: String): Boolean {
         if (prefs.getBoolean("is_migrated_$householdId", false)) return false
 
+        // If the household already has existing cloud profiles, cloud is the source of truth (Netflix-style)
+        if (profileRepository.profiles.value.isNotEmpty()) {
+            skipMigration(householdId)
+            return false
+        }
+
         val localPlaylists = settingsStore.getPlaylists()
         val localLibrary = UserLibraryStore(context, "local")
         val localProgress = VodProgressStore(context, "local")
