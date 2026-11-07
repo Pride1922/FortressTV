@@ -671,8 +671,9 @@ private fun FortressTVApp(
     var isRestoringBackup by remember { mutableStateOf(false) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
-    var epgSource by remember { mutableStateOf<ContentSource?>(null) }
-    var epgSourceName by remember { mutableStateOf<String?>(null) }
+    val initialEpgSource = remember { settings.epgSource() }
+    var epgSource by remember { mutableStateOf<ContentSource?>(initialEpgSource) }
+    var epgSourceName by remember { mutableStateOf<String?>(initialEpgSource?.displayName) }
     var epgLastUpdate by remember { mutableLongStateOf(0L) }
     var epgScheduleCorrectionMinutes by remember { mutableIntStateOf(settings.epgScheduleCorrectionMinutes()) }
     val epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
@@ -1195,7 +1196,15 @@ private fun FortressTVApp(
                     epgGuide = guide
                     epgSource = source
                     epgSourceName = source.displayName
-                    if (save) settings.saveEpg(source)
+                    if (save) {
+                        settings.saveEpg(source)
+                        val accountState = accountRepository.getAccountState()
+                        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                            scope.launch(Dispatchers.IO) {
+                                cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
+                            }
+                        }
+                    }
                 }
             }.onFailure { err ->
                 withContext(Dispatchers.Main) {
@@ -1484,6 +1493,19 @@ private fun FortressTVApp(
                         }
                     }
                 }
+                val restoredEpg = settings.epgSource()
+                if (restoredEpg != null) {
+                    withContext(Dispatchers.Main) {
+                        val needsLoad = epgSource != restoredEpg || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()
+                        epgSource = restoredEpg
+                        epgSourceName = restoredEpg.displayName
+                        epgSourceTimezone = settings.epgSourceTimezone().orEmpty()
+                        epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes()
+                        if (needsLoad) {
+                            loadEpg(restoredEpg, save = false, forceRefresh = false)
+                        }
+                    }
+                }
                 val restoredMappings = cloudSourceService.restoreEpgMappingsFromCloud()
                 if (restoredMappings.isNotEmpty()) {
                     epgMappingStore.replaceAllMappings(restoredMappings)
@@ -1498,17 +1520,7 @@ private fun FortressTVApp(
         if (savedEpg is ContentSource.RemoteUrl) {
             val isEpgFresh = SourceReader.isCacheFresh(context, "epg", settings.lastEpgUpdate())
             if (!isEpgFresh || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()) {
-                scope.launch(Dispatchers.IO) {
-                    runCatching {
-                        val stream = SourceReader.fetchAndCache(context, savedEpg, "epg")
-                        val now = System.currentTimeMillis()
-                        settings.setLastEpgUpdate(now)
-                        withContext(Dispatchers.Main) { epgLastUpdate = now }
-                        parseEpgWithCache(savedEpg, stream, allowCachedResult = false)
-                    }.onSuccess { guide ->
-                        withContext(Dispatchers.Main) { epgGuide = guide }
-                    }
-                }
+                loadEpg(savedEpg, save = false, forceRefresh = false)
             }
         }
         } finally {
@@ -1762,6 +1774,14 @@ private fun FortressTVApp(
                             for (p in all.filter { it.enabled }) {
                                 if (p.source is ContentSource.Xtream) loadXtreamProfile(p)
                                 else loadPlaylistProfile(p)
+                            }
+                            val restoredEpg = settings.epgSource()
+                            if (restoredEpg != null) {
+                                epgSource = restoredEpg
+                                epgSourceName = restoredEpg.displayName
+                                epgSourceTimezone = settings.epgSourceTimezone().orEmpty()
+                                epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes()
+                                loadEpg(restoredEpg, save = false, forceRefresh = false)
                             }
                         }
                     }
@@ -2304,6 +2324,12 @@ private fun FortressTVApp(
                         epgSource = null
                         epgSourceName = null
                         epgLastUpdate = 0L
+                        val accountState = accountRepository.getAccountState()
+                        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                            scope.launch(Dispatchers.IO) {
+                                cloudSourceSyncService.deleteCustomEpgFromCloud(profileRepository.currentUnlockToken())
+                            }
+                        }
                     }) { Text(strings.delete, color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = { TextButton(onClick = { showRemoveEpgConfirm = false }) { Text(strings.cancel) } }

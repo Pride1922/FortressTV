@@ -223,6 +223,27 @@ class CloudSourceSyncService internal constructor(
         }
     }
 
+    suspend fun deleteCustomEpgFromCloud(unlockToken: String? = null): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            val remoteSources = runCatching {
+                sourceApi.getHouseholdSources(token, accountState.accessToken)
+            }.getOrNull() ?: return@withLock false
+            var allOk = true
+            for (src in remoteSources) {
+                if (src.sourceType == "custom_epg") {
+                    val ok = runCatching {
+                        sourceApi.deleteHouseholdSource(src.id, token, accountState.accessToken)
+                    }.getOrDefault(false)
+                    if (!ok) allOk = false
+                }
+            }
+            allOk
+        }
+    }
+
     suspend fun syncEpgMappingToCloud(
         mapping: com.fortresstv.player.epg.EpgChannelMapping,
         unlockToken: String? = null
