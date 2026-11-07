@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC3",
-    "versionCode":  37,
-    "notes":  "Configure cloud account access with Supabase client credentials",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC3/fortresstv.apk",
-    "sha256":  "184AD5C54F3BB48BF825B52E0D69C9D980923C6397504BA1B4D2C9A95DEBF203"
+    "version":  "2.0.0-RC4",
+    "versionCode":  38,
+    "notes":  "FortressTV 2.0.0-RC4\n\n- Frictionless PIN and parental control: active profile resumes automatically without PIN on launch\n- Single unified loading screen with user greeting and playlist status\n- Seamless profile switching\n- Removed Agregado terminology across pt-PT UI\n- Fixed crash in Settings tab\n- Automatic cloud backup and restore of OpenSubtitles account and API key",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC4/fortresstv.apk",
+    "sha256":  "E65B38F60AFCC111A9CAF5511A957C756B503CD8C83EE41638242E7198624A39"
 }
