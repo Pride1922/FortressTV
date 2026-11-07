@@ -244,16 +244,16 @@ class ProfileRepository internal constructor(
         }
 
         val currentActive = _activeProfile.value
-        if (currentActive.isChild && currentActive.id != "restricted_default") {
+        if (currentActive.id != "restricted_default") {
             runCatching {
                 val sessionObj = api.openProfileSession(
                     profileId = currentActive.id,
-                    unlockToken = null,
+                    unlockToken = pinStore.currentUnlockToken(),
                     accessToken = token
                 )
-                val childToken = sessionObj.optString("session_token").takeIf(String::isNotBlank)
-                if (childToken != null) {
-                    persistence.saveActiveSessionToken(childToken)
+                val activeToken = sessionObj.optString("session_token").takeIf(String::isNotBlank)
+                if (activeToken != null) {
+                    persistence.saveActiveSessionToken(activeToken)
                 }
             }
         }

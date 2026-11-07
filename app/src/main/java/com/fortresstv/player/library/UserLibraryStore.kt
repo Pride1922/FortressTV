@@ -63,7 +63,8 @@ class UserLibraryStore internal constructor(
             val hashedKey = "channel:${channel.sourceId}:${CloudIdentityHasher.hashItemId(channel.sourceItemId)}"
             if (favorites.contains(hashedKey)) return true
         }
-        return false
+        val hashOnly = CloudIdentityHasher.hashItemId(channel.sourceItemId)
+        return favorites.any { it.endsWith(":$hashOnly") || it.endsWith(":${channel.sourceItemId}") }
     }
 
     fun movieWatchlistIds(): Set<String> =
@@ -72,7 +73,9 @@ class UserLibraryStore internal constructor(
     fun isMovieWatchlisted(sourceId: String, movie: XtreamMovie, watchlist: Set<String> = movieWatchlistIds()): Boolean {
         if (watchlist.contains(movie.libraryId(sourceId))) return true
         val hashedKey = "movie:$sourceId:${CloudIdentityHasher.hashItemId(movie.id.toString())}"
-        return watchlist.contains(hashedKey)
+        if (watchlist.contains(hashedKey)) return true
+        val hashOnly = CloudIdentityHasher.hashItemId(movie.id.toString())
+        return watchlist.any { it.endsWith(":$hashOnly") || it.endsWith(":${movie.id}") }
     }
 
     fun setMovieWatchlisted(sourceId: String, movie: XtreamMovie, watchlisted: Boolean): Set<String> {
@@ -96,7 +99,9 @@ class UserLibraryStore internal constructor(
     fun isSeriesFollowed(sourceId: String, series: XtreamSeries, followed: Set<String> = followedSeriesIds()): Boolean {
         if (followed.contains(series.libraryId(sourceId))) return true
         val hashedKey = "series:$sourceId:${CloudIdentityHasher.hashItemId(series.id.toString())}"
-        return followed.contains(hashedKey)
+        if (followed.contains(hashedKey)) return true
+        val hashOnly = CloudIdentityHasher.hashItemId(series.id.toString())
+        return followed.any { it.endsWith(":$hashOnly") || it.endsWith(":${series.id}") }
     }
 
     fun setSeriesFollowed(sourceId: String, series: XtreamSeries, followed: Boolean): Set<String> {
