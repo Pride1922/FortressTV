@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC7",
-    "versionCode":  41,
-    "notes":  "FortressTV 2.0.0-RC7\n\n- Fix cross-device library favorites synchronization\n- Fix Continue Watching and Recently Watched synchronization and reactive updates on the Home page\n- Automatic profile session token retrieval and persistence on startup and background sync\n- Cross-device VOD progress title, poster, and series/episode resolution\n- Bi-directional merging of existing local library items into account profile namespace\n- Source ID UUID normalization to prevent PostgreSQL type mismatch errors",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC7/fortresstv.apk",
-    "sha256":  "85289A3319F4CF5171BB2206F49CA0EAB30E6FCAB0317DCA2F77AD039918C5AC"
+    "version":  "2.0.0-RC8",
+    "versionCode":  42,
+    "notes":  "Optimize tablet responsiveness, smooth scrolling, and instant tab switching. Fix Home screen scroll stutter and lift discovery data caching to prevent UI thread blocking.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC8/fortresstv.apk",
+    "sha256":  "F526B436AF194550A2306A221DD9DF3C801318BBBCDCD0359776D2857F1D5EF1"
 }
