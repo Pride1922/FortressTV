@@ -1,4 +1,4 @@
-﻿package com.fortresstv.player.transfer
+package com.fortresstv.player.transfer
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,13 +21,6 @@ class TransferWebPageTest {
     @Test
     fun htmlContainsXtreamTab() {
         assertTrue(html.contains("Xtream", ignoreCase = true))
-    }
-
-    @Test
-    fun htmlContainsBackupUpload() {
-        assertTrue(html.contains("/api/backup"))
-        assertTrue(html.contains("type=\"file\""))
-        assertTrue(html.contains("10 * 1024 * 1024"))
     }
 
     @Test

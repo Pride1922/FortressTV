@@ -1,6 +1,7 @@
 package com.fortresstv.player.source
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -27,8 +28,10 @@ enum class StartupDestination(val persistedValue: String) {
     }
 }
 
-class SourceSettingsStore(context: Context) {
-    private val preferences = context.getSharedPreferences("fortress_sources", Context.MODE_PRIVATE)
+class SourceSettingsStore internal constructor(
+    private val preferences: SharedPreferences
+) {
+    constructor(context: Context) : this(context.getSharedPreferences("fortress_sources", Context.MODE_PRIVATE))
 
     fun getPlaylists(): List<PlaylistProfile> {
         val raw = preferences.getString("playlist_profiles_json", null)?.let(::decrypt)
@@ -181,23 +184,40 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putLong("epg_last_update", time).apply()
     }
 
-    fun epgTimeShiftHours(): Int = preferences.getInt("epg_time_shift_hours", 0)
-
-    fun saveEpgTimeShiftHours(hours: Int) {
-        preferences.edit()
-            .putInt("epg_time_shift_hours", hours)
-            .putInt("epg_correction_minutes", hours * 60)
-            .apply()
+    fun epgTimeShiftHours(profileId: String? = null): Int {
+        if (!profileId.isNullOrBlank() && preferences.contains("epg_time_shift_hours_$profileId")) {
+            return preferences.getInt("epg_time_shift_hours_$profileId", 0)
+        }
+        return preferences.getInt("epg_time_shift_hours", 0)
     }
 
-    fun epgScheduleCorrectionMinutes(): Int =
-        preferences.getInt("epg_correction_minutes", epgTimeShiftHours() * 60)
+    fun saveEpgTimeShiftHours(hours: Int, profileId: String? = null) {
+        val editor = preferences.edit()
+            .putInt("epg_time_shift_hours", hours)
+            .putInt("epg_correction_minutes", hours * 60)
+        if (!profileId.isNullOrBlank()) {
+            editor.putInt("epg_time_shift_hours_$profileId", hours)
+            editor.putInt("epg_correction_minutes_$profileId", hours * 60)
+        }
+        editor.apply()
+    }
 
-    fun saveEpgScheduleCorrectionMinutes(minutes: Int) {
-        preferences.edit()
+    fun epgScheduleCorrectionMinutes(profileId: String? = null): Int {
+        if (!profileId.isNullOrBlank() && preferences.contains("epg_correction_minutes_$profileId")) {
+            return preferences.getInt("epg_correction_minutes_$profileId", 0)
+        }
+        return preferences.getInt("epg_correction_minutes", epgTimeShiftHours(profileId) * 60)
+    }
+
+    fun saveEpgScheduleCorrectionMinutes(minutes: Int, profileId: String? = null) {
+        val editor = preferences.edit()
             .putInt("epg_correction_minutes", minutes)
             .putInt("epg_time_shift_hours", minutes / 60)
-            .apply()
+        if (!profileId.isNullOrBlank()) {
+            editor.putInt("epg_correction_minutes_$profileId", minutes)
+            editor.putInt("epg_time_shift_hours_$profileId", minutes / 60)
+        }
+        editor.apply()
     }
 
     fun epgSourceTimezone(): String? = preferences.getString("epg_source_timezone", null)
@@ -238,11 +258,20 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putBoolean("play_channels_fullscreen", enabled).apply()
     }
 
-    fun startupDestination(): StartupDestination =
-        StartupDestination.fromPersisted(preferences.getString("startup_destination", "home"))
+    fun startupDestination(profileId: String? = null): StartupDestination {
+        if (!profileId.isNullOrBlank()) {
+            val v = preferences.getString("startup_destination_$profileId", null)
+            if (v != null) return StartupDestination.fromPersisted(v)
+        }
+        return StartupDestination.fromPersisted(preferences.getString("startup_destination", "home"))
+    }
 
-    fun setStartupDestination(destination: StartupDestination) {
-        preferences.edit().putString("startup_destination", destination.persistedValue).apply()
+    fun setStartupDestination(destination: StartupDestination, profileId: String? = null) {
+        val editor = preferences.edit().putString("startup_destination", destination.persistedValue)
+        if (!profileId.isNullOrBlank()) {
+            editor.putString("startup_destination_$profileId", destination.persistedValue)
+        }
+        editor.apply()
     }
 
     fun autoPictureInPicture(): Boolean =
@@ -259,25 +288,51 @@ class SourceSettingsStore(context: Context) {
         preferences.edit().putString("playback_mode", mode.persistedValue).apply()
     }
 
-    fun preferredAudioLanguage(): String =
-        preferences.getString("preferred_audio_language", "default") ?: "default"
-
-    fun setPreferredAudioLanguage(lang: String) {
-        preferences.edit().putString("preferred_audio_language", lang).apply()
+    fun preferredAudioLanguage(profileId: String? = null): String {
+        if (!profileId.isNullOrBlank()) {
+            val v = preferences.getString("preferred_audio_language_$profileId", null)
+            if (v != null) return v
+        }
+        return preferences.getString("preferred_audio_language", "default") ?: "default"
     }
 
-    fun preferredSubtitleLanguage(): String =
-        preferences.getString("preferred_subtitle_language", "off") ?: "off"
-
-    fun setPreferredSubtitleLanguage(lang: String) {
-        preferences.edit().putString("preferred_subtitle_language", lang).apply()
+    fun setPreferredAudioLanguage(lang: String, profileId: String? = null) {
+        val editor = preferences.edit().putString("preferred_audio_language", lang)
+        if (!profileId.isNullOrBlank()) {
+            editor.putString("preferred_audio_language_$profileId", lang)
+        }
+        editor.apply()
     }
 
-    fun subtitleFallbackEnglish(): Boolean =
-        preferences.getBoolean("subtitle_fallback_english", true)
+    fun preferredSubtitleLanguage(profileId: String? = null): String {
+        if (!profileId.isNullOrBlank()) {
+            val v = preferences.getString("preferred_subtitle_language_$profileId", null)
+            if (v != null) return v
+        }
+        return preferences.getString("preferred_subtitle_language", "off") ?: "off"
+    }
 
-    fun setSubtitleFallbackEnglish(enabled: Boolean) {
-        preferences.edit().putBoolean("subtitle_fallback_english", enabled).apply()
+    fun setPreferredSubtitleLanguage(lang: String, profileId: String? = null) {
+        val editor = preferences.edit().putString("preferred_subtitle_language", lang)
+        if (!profileId.isNullOrBlank()) {
+            editor.putString("preferred_subtitle_language_$profileId", lang)
+        }
+        editor.apply()
+    }
+
+    fun subtitleFallbackEnglish(profileId: String? = null): Boolean {
+        if (!profileId.isNullOrBlank() && preferences.contains("subtitle_fallback_english_$profileId")) {
+            return preferences.getBoolean("subtitle_fallback_english_$profileId", true)
+        }
+        return preferences.getBoolean("subtitle_fallback_english", true)
+    }
+
+    fun setSubtitleFallbackEnglish(enabled: Boolean, profileId: String? = null) {
+        val editor = preferences.edit().putBoolean("subtitle_fallback_english", enabled)
+        if (!profileId.isNullOrBlank()) {
+            editor.putBoolean("subtitle_fallback_english_$profileId", enabled)
+        }
+        editor.apply()
     }
 
     fun hideAdultContent(): Boolean =

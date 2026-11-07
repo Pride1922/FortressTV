@@ -17,6 +17,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.ParserException
 import androidx.media3.common.VideoSize
 import androidx.media3.common.Tracks
@@ -251,6 +252,20 @@ object StallRecoveryPolicy {
         if (positionProgressMs >= minimumProgressMs || bufferProgressMs >= minimumProgressMs || bytesProgress > 0) {
             return StallDecision.WAIT
         }
+        return if (recoveryAttempts >= maximumAttempts) StallDecision.GIVE_UP else StallDecision.RECOVER
+    }
+}
+
+object LiveEndedRecoveryPolicy {
+    fun decide(
+        playbackState: Int,
+        playWhenReady: Boolean,
+        networkAvailable: Boolean,
+        recoveryAttempts: Int,
+        maximumAttempts: Int = 3
+    ): StallDecision {
+        if (playbackState != Player.STATE_ENDED || !playWhenReady) return StallDecision.WAIT
+        if (!networkAvailable) return StallDecision.WAIT
         return if (recoveryAttempts >= maximumAttempts) StallDecision.GIVE_UP else StallDecision.RECOVER
     }
 }

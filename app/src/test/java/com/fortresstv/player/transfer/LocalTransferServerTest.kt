@@ -1,4 +1,4 @@
-﻿package com.fortresstv.player.transfer
+package com.fortresstv.player.transfer
 
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -34,24 +34,6 @@ class LocalTransferServerTest {
     @After
     fun tearDown() {
         server.stop()
-    }
-
-    @Test
-    fun pairedBackupRoundTripsWithoutSendingItsPassword() {
-        val plain = "{\"settings\":\"test\"}".toByteArray()
-        val output = java.io.ByteArrayOutputStream()
-        com.fortresstv.player.backup.BackupCrypto.encrypt(plain, server.backupKey.toCharArray(), output)
-        val target = DiscoveredFortressTv(
-            "Test TV", listOf(java.net.InetAddress.getByName("127.0.0.1")),
-            server.listeningPort, TRANSFER_PROTOCOL_VERSION, server.sessionToken, server.backupKey
-        )
-        assertEquals(NativeSendResult.Success, NativeTransferClient.sendBackup(target, output.toByteArray(), ""))
-        val payload = (receivedResult as TransferRequestResult.AcceptedBackup).payload
-        assertEquals(server.backupKey, payload.pairingPassword)
-        org.junit.Assert.assertArrayEquals(plain, com.fortresstv.player.backup.BackupCrypto.decrypt(
-            payload.bytes.inputStream(), payload.pairingPassword!!.toCharArray()
-        ))
-        assertTrue(NativeTransferClient.sendBackup(target, output.toByteArray(), "") is NativeSendResult.Error)
     }
 
     // ----------------------------------------------------------------
@@ -116,23 +98,6 @@ class LocalTransferServerTest {
         {"protocolVersion":$TRANSFER_PROTOCOL_VERSION,"kind":"xtream","name":"Sports","url":"http://srv.example.com","username":"user","password":"pass","epgUrl":null}
     """.trimIndent()
 
-    private fun postBytes(path: String, bytes: ByteArray, pin: String): Pair<Int, String> {
-        val conn = URL("$baseUrl$path").openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.doOutput = true
-        conn.setFixedLengthStreamingMode(bytes.size)
-        conn.setRequestProperty("Content-Type", "application/octet-stream")
-        conn.setRequestProperty("X-Fortress-Pin", pin)
-        conn.setRequestProperty("X-Fortress-Filename", "backup.ftv")
-        conn.outputStream.use { it.write(bytes) }
-        val code = conn.responseCode
-        val body = runCatching {
-            (if (code in 200..299) conn.inputStream else conn.errorStream).bufferedReader().readText()
-        }.getOrElse { "" }
-        conn.disconnect()
-        return code to body
-    }
-
     // ----------------------------------------------------------------
     // Tests — index page
     // ----------------------------------------------------------------
@@ -188,39 +153,6 @@ class LocalTransferServerTest {
         val (code, body) = post("/api/source", validM3uPayload(), pin = server.sessionPin)
         assertEquals(426, code)
         assertTrue(body.contains("Secure QR pairing"))
-    }
-
-    @Test
-    fun validPinAcceptsEncryptedBackup() {
-        val bytes = byteArrayOf(0x46, 0x54, 0x56, 0x42, 0x01, 1, 2, 3)
-        val (code, _) = postBytes("/api/backup", bytes, server.sessionPin)
-        assertEquals(200, code)
-        val accepted = receivedResult as TransferRequestResult.AcceptedBackup
-        assertEquals("backup.ftv", accepted.payload.fileName)
-        assertTrue(bytes.contentEquals(accepted.payload.bytes))
-    }
-
-    @Test
-    fun invalidBackupHeaderIsRejected() {
-        val (code, _) = postBytes("/api/backup", "not a backup".toByteArray(), server.sessionPin)
-        assertEquals(422, code)
-        assertTrue(receivedResult is TransferRequestResult.ParseError)
-    }
-
-    @Test
-    fun oversizedBackupIsRejectedBeforeReadingBody() {
-        Socket("127.0.0.1", server.listeningPort).use { socket ->
-            socket.soTimeout = 5_000
-            socket.getOutputStream().bufferedWriter().apply {
-                write("POST /api/backup HTTP/1.1\r\n")
-                write("Host: 127.0.0.1:${server.listeningPort}\r\n")
-                write("X-Fortress-Pin: ${server.sessionPin}\r\n")
-                write("Content-Length: ${LocalTransferServer.MAX_BACKUP_BYTES + 1}\r\n\r\n")
-                flush()
-            }
-            val statusLine = socket.getInputStream().bufferedReader().readLine()
-            assertTrue(statusLine.contains("413"))
-        }
     }
 
     // ----------------------------------------------------------------

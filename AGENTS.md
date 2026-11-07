@@ -13,13 +13,11 @@ The primary target is an Android tablet, with Android TV and D-pad support consi
 - Repository: `C:\Users\fabio\AndroidStudioProjects\FortressTV`
 - Git remote: `https://github.com/Pride1922/FortressTV.git`
 - Main branch: `main`
-- Local release directory: `C:\Users\fabio\Nextcloud\FortressTV`
+- Release channel: GitHub Releases (`https://github.com/Pride1922/FortressTV/releases`)
 - Stable public APK filename: `fortresstv.apk`
 - OTA metadata filename: `version.json`
 - Release command: `scripts\New-FortressTvRelease.ps1`
-- GitHub Actions build alternative: see `GITHUB_ACTIONS.md`. The manual signed-build workflow stages a release bundle; it does not publish to Nextcloud or change the live update feed.
-
-Never rename the published APK. Nextcloud must overwrite `fortresstv.apk` so the established share URL remains valid.
+- GitHub Actions build: see `GITHUB_ACTIONS.md`. The manual signed-build workflow builds, signs, and publishes the release to GitHub Releases.
 
 ## Working rules
 
@@ -98,12 +96,11 @@ Only release when explicitly requested.
 
 1. Confirm the worktree is clean except for the intended release change.
 2. Increment `versionCode` for every published APK.
-3. Use semantic pre-1.0 versions: `0.MINOR.PATCH`. Do not jump major versions for ordinary tests.
-4. Set `versionName` and commit the version bump separately, for example `Prepare FortressTV 0.1.5`.
-5. Push the intended commits to `origin/main`.
-6. Run `scripts\New-FortressTvRelease.ps1` with accurate release notes.
-7. The script must build the signed release, verify its signature, overwrite `fortresstv.apk`, wait for the public Nextcloud APK checksum to match, and only then replace `version.json`.
-8. Confirm the local APK SHA-256 exactly matches `version.json`.
-9. Report the version, version code, commit, APK path, size, and SHA-256.
+3. Set `versionName` and commit the version bump separately, for example `Prepare FortressTV 1.0.0-RC10`.
+4. Push the intended commits to `origin/main`.
+5. Run `scripts\New-FortressTvRelease.ps1` with accurate release notes.
+6. The script builds the signed release, verifies its signature with apksigner, writes `version.json`, and publishes the release directly to GitHub Releases via `gh release create`.
+7. Confirm the local APK SHA-256 exactly matches `version.json` and the GitHub Release asset.
+8. Report the version, version code, commit, download URL, size, and SHA-256.
 
 Do not install or push a release to a tablet unless the user separately requests it.

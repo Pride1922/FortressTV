@@ -171,14 +171,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.KeyEventType
-import com.fortresstv.player.backup.BackupManager
-import com.fortresstv.player.backup.BackupRestoreResult
-import com.fortresstv.player.backup.BackupExportResult
-import androidx.compose.material.icons.filled.Restore
-import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.BatteryFull
-import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import java.text.SimpleDateFormat
@@ -245,7 +238,6 @@ import com.fortresstv.player.transfer.TransferPreview
 import com.fortresstv.player.transfer.TransferRequestResult
 import com.fortresstv.player.transfer.TransferSessionState
 import com.fortresstv.player.transfer.TransferSourcePayload
-import com.fortresstv.player.transfer.TransferBackupPayload
 import com.fortresstv.player.transfer.SendToTvDialog
 import com.fortresstv.player.transfer.DirectTransferLink
 import com.fortresstv.player.transfer.DiscoveredFortressTv
@@ -637,7 +629,6 @@ private fun FortressTVApp(
     val settings = remember { SourceSettingsStore(context.applicationContext) }
     val userLibrary = remember { UserLibraryStore(context.applicationContext) }
     val vodProgressStore = remember { VodProgressStore(context.applicationContext) }
-    val backupManager = remember { BackupManager(settings, userLibrary, vodProgressStore) }
     val openSubtitlesStore = remember { OpenSubtitlesSettingsStore(context.applicationContext) }
     var openSubtitlesSettings by remember { mutableStateOf(openSubtitlesStore.loadSettings()) }
 
@@ -662,13 +653,8 @@ private fun FortressTVApp(
     var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
     var followedSeriesIds by remember { mutableStateOf(userLibrary.followedSeriesIds()) }
     var watchedItemIds by remember { mutableStateOf(userLibrary.watchedItemIds()) }
-
-    var showCreateBackupDialog by remember { mutableStateOf(false) }
-    var showRestoreBackupPasswordDialog by remember { mutableStateOf(false) }
-    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
-    var backupPasswordForExport by remember { mutableStateOf<String?>(null) }
-    var restoreErrorMessage by remember { mutableStateOf<String?>(null) }
-    var isRestoringBackup by remember { mutableStateOf(false) }
+    var hiddenCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var categoryOrder by remember { mutableStateOf<List<String>>(emptyList()) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
     val initialEpgSource = remember { settings.epgSource() }
@@ -820,6 +806,18 @@ private fun FortressTVApp(
         followedSeriesIds = userLibrary.followedSeriesIds()
         watchedItemIds = userLibrary.watchedItemIds()
 
+        preferredAudioLanguage = settings.preferredAudioLanguage(targetProfileId)
+        preferredSubtitleLanguage = settings.preferredSubtitleLanguage(targetProfileId)
+        subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
+        startupDestination = settings.startupDestination(targetProfileId)
+        epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
+
+        val activeSourceId = activeProfile?.id
+        if (activeSourceId != null) {
+            hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
+            categoryOrder = userLibrary.categoryOrder(activeSourceId)
+        }
+
         if (uid != null && targetProfileId != "restricted_default") {
             cloudLibrarySyncService.triggerSync()
             val profileLibrary = UserLibraryStore(context.applicationContext, ns)
@@ -828,6 +826,7 @@ private fun FortressTVApp(
                 profileId = targetProfileId,
                 userLibrary = profileLibrary,
                 progressStore = profileProgress,
+                settingsStore = settings,
                 onUpdated = {
                     if (activeHouseholdProfile.id == targetProfileId) {
                         favoriteChannelIds = profileLibrary.favoriteChannelIds()
@@ -835,9 +834,26 @@ private fun FortressTVApp(
                         movieWatchlistIds = profileLibrary.movieWatchlistIds()
                         followedSeriesIds = profileLibrary.followedSeriesIds()
                         watchedItemIds = profileLibrary.watchedItemIds()
+                        preferredAudioLanguage = settings.preferredAudioLanguage(targetProfileId)
+                        preferredSubtitleLanguage = settings.preferredSubtitleLanguage(targetProfileId)
+                        subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
+                        startupDestination = settings.startupDestination(targetProfileId)
+                        epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
+                        if (activeSourceId != null) {
+                            hiddenCategories = profileLibrary.hiddenCategories(activeSourceId)
+                            categoryOrder = profileLibrary.categoryOrder(activeSourceId)
+                        }
                     }
                 }
             )
+        }
+    }
+
+    LaunchedEffect(activeProfile?.id) {
+        val activeSourceId = activeProfile?.id
+        if (activeSourceId != null) {
+            hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
+            categoryOrder = userLibrary.categoryOrder(activeSourceId)
         }
     }
 
@@ -1550,196 +1566,6 @@ private fun FortressTVApp(
         loadEpg(ContentSource.LocalFile(uri.toString(), uri.lastPathSegment?.substringAfterLast('/') ?: "XMLTV guide"), save = true, forceRefresh = true)
     }
 
-    val createBackupFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
-    ) { uri ->
-        val pass = backupPasswordForExport
-        backupPasswordForExport = null
-        if (uri != null && !pass.isNullOrBlank()) {
-            scope.launch(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openOutputStream(uri)?.use { os ->
-                        val result = backupManager.exportBackup(pass.toCharArray(), os, BuildConfig.VERSION_NAME)
-                        withContext(Dispatchers.Main) {
-                            when (result) {
-                                is BackupExportResult.Success -> {
-                                    Toast.makeText(context, strings.backupCreatedSuccess, Toast.LENGTH_LONG).show()
-                                }
-                                is BackupExportResult.Error -> {
-                                    Toast.makeText(context, strings.backupFailed(result.message), Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    }
-                }.onFailure { err ->
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, strings.backupFailed(err.message ?: "Could not save backup"), Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-    }
-
-    val restoreBackupPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            if (uri.scheme != "file") {
-                try {
-                    context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                } catch (_: SecurityException) {}
-            }
-            pendingRestoreUri = uri
-            restoreErrorMessage = null
-            showRestoreBackupPasswordDialog = true
-        }
-    }
-
-    fun openLatestLocalBackup(): Boolean {
-        val candidateFiles = mutableListOf<File>()
-        context.getExternalFilesDir(null)
-            ?.listFiles { file -> file.isFile && file.extension.equals("ftv", ignoreCase = true) }
-            ?.let(candidateFiles::addAll)
-        runCatching {
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                ?.listFiles { file -> file.isFile && file.extension.equals("ftv", ignoreCase = true) }
-                ?.let(candidateFiles::addAll)
-        }
-        val bestCandidate = candidateFiles.maxByOrNull(File::lastModified) ?: return false
-        pendingRestoreUri = Uri.fromFile(bestCandidate)
-        restoreErrorMessage = null
-        showRestoreBackupPasswordDialog = true
-        return true
-    }
-
-    val restoreStoragePermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (!granted || !openLatestLocalBackup()) {
-            Toast.makeText(
-                context,
-                if (strings.languageTag == "pt-PT") "Nenhum ficheiro de cópia (.ftv) encontrado." else "No backup file (.ftv) found.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    fun triggerRestoreBackup() {
-        if (openLatestLocalBackup()) return
-        if (
-            Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2 &&
-            context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            restoreStoragePermissionLauncher.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-            return
-        }
-        try {
-            restoreBackupPicker.launch(arrayOf("*/*", "application/octet-stream"))
-        } catch (_: android.content.ActivityNotFoundException) {
-            Toast.makeText(context, if (strings.languageTag == "pt-PT") "Nenhum ficheiro de cópia (.ftv) encontrado." else "No backup file (.ftv) found.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    fun executeRestore(password: String, merge: Boolean) {
-        val uri = pendingRestoreUri ?: return
-        isRestoringBackup = true
-        restoreErrorMessage = null
-        scope.launch(Dispatchers.IO) {
-            runCatching {
-                val inputStream = when (uri.scheme) {
-                    "file" -> uri.path?.let { java.io.FileInputStream(java.io.File(it)) }
-                        ?: context.contentResolver.openInputStream(uri)
-                    else -> context.contentResolver.openInputStream(uri)
-                } ?: throw java.io.IOException("Could not open backup file")
-                val result = inputStream.use { stream ->
-                    backupManager.restoreBackup(password.toCharArray(), stream, merge)
-                }
-                withContext(Dispatchers.Main) {
-                    when (result) {
-                        is BackupRestoreResult.Success -> {
-                            isRestoringBackup = false
-                            showRestoreBackupPasswordDialog = false
-                            pendingRestoreUri?.takeIf {
-                                it.scheme == "file" && it.path == File(context.cacheDir, "incoming-transfer.ftv").absolutePath
-                            }?.path?.let { path -> runCatching { File(path).delete() } }
-                            pendingRestoreUri = null
-
-                            // Synchronize UI states with restored data
-                            val allPlaylists = settings.getPlaylists()
-                            playlists = allPlaylists
-                            val newLang = AppLanguage.fromCode(settings.getLanguage())
-                            appLanguage = newLang
-                            startupDestination = settings.startupDestination()
-                            playChannelsFullscreen = settings.playChannelsFullscreen()
-                            autoPictureInPicture = settings.autoPictureInPicture()
-                            playbackMode = settings.playbackMode()
-                            preferredAudioLanguage = settings.preferredAudioLanguage()
-                            preferredSubtitleLanguage = settings.preferredSubtitleLanguage()
-                            subtitleFallbackEnglish = settings.subtitleFallbackEnglish()
-                            hideAdultContent = settings.hideAdultContent()
-                            parentalControlEnabled = settings.parentalControlEnabled()
-                            parentalPin = settings.getParentalPin()
-                            epgSource = settings.epgSource()
-                            epgSourceName = epgSource?.displayName
-                            epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes()
-                            epgSourceTimezone = settings.epgSourceTimezone().orEmpty()
-                            epgLoadedDays = settings.epgLoadedDays()
-                            favoriteChannelIds = userLibrary.favoriteChannelIds()
-                            recentChannelIds = userLibrary.recentChannelIds()
-                            movieWatchlistIds = userLibrary.movieWatchlistIds()
-                            followedSeriesIds = userLibrary.followedSeriesIds()
-                            watchedItemIds = userLibrary.watchedItemIds()
-
-                            // Clear existing cache memory and trigger reload
-                            loadedPlaylists.clear()
-                            xtreamCatalogs.clear()
-                            playlist = null
-                            epgGuide = null
-                            playlistRetryJobs.values.forEach { it.cancel() }
-                            playlistRetryJobs.clear()
-                            val enabledProfiles = allPlaylists.filter { it.enabled }.sortedBy { it.order }
-                            activeProfile = enabledProfiles.firstOrNull()
-                            enabledProfiles.forEach { profile ->
-                                if (profile.source is ContentSource.Xtream) loadXtreamProfile(profile, forceRefresh = true)
-                                else loadPlaylistProfile(profile, forceRefresh = true)
-                            }
-                            val savedEpg = settings.epgSource()
-                            if (savedEpg != null) {
-                                loadEpg(savedEpg, save = false, forceRefresh = true)
-                            }
-
-                            Toast.makeText(
-                                context,
-                                strings.backupRestoreSuccess(result.restoredPlaylistsCount, result.restoredFavoritesCount),
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                        is BackupRestoreResult.InvalidPassword -> {
-                            isRestoringBackup = false
-                            showRestoreBackupPasswordDialog = true
-                            restoreErrorMessage = strings.backupIncorrectPassword
-                        }
-                        is BackupRestoreResult.InvalidFormat -> {
-                            isRestoringBackup = false
-                            showRestoreBackupPasswordDialog = true
-                            restoreErrorMessage = strings.backupCorruptFile
-                        }
-                        is BackupRestoreResult.Error -> {
-                            isRestoringBackup = false
-                            showRestoreBackupPasswordDialog = true
-                            restoreErrorMessage = strings.backupFailed(result.message)
-                        }
-                    }
-                }
-            }.onFailure { err ->
-                withContext(Dispatchers.Main) {
-                    isRestoringBackup = false
-                    restoreErrorMessage = strings.backupFailed(err.message ?: "Failed to read backup file")
-                }
-            }
-        }
-    }
-
     val configuration = LocalConfiguration.current
     val formFactor = remember(configuration) { FormFactorDetector.detectFromConfiguration(configuration) }
     LaunchedEffect(transferDeepLink, formFactor.isTelevision) {
@@ -1828,7 +1654,7 @@ private fun FortressTVApp(
                     statusText = strings.loadingPlaylistAndSettings
                 )
             } else if (restoring) {
-                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
+                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {})
             } else if (playlist == null || activeProfile == null) {
                 WelcomeScreen(
                     loading = loading,
@@ -1836,14 +1662,6 @@ private fun FortressTVApp(
                     error = error,
                     onRetry = retryLoad,
                     onAddSource = { showAddPlaylistDialog = true },
-                    onRestoreBackup = {
-                        val status = profileRepository.getPinStatus()
-                        if ((activeHouseholdProfile.isChild || status.hasPin) && !profileRepository.isAdultUnlocked()) {
-                            pinPromptAction = { triggerRestoreBackup() }
-                        } else {
-                            triggerRestoreBackup()
-                        }
-                    },
                     onEditPlaylist = (activeProfile ?: playlists.firstOrNull())?.let { prof -> { editingProfile = prof } },
                     onOpenSettings = {
                         val status = profileRepository.getPinStatus()
@@ -1886,6 +1704,21 @@ private fun FortressTVApp(
                     onRetryLoad = retryLoad,
                     userLibrary = userLibrary,
                     progressStore = vodProgressStore,
+                    hiddenCategories = hiddenCategories,
+                    categoryOrder = categoryOrder,
+                    onCategoriesChanged = { newHidden, newOrder ->
+                        hiddenCategories = newHidden
+                        categoryOrder = newOrder
+                        val sourceId = activeProfile?.id
+                        if (sourceId != null && currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                            cloudLibrarySyncService.recordCategoriesMutation(
+                                profileId = activeHouseholdProfile.id,
+                                sourceId = sourceId,
+                                hiddenCategories = newHidden,
+                                categoryOrder = newOrder
+                            )
+                        }
+                    },
                     favoriteChannelIds = favoriteChannelIds,
                     recentChannelIds = recentChannelIds,
                     onRecordChannelWatched = { channel ->
@@ -1922,7 +1755,7 @@ private fun FortressTVApp(
                                 sourceId = sourceId,
                                 itemKind = "movie",
                                 itemId = movie.id.toString(),
-                                isFavourite = false,
+                                isFavourite = newWatchlisted,
                                 isWatchlisted = newWatchlisted,
                                 isWatched = movie.libraryId(sourceId) in watchedItemIds
                             )
@@ -1938,7 +1771,7 @@ private fun FortressTVApp(
                                 sourceId = sourceId,
                                 itemKind = "movie",
                                 itemId = movie.id.toString(),
-                                isFavourite = false,
+                                isFavourite = key in movieWatchlistIds,
                                 isWatchlisted = key in movieWatchlistIds,
                                 isWatched = willBeWatched
                             )
@@ -1954,7 +1787,7 @@ private fun FortressTVApp(
                                 sourceId = sourceId,
                                 itemKind = "series",
                                 itemId = series.id.toString(),
-                                isFavourite = false,
+                                isFavourite = newFollowed,
                                 isWatchlisted = newFollowed,
                                 isWatched = false
                             )
@@ -1981,13 +1814,14 @@ private fun FortressTVApp(
                         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                             val parts = key.split(":")
                             if (parts.size >= 3) {
+                                val isFavOrWatch = key in movieWatchlistIds || key in followedSeriesIds
                                 cloudLibrarySyncService.recordLibraryMutation(
                                     profileId = activeHouseholdProfile.id,
                                     sourceId = parts[1],
                                     itemKind = parts[0],
                                     itemId = parts[2],
-                                    isFavourite = false,
-                                    isWatchlisted = key in movieWatchlistIds || key in followedSeriesIds,
+                                    isFavourite = isFavOrWatch,
+                                    isWatchlisted = isFavOrWatch,
                                     isWatched = watched
                                 )
                             }
@@ -2032,7 +1866,17 @@ private fun FortressTVApp(
                 startupDestination = startupDestination,
                 onStartupDestinationChanged = { destination ->
                     startupDestination = destination
-                    scope.launch(Dispatchers.IO) { settings.setStartupDestination(destination) }
+                    scope.launch(Dispatchers.IO) { settings.setStartupDestination(destination, activeHouseholdProfile.id) }
+                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                        cloudLibrarySyncService.recordPreferencesMutation(
+                            profileId = activeHouseholdProfile.id,
+                            audioLang = preferredAudioLanguage,
+                            subtitleLang = preferredSubtitleLanguage,
+                            subFallback = subtitleFallbackEnglish,
+                            startupDestination = destination.persistedValue,
+                            epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+                        )
+                    }
                 },
                 playChannelsFullscreen = playChannelsFullscreen,
                 onPlayChannelsFullscreenChanged = { enabled ->
@@ -2052,17 +1896,47 @@ private fun FortressTVApp(
                 preferredAudioLanguage = preferredAudioLanguage,
                 onPreferredAudioLanguageChanged = { lang ->
                     preferredAudioLanguage = lang
-                    scope.launch(Dispatchers.IO) { settings.setPreferredAudioLanguage(lang) }
+                    scope.launch(Dispatchers.IO) { settings.setPreferredAudioLanguage(lang, activeHouseholdProfile.id) }
+                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                        cloudLibrarySyncService.recordPreferencesMutation(
+                            profileId = activeHouseholdProfile.id,
+                            audioLang = lang,
+                            subtitleLang = preferredSubtitleLanguage,
+                            subFallback = subtitleFallbackEnglish,
+                            startupDestination = startupDestination.persistedValue,
+                            epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+                        )
+                    }
                 },
                 preferredSubtitleLanguage = preferredSubtitleLanguage,
                 onPreferredSubtitleLanguageChanged = { lang ->
                     preferredSubtitleLanguage = lang
-                    scope.launch(Dispatchers.IO) { settings.setPreferredSubtitleLanguage(lang) }
+                    scope.launch(Dispatchers.IO) { settings.setPreferredSubtitleLanguage(lang, activeHouseholdProfile.id) }
+                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                        cloudLibrarySyncService.recordPreferencesMutation(
+                            profileId = activeHouseholdProfile.id,
+                            audioLang = preferredAudioLanguage,
+                            subtitleLang = lang,
+                            subFallback = subtitleFallbackEnglish,
+                            startupDestination = startupDestination.persistedValue,
+                            epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+                        )
+                    }
                 },
                 subtitleFallbackEnglish = subtitleFallbackEnglish,
                 onSubtitleFallbackEnglishChanged = { enabled ->
                     subtitleFallbackEnglish = enabled
-                    scope.launch(Dispatchers.IO) { settings.setSubtitleFallbackEnglish(enabled) }
+                    scope.launch(Dispatchers.IO) { settings.setSubtitleFallbackEnglish(enabled, activeHouseholdProfile.id) }
+                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                        cloudLibrarySyncService.recordPreferencesMutation(
+                            profileId = activeHouseholdProfile.id,
+                            audioLang = preferredAudioLanguage,
+                            subtitleLang = preferredSubtitleLanguage,
+                            subFallback = enabled,
+                            startupDestination = startupDestination.persistedValue,
+                            epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+                        )
+                    }
                 },
                 openSubtitlesSettings = openSubtitlesSettings,
                 onOpenSubtitlesSettingsChanged = { newSettings ->
@@ -2104,7 +1978,7 @@ private fun FortressTVApp(
                 epgLoadedDays = epgLoadedDays,
                 playlist = playlist,
                 epgGuide = epgGuide,
-                hiddenCategories = activeProfile?.id?.let { userLibrary.hiddenCategories(it) } ?: emptySet(),
+                hiddenCategories = hiddenCategories,
                 loading = loading,
                 onDismiss = { showSettings = false },
                 onPlaylistEnabledChanged = { profile, enabled ->
@@ -2182,11 +2056,31 @@ private fun FortressTVApp(
                 },
                 onEpgTimeShiftChanged = { shift ->
                     epgScheduleCorrectionMinutes = shift * 60
-                    settings.saveEpgScheduleCorrectionMinutes(shift * 60)
+                    settings.saveEpgScheduleCorrectionMinutes(shift * 60, activeHouseholdProfile.id)
+                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                        cloudLibrarySyncService.recordPreferencesMutation(
+                            profileId = activeHouseholdProfile.id,
+                            audioLang = preferredAudioLanguage,
+                            subtitleLang = preferredSubtitleLanguage,
+                            subFallback = subtitleFallbackEnglish,
+                            startupDestination = startupDestination.persistedValue,
+                            epgTimeShiftHours = shift
+                        )
+                    }
                 },
                 onEpgScheduleCorrectionChanged = { minutes ->
                     epgScheduleCorrectionMinutes = minutes
-                    settings.saveEpgScheduleCorrectionMinutes(minutes)
+                    settings.saveEpgScheduleCorrectionMinutes(minutes, activeHouseholdProfile.id)
+                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                        cloudLibrarySyncService.recordPreferencesMutation(
+                            profileId = activeHouseholdProfile.id,
+                            audioLang = preferredAudioLanguage,
+                            subtitleLang = preferredSubtitleLanguage,
+                            subFallback = subtitleFallbackEnglish,
+                            startupDestination = startupDestination.persistedValue,
+                            epgTimeShiftHours = minutes / 60
+                        )
+                    }
                     val accountState = accountRepository.getAccountState()
                     if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
                         scope.launch(Dispatchers.IO) {
@@ -2221,48 +2115,7 @@ private fun FortressTVApp(
                     settings.saveEpgLoadedDays(clamped)
                     val currentEpg = epgSource ?: settings.epgSource()
                     currentEpg?.let { loadEpg(it, save = false, forceRefresh = false) }
-                },
-                onCreateBackup = {
-                    showCreateBackupDialog = true
-                },
-                onRestoreBackup = {
-                    val status = profileRepository.getPinStatus()
-                    if ((activeHouseholdProfile.isChild || status.hasPin) && !profileRepository.isAdultUnlocked()) {
-                        pinPromptAction = { triggerRestoreBackup() }
-                    } else {
-                        triggerRestoreBackup()
-                    }
                 }
-            )
-        }
-
-        if (showCreateBackupDialog) {
-            CreateBackupDialog(
-                onDismiss = { showCreateBackupDialog = false },
-                onConfirm = { password ->
-                    showCreateBackupDialog = false
-                    backupPasswordForExport = password
-                    val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                    createBackupFileLauncher.launch("fortresstv-backup-$dateStr.ftv")
-                }
-            )
-        }
-
-        if (showRestoreBackupPasswordDialog && pendingRestoreUri != null) {
-            RestoreBackupPasswordDialog(
-                onDismiss = {
-                    pendingRestoreUri?.takeIf {
-                        it.scheme == "file" && it.path == File(context.cacheDir, "incoming-transfer.ftv").absolutePath
-                    }?.path?.let { path -> runCatching { File(path).delete() } }
-                    showRestoreBackupPasswordDialog = false
-                    pendingRestoreUri = null
-                    restoreErrorMessage = null
-                },
-                onConfirm = { password, merge ->
-                    executeRestore(password, merge)
-                },
-                errorMessage = restoreErrorMessage,
-                isRestoring = isRestoringBackup
             )
         }
 
@@ -2395,25 +2248,6 @@ private fun FortressTVApp(
         if (showTransferDialog) {
             TvReceiveSourceDialog(
                 onDismiss = { showTransferDialog = false },
-                onBackupConfirmed = { payload ->
-                    showTransferDialog = false
-                    scope.launch(Dispatchers.IO) {
-                        val file = File(context.cacheDir, "incoming-transfer.ftv")
-                        runCatching { file.writeBytes(payload.bytes) }
-                            .onSuccess {
-                                withContext(Dispatchers.Main) {
-                                    pendingRestoreUri = Uri.fromFile(file)
-                                    restoreErrorMessage = null
-                                    if (payload.pairingPassword != null) {
-                                        executeRestore(payload.pairingPassword, merge = false)
-                                    } else {
-                                        showRestoreBackupPasswordDialog = true
-                                    }
-                                }
-                            }
-                            .onFailure { file.delete() }
-                    }
-                },
                 onSourceConfirmed = { payload ->
                     showTransferDialog = false
                     val displayName = payload.name.ifBlank {
@@ -2677,7 +2511,6 @@ private fun WelcomeScreen(
     error: String?,
     onRetry: (() -> Unit)?,
     onAddSource: () -> Unit,
-    onRestoreBackup: () -> Unit,
     onEditPlaylist: (() -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null
 ) {
@@ -2776,18 +2609,6 @@ private fun WelcomeScreen(
                                 )
                             }
                             Text(strings.addPlaylist, fontWeight = FontWeight.SemiBold)
-                        }
-                        TextButton(
-                            onClick = onRestoreBackup,
-                            enabled = !loading,
-                            modifier = Modifier.tvFocusHighlight(
-                                shape = RoundedCornerShape(8.dp),
-                                scaleOnFocus = if (isTv) 1.04f else 1.0f
-                            )
-                        ) {
-                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(strings.restoreFromBackup, fontSize = 13.sp)
                         }
                     }
                 }
@@ -4174,6 +3995,9 @@ private fun FortressLibrary(
     progressStore: VodProgressStore,
     favoriteChannelIds: Set<String>,
     recentChannelIds: List<String>,
+    hiddenCategories: Set<String> = emptySet(),
+    categoryOrder: List<String> = emptyList(),
+    onCategoriesChanged: (Set<String>, List<String>) -> Unit = { _, _ -> },
     onRecordChannelWatched: (PlaylistChannel) -> Unit,
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
@@ -4199,12 +4023,6 @@ private fun FortressLibrary(
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     var progressEntries by remember { mutableStateOf(progressStore.entries()) }
-    var hiddenCategories by remember(activeProfile.id) {
-        mutableStateOf(userLibrary.hiddenCategories(activeProfile.id))
-    }
-    var categoryOrder by remember(activeProfile.id) {
-        mutableStateOf(userLibrary.categoryOrder(activeProfile.id))
-    }
     val libraryConfiguration = LocalConfiguration.current
     val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
     var destination by rememberSaveable {
@@ -4395,10 +4213,13 @@ private fun FortressLibrary(
                     hiddenCategories = hiddenCategories,
                     categoryOrder = categoryOrder,
                     onToggleCategoryHidden = { category ->
+                        val targetSourceId = effectivePlaylist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
                         val isHidden = category in hiddenCategories
-                        hiddenCategories = userLibrary.setCategoryHidden(activeProfile.id, category, !isHidden)
+                        val updatedHidden = userLibrary.setCategoryHidden(targetSourceId, category, !isHidden)
+                        onCategoriesChanged(updatedHidden, categoryOrder)
                     },
                     onMoveCategory = { category, moveUp ->
+                        val targetSourceId = effectivePlaylist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
                         val list = (if (categoryOrder.isEmpty()) effectivePlaylist.groups else categoryOrder).toMutableList()
                         if (category !in list) list.add(category)
                         val index = list.indexOf(category)
@@ -4409,16 +4230,20 @@ private fun FortressLibrary(
                             list.removeAt(index)
                             list.add(index + 1, category)
                         }
-                        categoryOrder = userLibrary.setCategoryOrder(activeProfile.id, list)
+                        val updatedOrder = userLibrary.setCategoryOrder(targetSourceId, list)
+                        onCategoriesChanged(hiddenCategories, updatedOrder)
                     },
                     onUnhideAllCategories = {
-                        hiddenCategories = userLibrary.unhideAllCategories(activeProfile.id)
+                        val updatedHidden = userLibrary.unhideAllCategories(activeProfile.id)
+                        onCategoriesChanged(updatedHidden, categoryOrder)
                     },
                     onHideAllCategories = { cats ->
-                        hiddenCategories = userLibrary.hideAllCategories(activeProfile.id, cats)
+                        val updatedHidden = userLibrary.hideAllCategories(activeProfile.id, cats)
+                        onCategoriesChanged(updatedHidden, categoryOrder)
                     },
                     onResetCategoryOrder = {
-                        categoryOrder = userLibrary.resetCategoryOrder(activeProfile.id)
+                        val updatedOrder = userLibrary.resetCategoryOrder(activeProfile.id)
+                        onCategoriesChanged(hiddenCategories, updatedOrder)
                     },
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,
@@ -10474,14 +10299,17 @@ private fun ChannelBrowser(
         else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
     }
 
-    var selectedFilter by remember(playlist, orderedCategories, hiddenCategories) {
-        mutableStateOf(
-            if (hiddenCategories.isNotEmpty() && orderedCategories.isNotEmpty()) {
-                "group:${orderedCategories.first()}"
-            } else {
-                allFilter
+    var selectedFilter by remember(playlist) {
+        mutableStateOf(allFilter)
+    }
+
+    LaunchedEffect(hiddenCategories) {
+        if (selectedFilter.startsWith("group:")) {
+            val group = selectedFilter.removePrefix("group:")
+            if (group in hiddenCategories) {
+                selectedFilter = allFilter
             }
-        )
+        }
     }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -10562,7 +10390,7 @@ private fun ChannelBrowser(
             selectedFilter == uncategorizedFilter -> allVisibleChannels.filter { it.group.isNullOrBlank() }
             selectedFilter.startsWith("group:") -> {
                 val group = selectedFilter.removePrefix("group:")
-                playlist.channels.filter { it.group == group }
+                allVisibleChannels.filter { it.group == group }
             }
             else -> allVisibleChannels
         }
@@ -10587,7 +10415,7 @@ private fun ChannelBrowser(
                 channel = currentChannel,
                 epgGuide = epgGuide,
                 epgTimeShiftHours = epgTimeShiftHours,
-                channels = playlist.channels,
+                channels = allVisibleChannels,
                 groups = orderedCategories,
                 favoriteChannelIds = favoriteChannelIds,
                 recentChannelIds = recentChannelIds,
@@ -14967,9 +14795,7 @@ private fun SettingsDialog(
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
     onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
     onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
-    onEpgLoadedDaysChanged: (Int) -> Unit,
-    onCreateBackup: () -> Unit,
-    onRestoreBackup: () -> Unit
+    onEpgLoadedDaysChanged: (Int) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
@@ -15154,9 +14980,7 @@ private fun SettingsDialog(
                                     hasParentalPin = hasParentalPin,
                                     onParentalControlToggled = onParentalControlToggled,
                                     onChangeParentalPin = onChangeParentalPin,
-                                    onRemoveParentalPin = onRemoveParentalPin,
-                                    onCreateBackup = onCreateBackup,
-                                    onRestoreBackup = onRestoreBackup
+                                    onRemoveParentalPin = onRemoveParentalPin
                                 )
                                 1 -> PlaylistsTab(
                                     playlists = playlists,
@@ -15221,8 +15045,6 @@ private fun SettingsDialog(
                                     onParentalControlToggled = onParentalControlToggled,
                                     onChangeParentalPin = onChangeParentalPin,
                                     onRemoveParentalPin = onRemoveParentalPin,
-                                    onCreateBackup = onCreateBackup,
-                                    onRestoreBackup = onRestoreBackup,
                                     subtitlesOnly = true
                                 )
                                 4 -> AboutTab()
@@ -15276,9 +15098,7 @@ private fun SettingsDialog(
                                 hasParentalPin = hasParentalPin,
                                 onParentalControlToggled = onParentalControlToggled,
                                 onChangeParentalPin = onChangeParentalPin,
-                                onRemoveParentalPin = onRemoveParentalPin,
-                                onCreateBackup = onCreateBackup,
-                                onRestoreBackup = onRestoreBackup
+                                onRemoveParentalPin = onRemoveParentalPin
                             )
                             1 -> PlaylistsTab(
                                 playlists = playlists,
@@ -15343,8 +15163,6 @@ private fun SettingsDialog(
                                 onParentalControlToggled = onParentalControlToggled,
                                 onChangeParentalPin = onChangeParentalPin,
                                 onRemoveParentalPin = onRemoveParentalPin,
-                                onCreateBackup = onCreateBackup,
-                                onRestoreBackup = onRestoreBackup,
                                 subtitlesOnly = true
                             )
                             4 -> AboutTab()
@@ -15579,8 +15397,6 @@ private fun GeneralTab(
     onParentalControlToggled: (Boolean) -> Unit,
     onChangeParentalPin: () -> Unit,
     onRemoveParentalPin: () -> Unit,
-    onCreateBackup: () -> Unit,
-    onRestoreBackup: () -> Unit,
     subtitlesOnly: Boolean = false
 ) {
     val strings = LocalAppStrings.current
@@ -15862,71 +15678,6 @@ private fun GeneralTab(
                     onCheckedChange = { checked ->
                         onOpenSubtitlesSettingsChanged(openSubtitlesSettings.copy(autoSearch = checked))
                     }
-                )
-            }
-        }
-
-        // General-only groups
-        if (!subtitlesOnly) SettingsGroup(title = strings.backupAndRestore) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onCreateBackup)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Backup,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(strings.createBackup, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text(
-                        strings.createBackupDesc,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp
-                    )
-                }
-                Icon(
-                    Icons.Default.FileUpload,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onRestoreBackup)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Restore,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(strings.restoreBackup, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text(
-                        strings.restoreBackupDesc,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp
-                    )
-                }
-                Icon(
-                    Icons.Default.FileDownload,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -19477,512 +19228,11 @@ private fun PinEntryDialog(
     )
 }
 
-@Composable
-private fun CreateBackupDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (password: String) -> Unit
-) {
-    val strings = LocalAppStrings.current
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val view = LocalView.current
-    val focusRequester = remember { FocusRequester() }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var confirmPasswordVisible by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var weakPasswordAcknowledged by remember { mutableStateOf(false) }
-
-    fun hideKeyboard() {
-        runCatching { focusRequester.requestFocus() }
-        focusManager.clearFocus(force = true)
-        keyboardController?.hide()
-        view.clearFocus()
-        val dialogWin = (view.parent as? DialogWindowProvider)?.window
-            ?: (view.context as? ComponentActivity)?.window
-        if (dialogWin != null) {
-            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
-    }
-
-    BackHandler(onBack = {
-        hideKeyboard()
-        onDismiss()
-    })
-
-    Dialog(
-        onDismissRequest = {
-            hideKeyboard()
-        },
-        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .focusRequester(focusRequester)
-                .focusable()
-                .imePadding()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    hideKeyboard()
-                    onDismiss()
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp,
-                modifier = Modifier
-                    .widthIn(max = 480.dp)
-                    .fillMaxWidth(0.92f)
-                    .padding(16.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { /* consume clicks on card */ }
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        strings.createBackup,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        strings.backupPasswordExplanation,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 16.sp
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = {
-                            password = it
-                            errorMessage = null
-                            weakPasswordAcknowledged = false
-                        },
-                        label = { Text(strings.backupPassword) },
-                        singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(
-                                    if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = if (passwordVisible) strings.hidePassword else strings.showPassword,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = confirmPassword,
-                        onValueChange = {
-                            confirmPassword = it
-                            errorMessage = null
-                        },
-                        label = { Text(strings.confirmBackupPassword) },
-                        singleLine = true,
-                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
-                                Icon(
-                                    if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = if (confirmPasswordVisible) strings.hidePassword else strings.showPassword,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                hideKeyboard()
-                                when {
-                                    password.isBlank() -> errorMessage = strings.backupPasswordRequired
-                                    password.length < 8 -> errorMessage = strings.backupPasswordMinLength
-                                    password != confirmPassword -> errorMessage = strings.backupPasswordMismatch
-                                    isWeakBackupPassword(password) && !weakPasswordAcknowledged -> errorMessage = strings.backupWeakPasswordWarning
-                                    else -> onConfirm(password)
-                                }
-                            }
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (errorMessage != null) {
-                        Text(
-                            errorMessage!!,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    if (password.length >= 8 && isWeakBackupPassword(password)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { weakPasswordAcknowledged = !weakPasswordAcknowledged },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = weakPasswordAcknowledged,
-                                onCheckedChange = { weakPasswordAcknowledged = it }
-                            )
-                            Text(
-                                strings.backupWeakPasswordAcknowledge,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            onClick = {
-                                hideKeyboard()
-                                onDismiss()
-                            }
-                        ) {
-                            Text(strings.cancel)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                hideKeyboard()
-                                when {
-                                    password.isBlank() -> errorMessage = strings.backupPasswordRequired
-                                    password.length < 8 -> errorMessage = strings.backupPasswordMinLength
-                                    password != confirmPassword -> errorMessage = strings.backupPasswordMismatch
-                                    isWeakBackupPassword(password) && !weakPasswordAcknowledged -> errorMessage = strings.backupWeakPasswordWarning
-                                    else -> onConfirm(password)
-                                }
-                            }
-                        ) {
-                            Text(strings.exportBackupAction)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun isWeakBackupPassword(password: String): Boolean {
-    if (password.length < 12) return true
-    val characterClasses = listOf(
-        password.any(Char::isLowerCase),
-        password.any(Char::isUpperCase),
-        password.any(Char::isDigit),
-        password.any { !it.isLetterOrDigit() }
-    ).count { it }
-    return characterClasses < 3
-}
-
-@Composable
-private fun RestoreBackupPasswordDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (password: String, merge: Boolean) -> Unit,
-    errorMessage: String?,
-    isRestoring: Boolean
-) {
-    val strings = LocalAppStrings.current
-    val isTv = LocalFormFactor.current.isTelevision
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val view = LocalView.current
-    val focusRequester = remember { FocusRequester() }
-    var password by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var mergeMode by remember { mutableStateOf(false) }
-    var localError by remember { mutableStateOf<String?>(null) }
-
-    val displayError = errorMessage ?: localError
-    val passwordFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(isTv) {
-        if (isTv) {
-            delay(150)
-            try {
-                passwordFocusRequester.requestFocus()
-            } catch (_: Throwable) {}
-        }
-    }
-
-    fun hideKeyboard() {
-        focusManager.clearFocus(force = true)
-        keyboardController?.hide()
-        view.clearFocus()
-        val dialogWin = (view.parent as? DialogWindowProvider)?.window
-            ?: (view.context as? ComponentActivity)?.window
-        if (dialogWin != null) {
-            WindowInsetsControllerCompat(dialogWin, dialogWin.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(view.windowToken, 0)
-        imm?.hideSoftInputFromWindow(view.rootView.windowToken, 0)
-    }
-
-    BackHandler(onBack = {
-        if (!isRestoring) {
-            hideKeyboard()
-            onDismiss()
-        }
-    })
-
-    Dialog(
-        onDismissRequest = {
-            hideKeyboard()
-        },
-        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .imePadding()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    if (!isRestoring) {
-                        hideKeyboard()
-                        onDismiss()
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp,
-                modifier = Modifier
-                    .widthIn(max = 500.dp)
-                    .fillMaxWidth(0.92f)
-                    .padding(16.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { /* consume clicks on card */ }
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        strings.restoreBackup,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        strings.enterBackupPassword,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = {
-                            password = it
-                            localError = null
-                        },
-                        label = { Text(strings.backupPassword) },
-                        singleLine = true,
-                        enabled = !isRestoring,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                hideKeyboard()
-                                if (password.isBlank()) {
-                                    localError = strings.backupPasswordRequired
-                                } else {
-                                    onConfirm(password, mergeMode)
-                                }
-                            }
-                        ),
-                        trailingIcon = {
-                            IconButton(
-                                onClick = { passwordVisible = !passwordVisible },
-                                modifier = Modifier.focusable(!isTv)
-                            ) {
-                                Icon(
-                                    if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(passwordFocusRequester)
-                            .tvFocusHighlight(
-                                shape = OutlinedTextFieldDefaults.shape,
-                                scaleOnFocus = if (isTv) 1.02f else 1.0f
-                            )
-                    )
-
-                    Text(
-                        strings.restoreModePrompt,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .tvFocusHighlight(
-                                        shape = RoundedCornerShape(8.dp),
-                                        scaleOnFocus = if (isTv) 1.02f else 1.0f
-                                    )
-                                    .clickable(enabled = !isRestoring) {
-                                        hideKeyboard()
-                                        mergeMode = false
-                                    }
-                                    .padding(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = !mergeMode,
-                                    onClick = null,
-                                    modifier = Modifier.focusable(false)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text(strings.restoreModeReplace, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                    Text(strings.restoreModeReplaceDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .tvFocusHighlight(
-                                        shape = RoundedCornerShape(8.dp),
-                                        scaleOnFocus = if (isTv) 1.02f else 1.0f
-                                    )
-                                    .clickable(enabled = !isRestoring) {
-                                        hideKeyboard()
-                                        mergeMode = true
-                                    }
-                                    .padding(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = mergeMode,
-                                    onClick = null,
-                                    modifier = Modifier.focusable(false)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text(strings.restoreModeMerge, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                    Text(strings.restoreModeMergeDesc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    }
-
-                    if (isRestoring) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            CircularProgressIndicator(Modifier.size(24.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Text(strings.restoreBackup, fontSize = 13.sp)
-                        }
-                    }
-
-                    if (displayError != null && !isRestoring) {
-                        Text(
-                            displayError,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            onClick = {
-                                hideKeyboard()
-                                onDismiss()
-                            },
-                            enabled = !isRestoring,
-                            modifier = Modifier.tvFocusHighlight(
-                                shape = ButtonDefaults.textShape,
-                                scaleOnFocus = if (isTv) 1.05f else 1.0f
-                            )
-                        ) {
-                            Text(strings.cancel)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                hideKeyboard()
-                                if (password.isBlank()) {
-                                    localError = strings.backupPasswordRequired
-                                } else {
-                                    onConfirm(password, mergeMode)
-                                }
-                            },
-                            enabled = !isRestoring,
-                            modifier = Modifier.tvFocusHighlight(
-                                shape = ButtonDefaults.shape,
-                                scaleOnFocus = if (isTv) 1.05f else 1.0f
-                            )
-                        ) {
-                            Text(strings.restoreBackupAction)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Preview(showBackground = true, widthDp = 1024, heightDp = 600)
 @Composable
 private fun WelcomePreview() = FortressTVTheme {
-    WelcomeScreen(false, true, null, onRetry = null, onAddSource = {}, onRestoreBackup = {})
+    WelcomeScreen(false, true, null, onRetry = null, onAddSource = {})
 }
 
 // ---------------------------------------------------------------------------
@@ -19992,7 +19242,6 @@ private fun WelcomePreview() = FortressTVTheme {
 @Composable
 private fun TvReceiveSourceDialog(
     onDismiss: () -> Unit,
-    onBackupConfirmed: (TransferBackupPayload) -> Unit,
     onSourceConfirmed: (TransferSourcePayload) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -20000,7 +19249,6 @@ private fun TvReceiveSourceDialog(
     val isTv = LocalFormFactor.current.isTelevision
     val scope = rememberCoroutineScope()
     val addTransferredSourceFocusRequester = remember { FocusRequester() }
-    val restoreTransferredBackupFocusRequester = remember { FocusRequester() }
 
     // Session state
     var sessionState by remember { mutableStateOf<TransferSessionState>(TransferSessionState.Waiting) }
@@ -20047,8 +19295,6 @@ private fun TvReceiveSourceDialog(
                     )
                     sessionState = TransferSessionState.PendingConfirmation(preview)
                 }
-                is TransferRequestResult.AcceptedBackup ->
-                    sessionState = TransferSessionState.PendingBackup(result.payload)
                 is TransferRequestResult.LockedOut ->
                     sessionState = TransferSessionState.Error(strings.transferLockedOut)
                 is TransferRequestResult.BadPin -> { /* state stays Waiting, shown in status */ }
@@ -20103,10 +19349,6 @@ private fun TvReceiveSourceDialog(
                     delay(100)
                     runCatching { addTransferredSourceFocusRequester.requestFocus() }
                 }
-                is TransferSessionState.PendingBackup -> {
-                    delay(100)
-                    runCatching { restoreTransferredBackupFocusRequester.requestFocus() }
-                }
                 else -> {}
             }
         }
@@ -20155,7 +19397,7 @@ private fun TvReceiveSourceDialog(
                             val qrBitmap = remember(serverUrl) {
                                 val fullUrl = if (serverUrl.isNotBlank())
                                     "fortresstv://send?endpoint=${java.net.URLEncoder.encode(serverUrl, "UTF-8")}" +
-                                        "&token=${server.value?.sessionToken.orEmpty()}&backupKey=${server.value?.backupKey.orEmpty()}"
+                                        "&token=${server.value?.sessionToken.orEmpty()}"
                                 else null
                                 fullUrl?.let {
                                     com.fortresstv.player.transfer.QrCodeGenerator.generateImageBitmap(it, 400)
@@ -20294,45 +19536,6 @@ private fun TvReceiveSourceDialog(
                             TextButton(
                                 onClick = onDismiss,
                                 modifier = Modifier.fillMaxWidth().tvFocusHighlight(shape = ButtonDefaults.textShape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
-                            ) {
-                                Text(strings.cancel)
-                            }
-                            return@Column
-                        }
-
-                        is TransferSessionState.PendingBackup -> {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            Text(strings.transferBackupReceived, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "${state.payload.fileName} · ${state.payload.bytes.size / 1024} KB",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                if (state.payload.pairingPassword != null) strings.transferPairedRestore else strings.restoreModePrompt,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(20.dp))
-                            Button(
-                                onClick = { onBackupConfirmed(state.payload) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .focusRequester(restoreTransferredBackupFocusRequester)
-                                    .tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
-                            ) { Text(if (state.payload.pairingPassword != null) strings.restoreModeReplace else strings.restoreFromBackup) }
-                            Spacer(Modifier.height(8.dp))
-                            TextButton(
-                                onClick = onDismiss,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .tvFocusHighlight(shape = ButtonDefaults.textShape, scaleOnFocus = if (isTv) 1.04f else 1.0f)
                             ) {
                                 Text(strings.cancel)
                             }

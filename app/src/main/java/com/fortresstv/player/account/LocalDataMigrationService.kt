@@ -141,7 +141,7 @@ internal class LocalDataMigrationService(
                     sourceId = parts[1],
                     itemKind = "movie",
                     itemId = parts[2],
-                    isFavourite = false,
+                    isFavourite = true,
                     isWatchlisted = true,
                     isWatched = key in localLibrary.watchedItemIds()
                 )
@@ -161,7 +161,7 @@ internal class LocalDataMigrationService(
                     sourceId = parts[1],
                     itemKind = "series",
                     itemId = parts[2],
-                    isFavourite = false,
+                    isFavourite = true,
                     isWatchlisted = true,
                     isWatched = false
                 )

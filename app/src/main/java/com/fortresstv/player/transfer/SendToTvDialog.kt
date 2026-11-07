@@ -4,8 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,22 +13,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -39,37 +35,28 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.fortresstv.player.playlist.PlaylistProfile
-import com.fortresstv.player.BuildConfig
-import com.fortresstv.player.backup.BackupExportResult
-import com.fortresstv.player.backup.BackupManager
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.SourceSettingsStore
 import com.fortresstv.player.ui.LocalAppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-
-private enum class NativeTransferMode { SOURCE, BACKUP }
 
 @Composable
 fun SendToTvDialog(
@@ -91,17 +78,9 @@ fun SendToTvDialog(
         mutableStateOf(initialProfile?.takeIf { it.source !is ContentSource.LocalFile } ?: sendable.firstOrNull())
     }
     var selectedTv by remember(directTarget) { mutableStateOf(directTarget) }
-    var pin by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var mode by remember(directTarget, initialProfile) {
-        mutableStateOf(if (initialProfile == null || directTarget == null) NativeTransferMode.BACKUP else NativeTransferMode.SOURCE)
-    }
-    var backupPassword by remember { mutableStateOf("") }
-    var confirmBackupPassword by remember { mutableStateOf("") }
-    var backupPasswordVisible by remember { mutableStateOf(false) }
-    var confirmBackupPasswordVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(devices) {
         if (selectedTv == null && devices.isNotEmpty()) {
@@ -143,72 +122,18 @@ fun SendToTvDialog(
                             Text(strings.transferConfirmOnTv, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     } else {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { mode = NativeTransferMode.SOURCE }, enabled = !sending, modifier = Modifier.weight(1f)) {
-                                Text(strings.transferSourceTab)
-                            }
-                            Button(onClick = { mode = NativeTransferMode.BACKUP }, enabled = !sending, modifier = Modifier.weight(1f)) {
-                                Text(strings.transferBackupTab)
-                            }
-                        }
-                        if (mode == NativeTransferMode.SOURCE) {
-                            Text(strings.transferSourceExplanation, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(strings.transferChooseSource, fontWeight = FontWeight.SemiBold)
-                            if (sendable.isEmpty()) {
-                                Text(strings.transferNoSendableSources, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
-                                LazyColumn(Modifier.fillMaxWidth().height(110.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    items(sendable, key = { it.id }) { profile ->
-                                        SelectionRow(
-                                            text = profile.name,
-                                            selected = selectedProfile?.id == profile.id,
-                                            onClick = { selectedProfile = profile; error = null }
-                                        )
-                                    }
-                                }
-                            }
+                        Text(strings.transferSourceExplanation, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(strings.transferChooseSource, fontWeight = FontWeight.SemiBold)
+                        if (sendable.isEmpty()) {
+                            Text(strings.transferNoSendableSources, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            Text(strings.transferBackupExplanation, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (selectedTv?.backupKey != null) {
-                                Text(strings.transferPairedBackup, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
-                                OutlinedTextField(
-                                    value = backupPassword,
-                                    onValueChange = { backupPassword = it; error = null },
-                                    label = { Text(strings.backupPassword) },
-                                    supportingText = { Text(strings.transferBackupPasswordDesc) },
-                                    singleLine = true,
-                                    visualTransformation = if (backupPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                    trailingIcon = {
-                                        IconButton(onClick = { backupPasswordVisible = !backupPasswordVisible }) {
-                                            Icon(
-                                                if (backupPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                                contentDescription = if (backupPasswordVisible) strings.hidePassword else strings.showPassword,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                OutlinedTextField(
-                                    value = confirmBackupPassword,
-                                    onValueChange = { confirmBackupPassword = it; error = null },
-                                    label = { Text(strings.confirmBackupPassword) },
-                                    singleLine = true,
-                                    visualTransformation = if (confirmBackupPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                    trailingIcon = {
-                                        IconButton(onClick = { confirmBackupPasswordVisible = !confirmBackupPasswordVisible }) {
-                                            Icon(
-                                                if (confirmBackupPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                                contentDescription = if (confirmBackupPasswordVisible) strings.hidePassword else strings.showPassword,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                if (confirmBackupPassword.isNotEmpty() && backupPassword != confirmBackupPassword) {
-                                    Text(strings.backupPasswordMismatch, color = MaterialTheme.colorScheme.error)
+                            LazyColumn(Modifier.fillMaxWidth().height(110.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(sendable, key = { it.id }) { profile ->
+                                    SelectionRow(
+                                        text = profile.name,
+                                        selected = selectedProfile?.id == profile.id,
+                                        onClick = { selectedProfile = profile; error = null }
+                                    )
                                 }
                             }
                         }
@@ -243,25 +168,11 @@ fun SendToTvDialog(
                             }
                         }
 
-                        if (directTarget == null) {
-                            OutlinedTextField(
-                                value = pin,
-                                onValueChange = { value -> pin = value.filter(Char::isDigit).take(6); error = null },
-                                label = { Text(strings.transferEnterTvCode) },
-                                supportingText = { Text(strings.transferEnterTvCodeDesc) },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
                         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         if (directTarget == null && !sending) {
                             val hint = when {
                                 selectedTv == null -> strings.transferSearchingTvs
-                                mode == NativeTransferMode.SOURCE && selectedTv?.sessionToken == null -> strings.transferQrRequiredForSource
-                                pin.length < 6 -> strings.transferEnterTvCodeDesc
-                                mode == NativeTransferMode.BACKUP && selectedTv?.backupKey == null && backupPassword.length < 8 -> strings.backupPasswordMinLength
-                                mode == NativeTransferMode.BACKUP && selectedTv?.backupKey == null && backupPassword != confirmBackupPassword -> strings.backupPasswordMismatch
+                                selectedTv?.sessionToken == null -> strings.transferQrRequiredForSource
                                 else -> null
                             }
                             if (hint != null) {
@@ -276,18 +187,8 @@ fun SendToTvDialog(
                                 error = null
                                 scope.launch {
                                     val result = withContext(Dispatchers.IO) {
-                                        if (mode == NativeTransferMode.SOURCE) {
-                                            if (profile == null) NativeSendResult.Error("No source selected")
-                                            else NativeTransferClient.sendSource(tv, profile, pin, epgUrl)
-                                        } else {
-                                            val output = ByteArrayOutputStream()
-                                            when (BackupManager(context.applicationContext).exportBackup(
-                                                (tv.backupKey ?: backupPassword).toCharArray(), output, BuildConfig.VERSION_NAME
-                                            )) {
-                                                is BackupExportResult.Success -> NativeTransferClient.sendBackup(tv, output.toByteArray(), pin)
-                                                is BackupExportResult.Error -> NativeSendResult.Error("Could not create backup")
-                                            }
-                                        }
+                                        if (profile == null) NativeSendResult.Error("No source selected")
+                                        else NativeTransferClient.sendSource(tv, profile, "", epgUrl)
                                     }
                                     sending = false
                                     when (result) {
@@ -296,11 +197,7 @@ fun SendToTvDialog(
                                     }
                                 }
                             },
-                            enabled = !sending && selectedTv != null &&
-                                ((mode == NativeTransferMode.SOURCE && selectedProfile != null && selectedTv?.sessionToken != null) ||
-                                    (mode == NativeTransferMode.BACKUP && (selectedTv?.sessionToken != null || pin.length == 6) &&
-                                        (selectedTv?.backupKey != null ||
-                                            (backupPassword.length >= 8 && backupPassword == confirmBackupPassword)))),
+                            enabled = !sending && selectedTv != null && selectedProfile != null && selectedTv?.sessionToken != null,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             if (sending) {

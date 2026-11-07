@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.IOException
+import androidx.media3.common.Player
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackResilienceTest {
@@ -60,5 +61,15 @@ class PlaybackResilienceTest {
         assertEquals(false, ReadyFreezePolicy.shouldShowNotice(false, true, 5_000))
         assertEquals(false, ReadyFreezePolicy.shouldShowNotice(true, false, 5_000))
         assertEquals(false, ReadyFreezePolicy.shouldShowNotice(true, true, 3_499))
+    }
+
+    @Test
+    fun liveEndedRequiresPlayWhenReadyAndNetworkToRecover() {
+        assertEquals(StallDecision.RECOVER, LiveEndedRecoveryPolicy.decide(Player.STATE_ENDED, true, true, 0))
+        assertEquals(StallDecision.RECOVER, LiveEndedRecoveryPolicy.decide(Player.STATE_ENDED, true, true, 2))
+        assertEquals(StallDecision.GIVE_UP, LiveEndedRecoveryPolicy.decide(Player.STATE_ENDED, true, true, 3))
+        assertEquals(StallDecision.WAIT, LiveEndedRecoveryPolicy.decide(Player.STATE_ENDED, true, false, 0))
+        assertEquals(StallDecision.WAIT, LiveEndedRecoveryPolicy.decide(Player.STATE_ENDED, false, true, 0))
+        assertEquals(StallDecision.WAIT, LiveEndedRecoveryPolicy.decide(Player.STATE_READY, true, true, 0))
     }
 }

@@ -1,4 +1,4 @@
-﻿package com.fortresstv.player.transfer
+package com.fortresstv.player.transfer
 
 /**
  * Generates the embedded single-page HTML setup form served by [LocalTransferServer].
@@ -35,7 +35,7 @@ object TransferWebPage {
             appendLine("<body>")
             appendLine("<main>")
             appendLine("<header class=\"brand\"><span class=\"brand-mark\">F</span><span>FortressTV</span></header>")
-            appendLine("<section class=\"hero\"><span class=\"eyebrow\">LOCAL TV TRANSFER &middot; TRANSFERÊNCIA LOCAL</span><h1>Send securely to your TV</h1><p>Transfer a playlist or encrypted backup directly over your home Wi-Fi.<br><span lang=\"pt-PT\">Envie uma lista ou cópia encriptada diretamente pela rede Wi-Fi de casa.</span></p></section>")
+            appendLine("<section class=\"hero\"><span class=\"eyebrow\">LOCAL TV TRANSFER &middot; TRANSFERÊNCIA LOCAL</span><h1>Send securely to your TV</h1><p>Transfer a playlist directly over your home Wi-Fi.<br><span lang=\"pt-PT\">Envie uma lista diretamente pela rede Wi-Fi de casa.</span></p></section>")
             appendLine("<div class=\"connection\"><span class=\"status-dot\"></span><div><small>CONNECTED TV &middot; TV LIGADA</small><strong>$safeDevice</strong></div><span class=\"local-badge\">Local only</span></div>")
             appendLine("<div class=\"privacy\"><span class=\"lock\">&#128274;</span><span><strong>Encrypted local transfer &middot; Transferência local encriptada</strong><small>QR-paired source details are encrypted before transmission.<br><span lang=\"pt-PT\">Os dados da origem são encriptados antes da transmissão após o emparelhamento por QR.</span></small></span></div>")
             appendLine(JS_PIN_CHECK.replace("__PIN__", safePin))
@@ -244,13 +244,6 @@ object TransferWebPage {
                 epgUrl: null
               });
             });
-            document.getElementById('form-backup').addEventListener('submit', function(e) {
-              e.preventDefault();
-              var file = document.getElementById('backup-file').files[0];
-              if (!file) return showError('Choose a FortressTV backup file.');
-              if (file.size > 10 * 1024 * 1024) return showError('Backup files must be 10 MB or smaller.');
-              sendBackup(file);
-            });
           });
 
           function authHeaders() {
@@ -327,25 +320,6 @@ object TransferWebPage {
               status.textContent = 'Network error — check you are on the same Wi-Fi.';
             });
           }
-
-          function sendBackup(file) {
-            var headers = authHeaders();
-            if (!headers) return showError('Please enter your 6-digit code.');
-            headers['Content-Type'] = 'application/octet-stream';
-            headers['X-Fortress-Filename'] = 'fortresstv-transfer.ftv';
-            var status = document.getElementById('status');
-            status.className = 'sending';
-            status.textContent = 'Uploading encrypted backup\u2026';
-            fetch('/api/backup', { method: 'POST', headers: headers, body: file })
-              .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }); })
-              .then(function(res) {
-                if (res.ok) {
-                  status.className = 'ok';
-                  status.textContent = 'Done! Confirm and unlock the backup on your TV.';
-                  document.querySelectorAll('button[type=submit]').forEach(function(b) { b.disabled = true; });
-                } else showError(res.body.error || 'Error — please try again.');
-              }).catch(function() { showError('Network error — check you are on the same Wi-Fi.'); });
-          }
         })();
         </script>
     """.trimIndent()
@@ -361,7 +335,6 @@ object TransferWebPage {
         <div class="tabs">
           <button class="tab active" data-panel="form-m3u">M3U Playlist</button>
           <button class="tab" data-panel="panel-xtream">Xtream Codes</button>
-          <button class="tab" data-panel="panel-backup">Backup</button>
         </div>
 
         <form id="form-m3u" class="panel active">
@@ -399,16 +372,6 @@ object TransferWebPage {
               <input id="xt-pass" type="password" required autocomplete="current-password">
             </div>
             <button class="btn" type="submit">Add to TV</button>
-          </form>
-        </div>
-
-        <div class="panel" id="panel-backup">
-          <form id="form-backup" style="display:contents">
-            <div>
-              <label for="backup-file">Encrypted FortressTV backup (.ftv)</label>
-              <input id="backup-file" type="file" accept=".ftv,application/octet-stream" required>
-            </div>
-            <button class="btn" type="submit">Send backup to TV</button>
           </form>
         </div>
 

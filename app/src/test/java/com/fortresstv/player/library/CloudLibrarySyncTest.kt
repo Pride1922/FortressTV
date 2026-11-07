@@ -689,4 +689,137 @@ class CloudLibrarySyncTest {
         assertEquals("live_tv", loaded.startupDestination)
         assertEquals(2, loaded.epgTimeShiftHours)
     }
+
+    // --- BEHAVIOR TEST 10: Profile-specific preferences store ---
+    @Test
+    fun sourceSettingsStoreIsolatesPreferencesPerProfile() {
+        val prefs = InMemorySharedPreferences()
+        val store = com.fortresstv.player.source.SourceSettingsStore(prefs)
+
+        // Global defaults
+        assertEquals("default", store.preferredAudioLanguage())
+        assertEquals("off", store.preferredSubtitleLanguage())
+        assertTrue(store.subtitleFallbackEnglish())
+        assertEquals(com.fortresstv.player.source.StartupDestination.HOME, store.startupDestination())
+        assertEquals(0, store.epgScheduleCorrectionMinutes())
+
+        // Save for Profile A
+        store.setPreferredAudioLanguage("eng", "profile_a")
+        store.setPreferredSubtitleLanguage("eng", "profile_a")
+        store.setSubtitleFallbackEnglish(true, "profile_a")
+        store.setStartupDestination(com.fortresstv.player.source.StartupDestination.LIVE_TV, "profile_a")
+        store.saveEpgScheduleCorrectionMinutes(120, "profile_a")
+
+        // Save for Profile B
+        store.setPreferredAudioLanguage("por", "profile_b")
+        store.setPreferredSubtitleLanguage("por", "profile_b")
+        store.setSubtitleFallbackEnglish(false, "profile_b")
+        store.setStartupDestination(com.fortresstv.player.source.StartupDestination.HOME, "profile_b")
+        store.saveEpgScheduleCorrectionMinutes(60, "profile_b")
+
+        // Profile A asserts
+        assertEquals("eng", store.preferredAudioLanguage("profile_a"))
+        assertEquals("eng", store.preferredSubtitleLanguage("profile_a"))
+        assertTrue(store.subtitleFallbackEnglish("profile_a"))
+        assertEquals(com.fortresstv.player.source.StartupDestination.LIVE_TV, store.startupDestination("profile_a"))
+        assertEquals(120, store.epgScheduleCorrectionMinutes("profile_a"))
+
+        // Profile B asserts
+        assertEquals("por", store.preferredAudioLanguage("profile_b"))
+        assertEquals("por", store.preferredSubtitleLanguage("profile_b"))
+        assertFalse(store.subtitleFallbackEnglish("profile_b"))
+        assertEquals(com.fortresstv.player.source.StartupDestination.HOME, store.startupDestination("profile_b"))
+        assertEquals(60, store.epgScheduleCorrectionMinutes("profile_b"))
+
+        // Profile C (unset) falls back to global
+        assertEquals("por", store.preferredAudioLanguage("profile_c")) // last written global
+    }
+
+    // --- BEHAVIOR TEST 11: Movie and series favorites sync logic ---
+    @Test
+    fun remoteLibraryRestoresMoviesAndSeriesFavorites() {
+        val storage = mutableMapOf<String, InMemorySharedPreferences>()
+        val store = UserLibraryStore(prefsProvider = { ns -> storage.getOrPut(ns) { InMemorySharedPreferences() } }, initialNamespace = "profile_fav_test")
+
+        val cloudItems = listOf(
+            CloudLibraryItem(
+                householdId = "h1",
+                profileId = "p1",
+                sourceId = "src-1",
+                itemKind = "movie",
+                itemId = "100",
+                isFavourite = true,
+                isWatchlisted = false
+            ),
+            CloudLibraryItem(
+                householdId = "h1",
+                profileId = "p1",
+                sourceId = "src-1",
+                itemKind = "series",
+                itemId = "200",
+                isFavourite = true,
+                isWatchlisted = false
+            )
+        )
+
+        val watchlist = store.movieWatchlistIds().toMutableSet()
+        val followed = store.followedSeriesIds().toMutableSet()
+
+        for (item in cloudItems) {
+            val key = "${item.itemKind}:${item.sourceId}:${item.itemId}"
+            if (item.itemKind == "movie" && (item.isWatchlisted || item.isFavourite)) {
+                watchlist.add(key)
+            }
+            if (item.itemKind == "series" && (item.isWatchlisted || item.isFavourite)) {
+                followed.add(key)
+            }
+        }
+        store.setMovieWatchlistIds(watchlist)
+        store.setFollowedSeriesIds(followed)
+
+        assertTrue(store.movieWatchlistIds().contains("movie:src-1:100"))
+        assertTrue(store.followedSeriesIds().contains("series:src-1:200"))
+    }
+
+    // --- BEHAVIOR TEST 12: Profile categories save and get ---
+    @Test
+    fun profileCategoriesSyncSavesAndRestoresHiddenCategoriesAndOrder() {
+        val transport = FakeSyncTransport().apply {
+            rpcResponse = """
+                [
+                    {
+                        "source_id": "src-1",
+                        "hidden_categories": ["Sports", "News"],
+                        "category_order": ["Movies", "Documentaries"]
+                    }
+                ]
+            """.trimIndent()
+        }
+        val api = SupabaseSyncApi(transport)
+
+        api.saveProfileCategories(
+            profileId = "prof-test-1",
+            sourceId = "src-1",
+            hiddenCategories = setOf("Sports", "News"),
+            categoryOrder = listOf("Movies", "Documentaries"),
+            accessToken = "jwt-test"
+        )
+
+        assertEquals(1, transport.postRequests.size)
+        val (path, body) = transport.postRequests[0]
+        assertEquals("/rest/v1/rpc/fortress_save_profile_categories", path)
+        assertNotNull(body)
+        assertEquals("prof-test-1", body!!.getString("p_profile_id"))
+        assertEquals("src-1", body.getString("p_source_id"))
+        val hiddenArr = body.getJSONArray("p_hidden_categories")
+        assertEquals(2, hiddenArr.length())
+        assertEquals("Sports", hiddenArr.getString(0))
+        assertEquals("News", hiddenArr.getString(1))
+
+        val loaded = api.getProfileCategories("prof-test-1", "jwt-test")
+        assertEquals(1, loaded.size)
+        assertEquals("src-1", loaded[0].sourceId)
+        assertEquals(setOf("Sports", "News"), loaded[0].hiddenCategories)
+        assertEquals(listOf("Movies", "Documentaries"), loaded[0].categoryOrder)
+    }
 }

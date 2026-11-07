@@ -44,34 +44,6 @@ object NativeTransferClient {
         }.getOrElse { NativeSendResult.Error("Could not connect to the TV") }
     }
 
-    fun sendBackup(tv: DiscoveredFortressTv, bytes: ByteArray, pin: String): NativeSendResult {
-        if (tv.protocolVersion != TRANSFER_PROTOCOL_VERSION) return NativeSendResult.Error("Unsupported protocol version")
-        if (tv.sessionToken == null && !pin.matches(Regex("\\d{6}"))) return NativeSendResult.Error("Invalid pairing code")
-        if (bytes.isEmpty() || bytes.size > LocalTransferServer.MAX_BACKUP_BYTES) {
-            return NativeSendResult.Error("Invalid backup size")
-        }
-        val endpoint = tv.endpoint() ?: return NativeSendResult.Error("TV address unavailable")
-        return runCatching {
-            val connection = URL("$endpoint/api/backup").openConnection() as HttpURLConnection
-            try {
-                connection.requestMethod = "POST"
-                connection.connectTimeout = 5_000
-                connection.readTimeout = 20_000
-                connection.doOutput = true
-                connection.setFixedLengthStreamingMode(bytes.size)
-                connection.setRequestProperty("Content-Type", "application/octet-stream")
-                applyAuthentication(connection, tv, pin)
-                connection.setRequestProperty("X-Fortress-Filename", "fortresstv-transfer.ftv")
-                if (tv.backupKey != null) connection.setRequestProperty("X-Fortress-Backup-Pairing", "v1")
-                connection.outputStream.use { it.write(bytes) }
-                if (connection.responseCode in 200..299) NativeSendResult.Success
-                else NativeSendResult.Error("TV rejected the transfer (${connection.responseCode})")
-            } finally {
-                connection.disconnect()
-            }
-        }.getOrElse { NativeSendResult.Error("Could not connect to the TV") }
-    }
-
     private fun applyAuthentication(connection: HttpURLConnection, tv: DiscoveredFortressTv, pin: String) {
         val token = tv.sessionToken
         if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")

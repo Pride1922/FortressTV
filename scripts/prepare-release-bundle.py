@@ -18,16 +18,17 @@ def main():
     parser.add_argument('--aapt', type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    download_url = os.environ.get('APK_DOWNLOAD_URL', '').strip()
-    parsed = urlparse(download_url)
-    if parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.password:
-        raise SystemExit('Set FORTRESSTV_APK_DOWNLOAD_URL to the existing HTTPS APK share URL (no embedded credentials).')
-    notes = os.environ.get('RELEASE_NOTES', '').strip()
-    if not notes:
-        raise SystemExit('Release notes are required.')
     gradle = (root / 'app/build.gradle.kts').read_text()
     version = re.search(r'versionName\s*=\s*"([^"]+)"', gradle).group(1)
     code = int(re.search(r'versionCode\s*=\s*(\d+)', gradle).group(1))
+    default_download_url = f'https://github.com/Pride1922/FortressTV/releases/download/v{version}/fortresstv.apk'
+    download_url = os.environ.get('APK_DOWNLOAD_URL', '').strip() or default_download_url
+    parsed = urlparse(download_url)
+    if parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.password:
+        raise SystemExit('The APK download URL must be a valid HTTPS URL (no embedded credentials).')
+    notes = os.environ.get('RELEASE_NOTES', '').strip()
+    if not notes:
+        raise SystemExit('Release notes are required.')
     if not args.apk.is_file() or args.apk.stat().st_size == 0:
         raise SystemExit('The signed APK is missing or empty.')
     badging = subprocess.run([str(args.aapt), 'dump', 'badging', str(args.apk)],

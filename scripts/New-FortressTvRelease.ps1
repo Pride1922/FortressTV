@@ -1,23 +1,18 @@
 [CmdletBinding()]
 param(
     [string]$ReleaseNotes = "FortressTV update",
-    [string]$ReleaseDirectory = "C:\Users\fabio\Nextcloud\FortressTV",
-    [string]$DownloadUrl = "https://cloud.ameyerocha.com/s/2TYXawD6kCQ62iN/download"
+    [string]$ReleaseDirectory = "",
+    [string]$DownloadUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
-Add-Type -AssemblyName System.Net.Http
 
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$releaseRoot = [System.IO.Path]::GetFullPath($ReleaseDirectory)
 $gradleFile = Join-Path $projectRoot "app\build.gradle.kts"
 $keystoreProperties = Join-Path $projectRoot "keystore.properties"
 $ffmpegSourceRoot = Join-Path $projectRoot "third_party\ffmpeg"
 
-if (-not (Test-Path -LiteralPath $releaseRoot -PathType Container)) {
-    throw "Release directory does not exist: $releaseRoot"
-}
 if (-not (Test-Path -LiteralPath $keystoreProperties -PathType Leaf)) {
     throw "keystore.properties is missing. A signed release cannot be created."
 }
@@ -32,9 +27,6 @@ foreach ($sourceFile in $requiredSourceFiles) {
         throw "Required FFmpeg corresponding-source file is missing: $sourceFile"
     }
 }
-if (-not $DownloadUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "The APK download URL must use HTTPS."
-}
 
 $gradleText = Get-Content -LiteralPath $gradleFile -Raw
 $versionNameMatch = [regex]::Match($gradleText, 'versionName\s*=\s*"([^"]+)"')
@@ -44,6 +36,13 @@ if (-not $versionNameMatch.Success -or -not $versionCodeMatch.Success) {
 }
 $versionName = $versionNameMatch.Groups[1].Value
 $versionCode = [int]$versionCodeMatch.Groups[1].Value
+
+if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
+    $DownloadUrl = "https://github.com/Pride1922/FortressTV/releases/download/v$versionName/fortresstv.apk"
+}
+if (-not $DownloadUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "The APK download URL must use HTTPS."
+}
 
 Push-Location $projectRoot
 try {
@@ -73,59 +72,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "APK signature verification failed. Nothing was published."
 }
 
-$publishedApk = Join-Path $releaseRoot "fortresstv.apk"
-$publishedJson = Join-Path $releaseRoot "version.json"
-$publishedSourceRoot = Join-Path $releaseRoot "source"
-
-# Overwrite the existing paths so Nextcloud keeps the established share links.
-Copy-Item -LiteralPath $builtApk.FullName -Destination $publishedApk -Force
-$apkHash = (Get-FileHash -LiteralPath $publishedApk -Algorithm SHA256).Hash
-
-# Nextcloud may publish the small JSON before the larger APK finishes syncing.
-# Wait until the public APK link serves the exact file before announcing the release.
-$remoteHash = $null
-$httpClient = [System.Net.Http.HttpClient]::new()
-$httpClient.DefaultRequestHeaders.CacheControl = [System.Net.Http.Headers.CacheControlHeaderValue]::new()
-$httpClient.DefaultRequestHeaders.CacheControl.NoCache = $true
-try {
-    for ($attempt = 1; $attempt -le 12; $attempt++) {
-        try {
-            $separator = if ($DownloadUrl.Contains("?")) { "&" } else { "?" }
-            $cacheBustedUrl = $DownloadUrl + $separator + "releaseCheck=" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-            $stream = $httpClient.GetStreamAsync($cacheBustedUrl).GetAwaiter().GetResult()
-            try {
-                $digest = [System.Security.Cryptography.SHA256]::Create()
-                try {
-                    $remoteHash = ([System.BitConverter]::ToString($digest.ComputeHash($stream))).Replace("-", "")
-                }
-                finally {
-                    $digest.Dispose()
-                }
-            }
-            finally {
-                $stream.Dispose()
-            }
-        }
-        catch {
-            $remoteHash = $null
-        }
-
-        if ($remoteHash -eq $apkHash) {
-            break
-        }
-        if ($attempt -lt 12) {
-            Write-Host "Waiting for Nextcloud to publish the new APK ($attempt/12)..."
-            Start-Sleep -Seconds 5
-        }
-    }
-}
-finally {
-    $httpClient.Dispose()
-}
-
-if ($remoteHash -ne $apkHash) {
-    throw "The public APK link did not update to the new checksum. version.json was left unchanged."
-}
+$apkHash = (Get-FileHash -LiteralPath $builtApk.FullName -Algorithm SHA256).Hash
 
 $metadata = [ordered]@{
     version = $versionName
@@ -136,24 +83,49 @@ $metadata = [ordered]@{
 }
 $json = $metadata | ConvertTo-Json -Depth 3
 
-# Validate the generated JSON before publishing it.
-$null = $json | ConvertFrom-Json
-[System.IO.File]::WriteAllText($publishedJson, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
-$null = (Get-Content -LiteralPath $publishedJson -Raw) | ConvertFrom-Json
+# Write version.json into repository root for raw.githubusercontent.com hosting
+$rootJson = Join-Path $projectRoot "version.json"
+[System.IO.File]::WriteAllText($rootJson, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 
-# Keep the exact LGPL corresponding source and build instructions beside the APK.
-New-Item -ItemType Directory -Path $publishedSourceRoot -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $ffmpegSourceRoot "ffmpeg-6.0-source.tar.gz") -Destination $publishedSourceRoot -Force
-Copy-Item -LiteralPath (Join-Path $ffmpegSourceRoot "COPYING.LGPLv2.1") -Destination $publishedSourceRoot -Force
-Copy-Item -LiteralPath (Join-Path $ffmpegSourceRoot "build-config.txt") -Destination $publishedSourceRoot -Force
-Copy-Item -LiteralPath (Join-Path $ffmpegSourceRoot "README.md") -Destination $publishedSourceRoot -Force
-Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Destination $publishedSourceRoot -Force
+# Create a staging folder with standard fortresstv.apk naming
+$stagingDir = Join-Path $projectRoot "work\release-staging"
+if (Test-Path -LiteralPath $stagingDir) {
+    Remove-Item -LiteralPath $stagingDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+$stagedApk = Join-Path $stagingDir "fortresstv.apk"
+Copy-Item -LiteralPath $builtApk.FullName -Destination $stagedApk -Force
 
-$publishedFile = Get-Item -LiteralPath $publishedApk
+# Publish directly to GitHub Releases via gh CLI
+Write-Host "Publishing release v$versionName to GitHub..."
+$sourceAssets = @(
+    $stagedApk,
+    $rootJson,
+    (Join-Path $ffmpegSourceRoot "ffmpeg-6.0-source.tar.gz"),
+    (Join-Path $ffmpegSourceRoot "COPYING.LGPLv2.1"),
+    (Join-Path $ffmpegSourceRoot "build-config.txt"),
+    (Join-Path $ffmpegSourceRoot "README.md"),
+    (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md")
+)
+
+& gh release create "v$versionName" @sourceAssets `
+    --title "FortressTV $versionName" `
+    --notes "$ReleaseNotes" `
+    --latest
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "gh release create returned non-zero code. If the release already exists, consider running 'gh release upload'."
+}
+
+# Optional local backup copy if directory was specified
+if (-not [string]::IsNullOrWhiteSpace($ReleaseDirectory) -and (Test-Path -LiteralPath $ReleaseDirectory -PathType Container)) {
+    Copy-Item -LiteralPath $stagedApk -Destination (Join-Path $ReleaseDirectory "fortresstv.apk") -Force
+    Copy-Item -LiteralPath $rootJson -Destination (Join-Path $ReleaseDirectory "version.json") -Force
+}
+
 Write-Host ""
-Write-Host "FortressTV $versionName (versionCode $versionCode) published successfully."
-Write-Host "APK: $($publishedFile.FullName)"
-Write-Host "Size: $([math]::Round($publishedFile.Length / 1MB, 2)) MB"
+Write-Host "FortressTV $versionName (versionCode $versionCode) published successfully to GitHub Releases."
+Write-Host "Tag: v$versionName"
+Write-Host "Download URL: $DownloadUrl"
 Write-Host "SHA-256: $apkHash"
-Write-Host "Metadata: $publishedJson"
-Write-Host "Corresponding source: $publishedSourceRoot"
+Write-Host "Metadata: $rootJson"

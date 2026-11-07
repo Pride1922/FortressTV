@@ -1,4 +1,4 @@
-﻿package com.fortresstv.player.transfer
+package com.fortresstv.player.transfer
 
 import com.fortresstv.player.playlist.PlaylistProfile
 
@@ -36,12 +36,6 @@ data class TransferPreview(
     val payload: TransferSourcePayload
 )
 
-data class TransferBackupPayload(
-    val fileName: String,
-    val bytes: ByteArray,
-    val pairingPassword: String? = null
-)
-
 // ---------------------------------------------------------------------------
 // Session lifecycle
 // ---------------------------------------------------------------------------
@@ -52,9 +46,6 @@ sealed interface TransferSessionState {
 
     /** Received payload — awaiting TV user confirmation. */
     data class PendingConfirmation(val preview: TransferPreview) : TransferSessionState
-
-    /** Received encrypted backup — awaiting explicit TV confirmation. */
-    data class PendingBackup(val payload: TransferBackupPayload) : TransferSessionState
 
     /** TV user confirmed — source was saved. */
     data class Success(val profile: PlaylistProfile) : TransferSessionState
@@ -69,7 +60,6 @@ sealed interface TransferSessionState {
 
 sealed interface TransferRequestResult {
     data class Accepted(val payload: TransferSourcePayload) : TransferRequestResult
-    data class AcceptedBackup(val payload: TransferBackupPayload) : TransferRequestResult
     data object BadPin : TransferRequestResult
     data object LockedOut : TransferRequestResult
     data object Expired : TransferRequestResult

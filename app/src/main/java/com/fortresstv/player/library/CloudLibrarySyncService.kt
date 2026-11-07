@@ -454,12 +454,8 @@ class CloudLibrarySyncService internal constructor(
 
         if (remoteCategories.isNotEmpty()) {
             for (custom in remoteCategories) {
-                if (custom.hiddenCategories.isNotEmpty()) {
-                    userLibrary.setHiddenCategories(custom.sourceId, custom.hiddenCategories)
-                }
-                if (custom.categoryOrder.isNotEmpty()) {
-                    userLibrary.setCategoryOrder(custom.sourceId, custom.categoryOrder)
-                }
+                userLibrary.setHiddenCategories(custom.sourceId, custom.hiddenCategories)
+                userLibrary.setCategoryOrder(custom.sourceId, custom.categoryOrder)
             }
         }
 
@@ -468,13 +464,14 @@ class CloudLibrarySyncService internal constructor(
         }
 
         if (remotePrefs != null && settingsStore != null) {
-            settingsStore.setPreferredAudioLanguage(remotePrefs.preferredAudioLanguage)
-            settingsStore.setPreferredSubtitleLanguage(remotePrefs.preferredSubtitleLanguage)
-            settingsStore.setSubtitleFallbackEnglish(remotePrefs.subtitleFallbackEnglish)
+            settingsStore.setPreferredAudioLanguage(remotePrefs.preferredAudioLanguage, profileId)
+            settingsStore.setPreferredSubtitleLanguage(remotePrefs.preferredSubtitleLanguage, profileId)
+            settingsStore.setSubtitleFallbackEnglish(remotePrefs.subtitleFallbackEnglish, profileId)
             settingsStore.setStartupDestination(
-                com.fortresstv.player.source.StartupDestination.fromPersisted(remotePrefs.startupDestination)
+                com.fortresstv.player.source.StartupDestination.fromPersisted(remotePrefs.startupDestination),
+                profileId
             )
-            settingsStore.saveEpgTimeShiftHours(remotePrefs.epgTimeShiftHours)
+            settingsStore.saveEpgTimeShiftHours(remotePrefs.epgTimeShiftHours, profileId)
         }
 
         if (remoteLibrary.isNotEmpty()) {
@@ -495,7 +492,7 @@ class CloudLibrarySyncService internal constructor(
                     }
                     "movie" -> {
                         removeMatching(watchlist, "movie", item.sourceId, item.itemId)
-                        if (!isDeleted && item.isWatchlisted) {
+                        if (!isDeleted && (item.isWatchlisted || item.isFavourite)) {
                             watchlist.add(key)
                         }
 
@@ -506,7 +503,7 @@ class CloudLibrarySyncService internal constructor(
                     }
                     "series" -> {
                         removeMatching(followed, "series", item.sourceId, item.itemId)
-                        if (!isDeleted && item.isWatchlisted) {
+                        if (!isDeleted && (item.isWatchlisted || item.isFavourite)) {
                             followed.add(key)
                         }
                     }

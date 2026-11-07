@@ -14,8 +14,6 @@ object DirectTransferLink {
         }.toMap()
         val endpoint = URI(params["endpoint"] ?: return null)
         val token = params["token"] ?: return null
-        val backupKey = params["backupKey"]
-        if (backupKey != null && !backupKey.matches(Regex("[0-9a-fA-F]{64}"))) return null
         val host = endpoint.host ?: return null
         if (endpoint.scheme != "http" || endpoint.port !in 1..65535) return null
         if (!token.matches(Regex("[0-9a-fA-F]{32}"))) return null
@@ -25,8 +23,7 @@ object DirectTransferLink {
             addresses = listOf(InetAddress.getByName(host)),
             port = endpoint.port,
             protocolVersion = TRANSFER_PROTOCOL_VERSION,
-            sessionToken = token.lowercase(),
-            backupKey = backupKey?.lowercase()
+            sessionToken = token.lowercase()
         )
     }.getOrNull()
 

@@ -32,14 +32,26 @@ object UpdateManager {
     private const val PENDING_APK_PATH = "pending_apk_path"
     private const val INSTALLER_LAUNCHED = "installer_launched"
 
-    // URL pointing to your Nextcloud version.json
-    var updateEndpointUrl: String = "https://cloud.ameyerocha.com/s/iL89c8t5PmzBAjA/download"
+    const val GITHUB_VERSION_URL = "https://raw.githubusercontent.com/Pride1922/FortressTV/main/version.json"
+    const val GITHUB_RELEASE_VERSION_URL = "https://github.com/Pride1922/FortressTV/releases/latest/download/version.json"
+
+    var updateEndpointUrl: String = GITHUB_VERSION_URL
+    var fallbackEndpointUrl: String = GITHUB_RELEASE_VERSION_URL
 
     suspend fun checkForUpdates(
         currentVersionCode: Int = BuildConfig.VERSION_CODE,
         endpointUrl: String = updateEndpointUrl
     ): AppUpdateInfo? = withContext(Dispatchers.IO) {
-        runCatching {
+        val primary = queryEndpoint(endpointUrl, currentVersionCode)
+        if (primary != null) return@withContext primary
+        if (endpointUrl == updateEndpointUrl && fallbackEndpointUrl.isNotBlank() && fallbackEndpointUrl != endpointUrl) {
+            return@withContext queryEndpoint(fallbackEndpointUrl, currentVersionCode)
+        }
+        null
+    }
+
+    private fun queryEndpoint(endpointUrl: String, currentVersionCode: Int): AppUpdateInfo? {
+        return runCatching {
             val url = URL(endpointUrl)
             require(url.protocol.equals("https", true)) { "Update checks require HTTPS." }
             var connection = (url.openConnection() as HttpURLConnection).apply {
