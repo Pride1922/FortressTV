@@ -77,7 +77,12 @@ data class EpgGuide(
         map
     }
 
-    fun resolveChannelId(tvgId: String?, name: String?): String? {
+    fun resolveChannelId(tvgId: String?, name: String?, manualXmltvId: String? = null): String? {
+        if (!manualXmltvId.isNullOrBlank()) {
+            if (channels.containsKey(manualXmltvId) || programmes.containsKey(manualXmltvId)) {
+                return manualXmltvId
+            }
+        }
         val cacheKey = "${tvgId.orEmpty()}\u0000${name.orEmpty()}"
         val cached = resolutionCache[cacheKey]
         if (cached != null) return cached.takeUnless { it == NO_CHANNEL_MATCH }
@@ -124,13 +129,13 @@ data class EpgGuide(
         return null
     }
 
-    fun findChannel(tvgId: String?, name: String?): EpgChannel? {
-        val id = resolveChannelId(tvgId, name) ?: return null
+    fun findChannel(tvgId: String?, name: String?, manualXmltvId: String? = null): EpgChannel? {
+        val id = resolveChannelId(tvgId, name, manualXmltvId) ?: return null
         return channels[id]
     }
 
-    fun findProgrammes(tvgId: String?, name: String?): List<EpgProgramme> {
-        val id = resolveChannelId(tvgId, name) ?: return emptyList()
+    fun findProgrammes(tvgId: String?, name: String?, manualXmltvId: String? = null): List<EpgProgramme> {
+        val id = resolveChannelId(tvgId, name, manualXmltvId) ?: return emptyList()
         return programmes[id].orEmpty()
     }
 

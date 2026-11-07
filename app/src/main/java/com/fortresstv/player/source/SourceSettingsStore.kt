@@ -184,7 +184,34 @@ class SourceSettingsStore(context: Context) {
     fun epgTimeShiftHours(): Int = preferences.getInt("epg_time_shift_hours", 0)
 
     fun saveEpgTimeShiftHours(hours: Int) {
-        preferences.edit().putInt("epg_time_shift_hours", hours).apply()
+        preferences.edit()
+            .putInt("epg_time_shift_hours", hours)
+            .putInt("epg_correction_minutes", hours * 60)
+            .apply()
+    }
+
+    fun epgScheduleCorrectionMinutes(): Int =
+        preferences.getInt("epg_correction_minutes", epgTimeShiftHours() * 60)
+
+    fun saveEpgScheduleCorrectionMinutes(minutes: Int) {
+        preferences.edit()
+            .putInt("epg_correction_minutes", minutes)
+            .putInt("epg_time_shift_hours", minutes / 60)
+            .apply()
+    }
+
+    fun epgSourceTimezone(): String? = preferences.getString("epg_source_timezone", null)
+
+    fun saveEpgSourceTimezone(timezoneId: String?): Boolean {
+        val current = epgSourceTimezone()
+        if (current == timezoneId) return false
+        preferences.edit().apply {
+            if (timezoneId.isNullOrBlank()) remove("epg_source_timezone")
+            else putString("epg_source_timezone", timezoneId)
+            // Invalidate cached EPG so it re-parses with the new timezone
+            remove("epg_last_update")
+        }.apply()
+        return true
     }
 
     fun epgLoadedDays(): Int = preferences.getInt("epg_loaded_days", 3).coerceIn(1, 7)

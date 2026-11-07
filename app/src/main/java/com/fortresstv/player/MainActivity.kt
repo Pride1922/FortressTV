@@ -208,6 +208,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import java.time.LocalTime
+import com.fortresstv.player.epg.EpgChannelMapping
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -671,7 +674,11 @@ private fun FortressTVApp(
     var epgSource by remember { mutableStateOf<ContentSource?>(null) }
     var epgSourceName by remember { mutableStateOf<String?>(null) }
     var epgLastUpdate by remember { mutableLongStateOf(0L) }
-    var epgTimeShiftHours by remember { mutableIntStateOf(0) }
+    var epgScheduleCorrectionMinutes by remember { mutableIntStateOf(settings.epgScheduleCorrectionMinutes()) }
+    val epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+    var epgSourceTimezone by remember { mutableStateOf(settings.epgSourceTimezone().orEmpty()) }
+    val epgMappingStore = remember { com.fortresstv.player.epg.EpgMappingStore(context.applicationContext) }
+    var epgMappings by remember { mutableStateOf(epgMappingStore.getAllMappings()) }
     var epgLoadedDays by remember { mutableIntStateOf(3) }
     val epgRepository = remember { DefaultEpgRepository(context) }
     var currentAppEpochDay by remember { mutableLongStateOf(LocalDate.now().toEpochDay()) }
@@ -705,6 +712,7 @@ private fun FortressTVApp(
     val householdProfiles by profileRepository.profiles.collectAsState()
     var showProfileSelectionDialog by remember { mutableStateOf(false) }
     var pinPromptAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingAdultTokenAction by remember { mutableStateOf<((String?) -> Unit)?>(null) }
     var requireProfileSelection by rememberSaveable { mutableStateOf(true) }
 
     val accountRepository = remember { com.fortresstv.player.account.AccountRepository.get(context) }
@@ -712,6 +720,46 @@ private fun FortressTVApp(
     val cloudSourceSyncService = remember { com.fortresstv.player.source.CloudSourceSyncService.get(context) }
     val cloudLibrarySyncService = remember { com.fortresstv.player.library.CloudLibrarySyncService.get(context) }
     val migrationService = remember { com.fortresstv.player.account.LocalDataMigrationService(context) }
+
+    fun requestAdultAction(action: (String?) -> Unit) {
+        val status = profileRepository.getPinStatus()
+        if (!activeHouseholdProfile.isChild && !status.hasPin) {
+            action(null)
+        } else if (profileRepository.isAdultUnlocked()) {
+            action(profileRepository.currentUnlockToken())
+        } else {
+            pendingAdultTokenAction = action
+        }
+    }
+
+    fun handleSaveEpgMapping(channel: PlaylistChannel, xmltvChannel: com.fortresstv.player.epg.EpgChannel, unlockToken: String?) {
+        val mapping = com.fortresstv.player.epg.EpgChannelMapping(
+            iptvSourceId = channel.sourceId,
+            iptvChannelId = channel.sourceItemId,
+            epgSourceId = epgSource?.displayName,
+            xmltvChannelId = xmltvChannel.id,
+            isAvailable = true
+        )
+        epgMappingStore.saveMapping(mapping)
+        epgMappings = epgMappingStore.getAllMappings()
+        val accountState = accountRepository.getAccountState()
+        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+            scope.launch(Dispatchers.IO) {
+                cloudSourceSyncService.syncEpgMappingToCloud(mapping, unlockToken)
+            }
+        }
+    }
+
+    fun handleResetEpgMapping(channel: PlaylistChannel, unlockToken: String?) {
+        epgMappingStore.removeMapping(channel.sourceId, channel.sourceItemId)
+        epgMappings = epgMappingStore.getAllMappings()
+        val accountState = accountRepository.getAccountState()
+        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+            scope.launch(Dispatchers.IO) {
+                cloudSourceSyncService.deleteEpgMappingFromCloud(channel.sourceId, channel.sourceItemId, unlockToken)
+            }
+        }
+    }
 
     val isFreshInstall = remember {
         currentUserId == null && settings.getPlaylists().isEmpty()
@@ -877,8 +925,9 @@ private fun FortressTVApp(
         allowCachedResult: Boolean,
         loadedDays: Int = epgLoadedDays
     ): EpgGuide = withContext(Dispatchers.IO) {
+        val fallbackZone = runCatching { java.time.ZoneId.of(epgSourceTimezone) }.getOrDefault(java.time.ZoneId.systemDefault())
         val baseFingerprint = SourceReader.fingerprint(context, source, "epg")
-        val fingerprint = if (baseFingerprint != null) "$baseFingerprint#days=$loadedDays" else null
+        val fingerprint = if (baseFingerprint != null) "$baseFingerprint#days=$loadedDays#tz=${fallbackZone.id}" else null
         if (allowCachedResult && fingerprint != null) {
             val manifest = EpgDiskCache.readCurrentManifest(context, fingerprint)
             val zone = manifest?.let { runCatching { java.time.ZoneId.of(it.timezoneId) }.getOrNull() } ?: java.time.ZoneId.systemDefault()
@@ -911,7 +960,8 @@ private fun FortressTVApp(
                 input = SizeLimitedInputStream(decompressed, 250L * 1024L * 1024L, "Decompressed EPG"),
                 context = context,
                 fingerprint = fingerprint.orEmpty(),
-                loadedDays = loadedDays
+                loadedDays = loadedDays,
+                fallbackSourceZone = fallbackZone
             )
         }
         val guide = EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)
@@ -1185,7 +1235,8 @@ private fun FortressTVApp(
 
     LaunchedEffect(Unit) {
         val savedLangCode = withContext(Dispatchers.IO) { settings.getLanguage() }
-        val shift = withContext(Dispatchers.IO) { settings.epgTimeShiftHours() }
+        val correction = withContext(Dispatchers.IO) { settings.epgScheduleCorrectionMinutes() }
+        val sourceTz = withContext(Dispatchers.IO) { settings.epgSourceTimezone().orEmpty() }
         val days = withContext(Dispatchers.IO) { settings.epgLoadedDays() }
         val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
         val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
@@ -1195,7 +1246,8 @@ private fun FortressTVApp(
         val savedSubLang = withContext(Dispatchers.IO) { settings.preferredSubtitleLanguage() }
         val savedSubFallback = withContext(Dispatchers.IO) { settings.subtitleFallbackEnglish() }
         appLanguage = AppLanguage.fromCode(savedLangCode)
-        epgTimeShiftHours = shift
+        epgScheduleCorrectionMinutes = correction
+        epgSourceTimezone = sourceTz
         epgLoadedDays = days
         epgLastUpdate = epgUpdate
         playChannelsFullscreen = savedFullscreenPreference
@@ -1388,6 +1440,13 @@ private fun FortressTVApp(
                         }
                     }
                 }
+                val restoredMappings = cloudSourceService.restoreEpgMappingsFromCloud()
+                if (restoredMappings.isNotEmpty()) {
+                    epgMappingStore.replaceAllMappings(restoredMappings)
+                    withContext(Dispatchers.Main) {
+                        epgMappings = epgMappingStore.getAllMappings()
+                    }
+                }
             }
         }
 
@@ -1560,7 +1619,8 @@ private fun FortressTVApp(
                             parentalPin = settings.getParentalPin()
                             epgSource = settings.epgSource()
                             epgSourceName = epgSource?.displayName
-                            epgTimeShiftHours = settings.epgTimeShiftHours()
+                            epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes()
+                            epgSourceTimezone = settings.epgSourceTimezone().orEmpty()
                             epgLoadedDays = settings.epgLoadedDays()
                             favoriteChannelIds = userLibrary.favoriteChannelIds()
                             recentChannelIds = userLibrary.recentChannelIds()
@@ -1734,6 +1794,8 @@ private fun FortressTVApp(
                     epgGuide = epgGuide,
                     epgSourceName = epgSourceName,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                    epgMappings = epgMappings,
                     epgLoadedDays = epgLoadedDays,
                     epgRepository = epgRepository,
                     playChannelsFullscreen = playChannelsFullscreen,
@@ -1860,6 +1922,15 @@ private fun FortressTVApp(
                     onOpenSettings = { tab ->
                         settingsInitialTab = tab
                         showSettings = true
+                    },
+                    onSaveMapping = { channel, xmltvCh, token ->
+                        handleSaveEpgMapping(channel, xmltvCh, token)
+                    },
+                    onResetMapping = { channel, token ->
+                        handleResetEpgMapping(channel, token)
+                    },
+                    onRequestAdultAuth = { onAuthorized ->
+                        requestAdultAction(onAuthorized)
                     }
                 )
             }
@@ -1951,6 +2022,9 @@ private fun FortressTVApp(
                 epgSourceName = epgSourceName,
                 epgLastUpdate = epgLastUpdate,
                 epgTimeShiftHours = epgTimeShiftHours,
+                epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                epgSourceTimezone = epgSourceTimezone,
+                epgMappings = epgMappings,
                 epgLoadedDays = epgLoadedDays,
                 playlist = playlist,
                 epgGuide = epgGuide,
@@ -2031,8 +2105,39 @@ private fun FortressTVApp(
                     showRemoveEpgConfirm = true
                 },
                 onEpgTimeShiftChanged = { shift ->
-                    epgTimeShiftHours = shift
-                    settings.saveEpgTimeShiftHours(shift)
+                    epgScheduleCorrectionMinutes = shift * 60
+                    settings.saveEpgScheduleCorrectionMinutes(shift * 60)
+                },
+                onEpgScheduleCorrectionChanged = { minutes ->
+                    epgScheduleCorrectionMinutes = minutes
+                    settings.saveEpgScheduleCorrectionMinutes(minutes)
+                    val accountState = accountRepository.getAccountState()
+                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                        scope.launch(Dispatchers.IO) {
+                            cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
+                        }
+                    }
+                },
+                onEpgSourceTimezoneChanged = { zoneId ->
+                    epgSourceTimezone = zoneId
+                    settings.saveEpgSourceTimezone(zoneId)
+                    val currentEpg = epgSource ?: settings.epgSource()
+                    currentEpg?.let { loadEpg(it, save = false, forceRefresh = true) }
+                    val accountState = accountRepository.getAccountState()
+                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                        scope.launch(Dispatchers.IO) {
+                            cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
+                        }
+                    }
+                },
+                onSaveMapping = { channel, xmltvCh, token ->
+                    handleSaveEpgMapping(channel, xmltvCh, token)
+                },
+                onResetMapping = { channel, token ->
+                    handleResetEpgMapping(channel, token)
+                },
+                onRequestAdultAuth = { onAuthorized ->
+                    requestAdultAction(onAuthorized)
                 },
                 onEpgLoadedDaysChanged = { days ->
                     val clamped = days.coerceIn(1, 7)
@@ -2385,6 +2490,34 @@ private fun FortressTVApp(
                 onDismiss = { activePinDialog = null }
             )
         }
+
+        if (pinPromptAction != null) {
+            ParentalPinDialog(
+                mode = HouseholdPinDialogMode.VERIFY,
+                onSuccess = { _ ->
+                    val action = pinPromptAction
+                    pinPromptAction = null
+                    action?.invoke()
+                },
+                onDismiss = {
+                    pinPromptAction = null
+                }
+            )
+        }
+
+        if (pendingAdultTokenAction != null) {
+            ParentalPinDialog(
+                mode = HouseholdPinDialogMode.VERIFY,
+                onSuccess = { unlockToken ->
+                    val action = pendingAdultTokenAction
+                    pendingAdultTokenAction = null
+                    action?.invoke(unlockToken)
+                },
+                onDismiss = {
+                    pendingAdultTokenAction = null
+                }
+            )
+        }
     }
 }
 }
@@ -2582,7 +2715,9 @@ private fun WelcomeScreen(
 private fun ProgrammeGuideScreen(
     playlist: Playlist,
     epgGuide: EpgGuide?,
-    epgTimeShiftHours: Int,
+    epgTimeShiftHours: Int = 0,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgMappings: Map<String, com.fortresstv.player.epg.EpgChannelMapping> = emptyMap(),
     epgLoadedDays: Int = 3,
     epgRepository: EpgRepository? = null,
     favoriteChannelIds: Set<String> = emptySet(),
@@ -2649,7 +2784,7 @@ private fun ProgrammeGuideScreen(
         isCompact -> 130.dp
         else -> 220.dp
     }
-    val shiftMillis = epgTimeShiftHours * 3_600_000L
+    val shiftMillis = epgScheduleCorrectionMinutes * 60_000L
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchExpanded by remember { mutableStateOf(false) }
@@ -2745,12 +2880,12 @@ private fun ProgrammeGuideScreen(
         )
     }
 
-    var resolvedChannelMap by remember(playlist.channels, epgGuide) {
+    var resolvedChannelMap by remember(playlist.channels, epgGuide, epgMappings) {
         mutableStateOf<Map<PlaylistChannel, String?>>(emptyMap())
     }
-    var channelResolutionReady by remember(playlist.channels, epgGuide) { mutableStateOf(epgGuide == null) }
+    var channelResolutionReady by remember(playlist.channels, epgGuide, epgMappings) { mutableStateOf(epgGuide == null) }
 
-    LaunchedEffect(playlist.channels, epgGuide) {
+    LaunchedEffect(playlist.channels, epgGuide, epgMappings) {
         val guide = epgGuide
         if (guide == null) {
             resolvedChannelMap = emptyMap()
@@ -2759,7 +2894,8 @@ private fun ProgrammeGuideScreen(
             channelResolutionReady = false
             resolvedChannelMap = withContext(Dispatchers.Default) {
                 playlist.channels.associateWith { channel ->
-                    guide.resolveChannelId(channel.tvgId, channel.name)
+                    val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
+                    guide.resolveChannelId(channel.tvgId, channel.name, manualXmltvId)
                 }
             }
             channelResolutionReady = true
@@ -2776,7 +2912,7 @@ private fun ProgrammeGuideScreen(
         channelsInGroup.mapNotNull { channel ->
             val resolvedId = resolvedChannelMap[channel] ?: return@mapNotNull null
             val progs = (dayProgrammesMap?.get(resolvedId))
-                ?: (if (dayProgrammesMap == null) epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty() else emptyList())
+                ?: (if (dayProgrammesMap == null) epgGuide?.findProgrammes(channel.tvgId, channel.name, epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId).orEmpty() else emptyList())
             if (progs.isEmpty()) return@mapNotNull null
 
             val blocks = blocksByEpgChannel.getOrPut(resolvedId) {
@@ -2822,8 +2958,21 @@ private fun ProgrammeGuideScreen(
         val targetEpochDay = date.toEpochDay()
         val dayLoadStartedNanos = android.os.SystemClock.elapsedRealtimeNanos()
         val loadedDay = if (date != today) epgRepository?.loadDay(targetEpochDay) else null
+        val baseProgrammes = if (date == today) epgGuide?.programmes else loadedDay?.programmes
+        val adjacentDay = when {
+            shiftMillis > 0L -> epgRepository?.loadDay(targetEpochDay - 1)
+            shiftMillis < 0L -> epgRepository?.loadDay(targetEpochDay + 1)
+            else -> null
+        }
+        val dayData = if (adjacentDay != null && adjacentDay.programmes.isNotEmpty()) {
+            val combined = HashMap<String, MutableList<EpgProgramme>>()
+            baseProgrammes?.forEach { (k, v) -> combined.getOrPut(k) { ArrayList() }.addAll(v) }
+            adjacentDay.programmes.forEach { (k, v) -> combined.getOrPut(k) { ArrayList() }.addAll(v) }
+            combined.mapValues { (_, list) -> list.distinctBy { it.startEpochMilli }.sortedBy { it.startEpochMilli } }
+        } else {
+            baseProgrammes
+        }
         val partitionLoadMillis = (android.os.SystemClock.elapsedRealtimeNanos() - dayLoadStartedNanos) / 1_000_000.0
-        val dayData = if (date == today) epgGuide?.programmes else loadedDay?.programmes
 
         val blockBuildStartedNanos = android.os.SystemClock.elapsedRealtimeNanos()
         val dayIndex = computeDayBlocks(date, dayData)
@@ -2859,8 +3008,22 @@ private fun ProgrammeGuideScreen(
             .filter { it != today }
             .forEach { date ->
                 if (!guideDayIndex.containsKey(date)) {
-                    val loadedDay = repository.loadDay(date.toEpochDay()) ?: return@forEach
-                    val dayIndex = computeDayBlocks(date, loadedDay.programmes)
+                    val targetEpochDay = date.toEpochDay()
+                    val loadedDay = repository.loadDay(targetEpochDay) ?: return@forEach
+                    val adjacentDay = when {
+                        shiftMillis > 0L -> repository.loadDay(targetEpochDay - 1)
+                        shiftMillis < 0L -> repository.loadDay(targetEpochDay + 1)
+                        else -> null
+                    }
+                    val dayData = if (adjacentDay != null && adjacentDay.programmes.isNotEmpty()) {
+                        val combined = HashMap<String, MutableList<EpgProgramme>>()
+                        loadedDay.programmes.forEach { (k, v) -> combined.getOrPut(k) { ArrayList() }.addAll(v) }
+                        adjacentDay.programmes.forEach { (k, v) -> combined.getOrPut(k) { ArrayList() }.addAll(v) }
+                        combined.mapValues { (_, list) -> list.distinctBy { it.startEpochMilli }.sortedBy { it.startEpochMilli } }
+                    } else {
+                        loadedDay.programmes
+                    }
+                    val dayIndex = computeDayBlocks(date, dayData)
                     if (!guideDayIndex.containsKey(date)) {
                         guideDayIndex[date] = dayIndex
                     }
@@ -3859,6 +4022,8 @@ private fun FortressLibrary(
     epgGuide: EpgGuide?,
     epgSourceName: String?,
     epgTimeShiftHours: Int,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     epgLoadedDays: Int = 3,
     epgRepository: EpgRepository? = null,
     playChannelsFullscreen: Boolean,
@@ -3891,7 +4056,10 @@ private fun FortressLibrary(
     blockUnrated: Boolean = false,
     activeHouseholdProfile: HouseholdProfile? = null,
     onOpenProfiles: (() -> Unit)? = null,
-    onOpenSettings: (Int) -> Unit
+    onOpenSettings: (Int) -> Unit,
+    onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
+    onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
+    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -4009,6 +4177,8 @@ private fun FortressLibrary(
                     sidebarFocusRequester = selectedItemFocusRequester,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                    epgMappings = epgMappings,
                     favoriteChannelIds = favoriteChannelIds,
                     recentChannelIds = recentChannelIds,
                     followedSeriesIds = followedSeriesIds,
@@ -4075,6 +4245,8 @@ private fun FortressLibrary(
                     epgGuide = epgGuide,
                     epgSourceName = epgSourceName,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                    epgMappings = epgMappings,
                     epgLoadedDays = epgLoadedDays,
                     epgRepository = epgRepository,
                     playChannelsFullscreen = playChannelsFullscreen,
@@ -4116,7 +4288,10 @@ private fun FortressLibrary(
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,
                     onRequestedChannelHandled = { requestedChannel = null },
-                    onOpenSettings = onOpenSettings
+                    onOpenSettings = onOpenSettings,
+                    onSaveMapping = onSaveMapping,
+                    onResetMapping = onResetMapping,
+                    onRequestAdultAuth = onRequestAdultAuth
                 )
                 LibraryDestination.MOVIES -> XtreamMoviesScreen(
                     catalogs = xtreamCatalogs,
@@ -4204,6 +4379,8 @@ private fun FortressLibrary(
                     contentFocusRequester = contentFocusRequester,
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
+                    epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                    epgMappings = epgMappings,
                     favoriteChannelIds = favoriteChannelIds,
                     movieWatchlistIds = movieWatchlistIds,
                     followedSeriesIds = followedSeriesIds,
@@ -9112,7 +9289,9 @@ private fun HomeScreen(
     contentFocusRequester: FocusRequester,
     sidebarFocusRequester: FocusRequester? = null,
     epgGuide: EpgGuide?,
-    epgTimeShiftHours: Int,
+    epgTimeShiftHours: Int = 0,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     favoriteChannelIds: Set<String>,
     recentChannelIds: List<String>,
     followedSeriesIds: Set<String>,
@@ -9533,12 +9712,13 @@ private fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 itemsIndexed(favoriteChannels, key = { _, it -> "fav_now:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
-                                    val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgTimeShiftHours) {
-                                        epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)
+                                    val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
+                                    val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId) {
+                                        epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)
                                     }
                                     val currentProg = snapshot?.current
                                     val nextProg = snapshot?.next
-                                    val shiftMillis = epgTimeShiftHours * 3_600_000L
+                                    val shiftMillis = epgScheduleCorrectionMinutes * 60_000L
                                     val adjustedStart = currentProg?.startEpochMilli?.plus(shiftMillis)
                                     val adjustedStop = currentProg?.stopEpochMilli?.plus(shiftMillis)
                                     val progProgress = if (adjustedStart != null && adjustedStop != null && adjustedStop > adjustedStart) {
@@ -9795,7 +9975,9 @@ private fun FavoriteLibraryScreen(
     profiles: List<PlaylistProfile>,
     contentFocusRequester: FocusRequester,
     epgGuide: EpgGuide?,
-    epgTimeShiftHours: Int,
+    epgTimeShiftHours: Int = 0,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     favoriteChannelIds: Set<String>,
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
@@ -9940,6 +10122,8 @@ private fun FavoriteLibraryScreen(
                                 epgGuide = epgGuide,
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
+                                epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                                manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
                                 selected = false,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
@@ -10059,6 +10243,8 @@ private fun ChannelBrowser(
     epgGuide: EpgGuide?,
     epgSourceName: String?,
     epgTimeShiftHours: Int = 0,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     epgLoadedDays: Int = 3,
     epgRepository: EpgRepository? = null,
     playChannelsFullscreen: Boolean,
@@ -10080,6 +10266,9 @@ private fun ChannelBrowser(
     requestedChannel: PlaylistChannel?,
     onRequestedChannelHandled: () -> Unit,
     onOpenSettings: (Int) -> Unit,
+    onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
+    onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
+    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
     contentFocusRequester: FocusRequester? = null,
     sidebarFocusRequester: FocusRequester? = null
 ) {
@@ -10289,7 +10478,8 @@ private fun ChannelBrowser(
         ProgrammeGuideScreen(
             playlist = playlist,
             epgGuide = epgGuide,
-            epgTimeShiftHours = epgTimeShiftHours,
+            epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+            epgMappings = epgMappings,
             epgLoadedDays = epgLoadedDays,
             epgRepository = epgRepository,
             favoriteChannelIds = favoriteChannelIds,
@@ -10937,6 +11127,8 @@ private fun ChannelBrowser(
                                     epgGuide = epgGuide,
                                     scheduleNow = scheduleNow,
                                     epgTimeShiftHours = epgTimeShiftHours,
+                                    epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                                    manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
                                     selected = selectedChannel == channel,
                                     isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                     onToggleFavorite = { onToggleFavorite(channel) },
@@ -10975,6 +11167,8 @@ private fun ChannelBrowser(
                                 epgGuide = epgGuide,
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
+                                epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                                manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
                                 selected = selectedChannel == channel,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                 onToggleFavorite = { onToggleFavorite(channel) },
@@ -11017,6 +11211,8 @@ private fun ChannelBrowser(
                                 epgGuide = epgGuide,
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
+                                epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                                manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
                                 selected = isSelected,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                 modifier = (if (shouldAttachEffectiveFocus) Modifier.focusRequester(effectiveChannelFocusRequester) else Modifier)
@@ -11064,6 +11260,12 @@ private fun ChannelBrowser(
         if (showUnmatchedDialog) {
             UnmatchedEpgDialog(
                 unmatchedChannels = unmatchedChannels,
+                allChannels = allVisibleChannels,
+                epgGuide = epgGuide,
+                epgMappings = epgMappings,
+                onSaveMapping = onSaveMapping,
+                onResetMapping = onResetMapping,
+                onRequestAdultAuth = onRequestAdultAuth,
                 onDismiss = { showUnmatchedDialog = false },
                 onSelectChannel = { channel ->
                     selectChannel(channel)
@@ -11192,7 +11394,9 @@ private fun GuideChannelRow(
     channel: PlaylistChannel,
     epgGuide: EpgGuide?,
     scheduleNow: Instant,
-    epgTimeShiftHours: Int,
+    epgTimeShiftHours: Int = 0,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    manualXmltvId: String? = null,
     selected: Boolean,
     isFavorite: Boolean = false,
     modifier: Modifier = Modifier,
@@ -11203,9 +11407,9 @@ private fun GuideChannelRow(
     onClick: () -> Unit
 ) {
     val strings = LocalAppStrings.current
-    val presentation = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgTimeShiftHours, strings) {
-        val current = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)?.current
-        val shiftMillis = epgTimeShiftHours * 3_600_000L
+    val presentation = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId, strings) {
+        val current = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)?.current
+        val shiftMillis = epgScheduleCorrectionMinutes * 60_000L
         val adjustedStart = current?.startEpochMilli?.plus(shiftMillis)
         val adjustedStop = current?.stopEpochMilli?.plus(shiftMillis)
         val progress = if (adjustedStart != null && adjustedStop != null && adjustedStop > adjustedStart) {
@@ -14601,6 +14805,9 @@ private fun SettingsDialog(
     epgSourceName: String?,
     epgLastUpdate: Long,
     epgTimeShiftHours: Int,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgSourceTimezone: String = "",
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     epgLoadedDays: Int = 3,
     playlist: Playlist?,
     epgGuide: EpgGuide?,
@@ -14619,7 +14826,12 @@ private fun SettingsDialog(
     onEpgFile: () -> Unit,
     onRefreshEpg: () -> Unit,
     onRemoveEpg: () -> Unit,
-    onEpgTimeShiftChanged: (Int) -> Unit,
+    onEpgTimeShiftChanged: (Int) -> Unit = {},
+    onEpgScheduleCorrectionChanged: (Int) -> Unit = {},
+    onEpgSourceTimezoneChanged: (String) -> Unit = {},
+    onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
+    onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
+    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
     onEpgLoadedDaysChanged: (Int) -> Unit,
     onCreateBackup: () -> Unit,
     onRestoreBackup: () -> Unit
@@ -14829,9 +15041,12 @@ private fun SettingsDialog(
                                     epgSourceName = epgSourceName,
                                     epgLastUpdate = epgLastUpdate,
                                     epgTimeShiftHours = epgTimeShiftHours,
+                                    epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                                    epgSourceTimezone = epgSourceTimezone,
                                     epgLoadedDays = epgLoadedDays,
                                     playlist = playlist,
                                     epgGuide = epgGuide,
+                                    epgMappings = epgMappings,
                                     hideAdultContent = hideAdultContent,
                                     hiddenCategories = hiddenCategories,
                                     loading = loading,
@@ -14839,6 +15054,11 @@ private fun SettingsDialog(
                                     onEpgFile = onEpgFile,
                                     onRefreshEpg = onRefreshEpg,
                                     onRemoveEpg = onRemoveEpg,
+                                    onEpgScheduleCorrectionChanged = onEpgScheduleCorrectionChanged,
+                                    onEpgSourceTimezoneChanged = onEpgSourceTimezoneChanged,
+                                    onSaveMapping = onSaveMapping,
+                                    onResetMapping = onResetMapping,
+                                    onRequestAdultAuth = onRequestAdultAuth,
                                     onEpgTimeShiftChanged = onEpgTimeShiftChanged,
                                     onEpgLoadedDaysChanged = onEpgLoadedDaysChanged
                                 )
@@ -14943,9 +15163,12 @@ private fun SettingsDialog(
                                 epgSourceName = epgSourceName,
                                 epgLastUpdate = epgLastUpdate,
                                 epgTimeShiftHours = epgTimeShiftHours,
+                                epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+                                epgSourceTimezone = epgSourceTimezone,
                                 epgLoadedDays = epgLoadedDays,
                                 playlist = playlist,
                                 epgGuide = epgGuide,
+                                epgMappings = epgMappings,
                                 hideAdultContent = hideAdultContent,
                                 hiddenCategories = hiddenCategories,
                                 loading = loading,
@@ -14953,6 +15176,11 @@ private fun SettingsDialog(
                                 onEpgFile = onEpgFile,
                                 onRefreshEpg = onRefreshEpg,
                                 onRemoveEpg = onRemoveEpg,
+                                onEpgScheduleCorrectionChanged = onEpgScheduleCorrectionChanged,
+                                onEpgSourceTimezoneChanged = onEpgSourceTimezoneChanged,
+                                onSaveMapping = onSaveMapping,
+                                onResetMapping = onResetMapping,
+                                onRequestAdultAuth = onRequestAdultAuth,
                                 onEpgTimeShiftChanged = onEpgTimeShiftChanged,
                                 onEpgLoadedDaysChanged = onEpgLoadedDaysChanged
                             )
@@ -16030,9 +16258,12 @@ private fun EpgTab(
     epgSourceName: String?,
     epgLastUpdate: Long,
     epgTimeShiftHours: Int,
+    epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
+    epgSourceTimezone: String = "",
     epgLoadedDays: Int = 3,
     playlist: Playlist?,
     epgGuide: EpgGuide?,
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     hideAdultContent: Boolean = false,
     hiddenCategories: Set<String> = emptySet(),
     loading: Boolean,
@@ -16040,7 +16271,12 @@ private fun EpgTab(
     onEpgFile: () -> Unit,
     onRefreshEpg: () -> Unit,
     onRemoveEpg: () -> Unit,
-    onEpgTimeShiftChanged: (Int) -> Unit,
+    onEpgScheduleCorrectionChanged: (Int) -> Unit = {},
+    onEpgSourceTimezoneChanged: (String) -> Unit = {},
+    onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
+    onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
+    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
+    onEpgTimeShiftChanged: (Int) -> Unit = {},
     onEpgLoadedDaysChanged: (Int) -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
@@ -16054,12 +16290,18 @@ private fun EpgTab(
             if (hideAdultContent) base.filterNot { isAdultContent(it.name, it.group) } else base
         }
     }
-    val matchedCount = remember(effectiveChannels, epgGuide) {
-        if (epgGuide == null) 0 else effectiveChannels.count { epgGuide.resolveChannelId(it.tvgId, it.name) != null }
+    val matchedCount = remember(effectiveChannels, epgGuide, epgMappings) {
+        if (epgGuide == null) 0 else effectiveChannels.count {
+            val manual = epgMappings["${it.sourceId}:${it.sourceItemId}"]?.xmltvChannelId
+            epgGuide.resolveChannelId(it.tvgId, it.name, manual) != null
+        }
     }
-    val unmatchedChannels = remember(effectiveChannels, epgGuide) {
+    val unmatchedChannels = remember(effectiveChannels, epgGuide, epgMappings) {
         if (epgGuide == null) effectiveChannels
-        else effectiveChannels.filter { epgGuide.resolveChannelId(it.tvgId, it.name) == null }
+        else effectiveChannels.filter {
+            val manual = epgMappings["${it.sourceId}:${it.sourceItemId}"]?.xmltvChannelId
+            epgGuide.resolveChannelId(it.tvgId, it.name, manual) == null
+        }
     }
     var showUnmatchedInSettings by remember { mutableStateOf(false) }
 
@@ -16381,123 +16623,178 @@ private fun EpgTab(
             if (showUnmatchedInSettings) {
                 UnmatchedEpgDialog(
                     unmatchedChannels = unmatchedChannels,
+                    allChannels = effectiveChannels,
+                    epgGuide = epgGuide,
+                    epgMappings = epgMappings,
+                    onSaveMapping = onSaveMapping,
+                    onResetMapping = onResetMapping,
+                    onRequestAdultAuth = onRequestAdultAuth,
                     onDismiss = { showUnmatchedInSettings = false },
                     onSelectChannel = { showUnmatchedInSettings = false }
                 )
             }
         }
 
-        // Time Shift
-        SettingsGroup(title = strings.timeShift) {
-            if (isCompact) {
-                Column(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+        var showTimezoneDialog by remember { mutableStateOf(false) }
+        var showDirectCorrectionDialog by remember { mutableStateOf(false) }
+
+        // Source Timezone Fallback (when XMLTV omits timezone)
+        SettingsGroup(title = strings.epgSourceTimezone) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(strings.epgSourceTimezone, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(strings.epgSourceTimezoneDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                    onClick = { showTimezoneDialog = true },
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
                 ) {
-                    Text(strings.timeShift, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text(strings.timeShiftDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                     Row(
-                        Modifier.fillMaxWidth(),
+                        Modifier.padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        FilledTonalButton(
-                            onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
-                            enabled = epgTimeShiftHours > -23 && !loading,
-                            modifier = Modifier.weight(1f).height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        val displayTz = if (epgSourceTimezone.isBlank()) {
+                            "${strings.timezoneAutoDevice} (${java.time.ZoneId.systemDefault().id})"
+                        } else {
+                            epgSourceTimezone
                         }
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.weight(1.2f).height(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                val shiftDisplay = when {
-                                    epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
-                                    epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
-                                    else -> "0 h"
-                                }
-                                Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
-                        }
-                        FilledTonalButton(
-                            onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
-                            enabled = epgTimeShiftHours < 23 && !loading,
-                            modifier = Modifier.weight(1f).height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        if (epgTimeShiftHours != 0) {
-                            TextButton(
-                                onClick = { onEpgTimeShiftChanged(0) },
-                                enabled = !loading,
-                                contentPadding = PaddingValues(horizontal = 6.dp),
-                                modifier = Modifier.height(36.dp)
-                            ) {
-                                Text(strings.retry, fontSize = 11.sp)
-                            }
-                        }
-                    }
-                }
-            } else {
-                Row(
-                    Modifier.fillMaxWidth().padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(strings.timeShift, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        Text(strings.timeShiftDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilledTonalButton(
-                            onClick = { if (epgTimeShiftHours > -23) onEpgTimeShiftChanged(epgTimeShiftHours - 1) },
-                            enabled = epgTimeShiftHours > -23 && !loading,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.widthIn(min = 60.dp).height(32.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                val shiftDisplay = when {
-                                    epgTimeShiftHours > 0 -> "+$epgTimeShiftHours h"
-                                    epgTimeShiftHours < 0 -> "$epgTimeShiftHours h"
-                                    else -> "0 h"
-                                }
-                                Text(shiftDisplay, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
-                        }
-                        FilledTonalButton(
-                            onClick = { if (epgTimeShiftHours < 23) onEpgTimeShiftChanged(epgTimeShiftHours + 1) },
-                            enabled = epgTimeShiftHours < 23 && !loading,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                        }
-                        if (epgTimeShiftHours != 0) {
-                            TextButton(
-                                onClick = { onEpgTimeShiftChanged(0) },
-                                enabled = !loading,
-                                contentPadding = PaddingValues(horizontal = 6.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Text(strings.retry, fontSize = 11.sp)
-                            }
-                        }
+                        Text(displayTz, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                 }
             }
+        }
+
+        // EPG Schedule Correction
+        SettingsGroup(title = strings.epgScheduleCorrection) {
+            Column(
+                Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(strings.epgScheduleCorrection, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(strings.epgScheduleCorrectionDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+
+                // Steppers and direct entry
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = { if (epgScheduleCorrectionMinutes > -1440) onEpgScheduleCorrectionChanged(epgScheduleCorrectionMinutes - 60) },
+                        enabled = epgScheduleCorrectionMinutes > -1440 && !loading,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
+                    ) {
+                        Text("-1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    FilledTonalButton(
+                        onClick = { if (epgScheduleCorrectionMinutes > -1440) onEpgScheduleCorrectionChanged(epgScheduleCorrectionMinutes - 15) },
+                        enabled = epgScheduleCorrectionMinutes > -1440 && !loading,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1.1f).height(36.dp)
+                    ) {
+                        Text("-15 m", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        onClick = { showDirectCorrectionDialog = true },
+                        modifier = Modifier.weight(1.6f).height(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            val correctionDisplay = when {
+                                epgScheduleCorrectionMinutes > 0 -> "+$epgScheduleCorrectionMinutes min"
+                                epgScheduleCorrectionMinutes < 0 -> "$epgScheduleCorrectionMinutes min"
+                                else -> "0 min"
+                            }
+                            Text(
+                                correctionDisplay,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = { if (epgScheduleCorrectionMinutes < 1440) onEpgScheduleCorrectionChanged(epgScheduleCorrectionMinutes + 15) },
+                        enabled = epgScheduleCorrectionMinutes < 1440 && !loading,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1.1f).height(36.dp)
+                    ) {
+                        Text("+15 m", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    FilledTonalButton(
+                        onClick = { if (epgScheduleCorrectionMinutes < 1440) onEpgScheduleCorrectionChanged(epgScheduleCorrectionMinutes + 60) },
+                        enabled = epgScheduleCorrectionMinutes < 1440 && !loading,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        modifier = Modifier.weight(1f).height(36.dp)
+                    ) {
+                        Text("+1 h", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    if (epgScheduleCorrectionMinutes != 0) {
+                        TextButton(
+                            onClick = { onEpgScheduleCorrectionChanged(0) },
+                            enabled = !loading,
+                            contentPadding = PaddingValues(horizontal = 4.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Text(strings.retry, fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                // Live Preview Card
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val baseTime = remember { LocalTime.of(20, 0) }
+                    val correctedTime = remember(epgScheduleCorrectionMinutes) {
+                        baseTime.plusMinutes(epgScheduleCorrectionMinutes.toLong())
+                    }
+                    val correctedStr = "%02d:%02d".format(correctedTime.hour, correctedTime.minute)
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            strings.epgPreview("20:00", correctedStr),
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            strings.epgScheduleCorrectionDesc,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showTimezoneDialog) {
+            SourceTimezoneDialog(
+                currentTimezone = epgSourceTimezone,
+                onDismiss = { showTimezoneDialog = false },
+                onSelectTimezone = { selected ->
+                    showTimezoneDialog = false
+                    onEpgSourceTimezoneChanged(selected)
+                }
+            )
+        }
+
+        if (showDirectCorrectionDialog) {
+            DirectCorrectionDialog(
+                initialMinutes = epgScheduleCorrectionMinutes,
+                onDismiss = { showDirectCorrectionDialog = false },
+                onConfirm = { minutes ->
+                    showDirectCorrectionDialog = false
+                    onEpgScheduleCorrectionChanged(minutes)
+                }
+            )
         }
 
         // EPG Days to Load (1 to 7 days)
@@ -18350,14 +18647,235 @@ private fun generateUnmatchedChannelsText(channels: List<PlaylistChannel>): Stri
 }
 
 @Composable
+private fun DirectCorrectionDialog(
+    initialMinutes: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var textValue by remember { mutableStateOf(initialMinutes.toString()) }
+    var isError by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(strings.directEntryMinutes, fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(strings.epgScheduleCorrectionDesc, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = {
+                        textValue = it
+                        isError = it.trim().toIntOrNull() == null
+                    },
+                    isError = isError,
+                    label = { Text("Minutes (-1440 to 1440)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val minutes = textValue.trim().toIntOrNull()
+                    if (minutes != null) {
+                        onConfirm(minutes.coerceIn(-1440, 1440))
+                    }
+                },
+                enabled = !isError && textValue.trim().toIntOrNull() != null
+            ) {
+                Text(strings.save)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.cancel)
+            }
+        }
+    )
+}
+
+@Composable
+private fun SourceTimezoneDialog(
+    currentTimezone: String,
+    onDismiss: () -> Unit,
+    onSelectTimezone: (String) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var query by remember { mutableStateOf("") }
+    val defaultZones = remember {
+        listOf(
+            "", // Automatic
+            "UTC",
+            "Europe/Lisbon",
+            "Europe/London",
+            "Europe/Madrid",
+            "Europe/Paris",
+            "Europe/Berlin",
+            "Europe/Rome",
+            "America/New_York",
+            "America/Chicago",
+            "America/Los_Angeles",
+            "America/Sao_Paulo"
+        )
+    }
+    val allZones = remember(query) {
+        if (query.isBlank()) {
+            defaultZones
+        } else {
+            java.time.ZoneId.getAvailableZoneIds().filter { it.contains(query, ignoreCase = true) }.sorted()
+        }
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.75f).padding(8.dp)
+        ) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Text(strings.epgSourceTimezone, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(strings.epgSourceTimezoneDesc, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Filter timezones...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(allZones) { zone ->
+                        val isSelected = (zone == currentTimezone) || (zone.isEmpty() && currentTimezone.isEmpty())
+                        val label = if (zone.isEmpty()) "${strings.timezoneAutoDevice} (${java.time.ZoneId.systemDefault().id})" else zone
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            onClick = { onSelectTimezone(zone) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                label,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text(strings.close)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualEpgMappingDialog(
+    channel: PlaylistChannel,
+    epgGuide: EpgGuide?,
+    onDismiss: () -> Unit,
+    onSelectXmltvChannel: (com.fortresstv.player.epg.EpgChannel) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    var query by remember { mutableStateOf("") }
+    val xmltvChannels = remember(epgGuide, query) {
+        val list = epgGuide?.channels?.values?.toList().orEmpty()
+        if (query.isBlank()) list
+        else list.filter {
+            (it.displayName?.contains(query, ignoreCase = true) == true) ||
+            it.id.contains(query, ignoreCase = true)
+        }
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.8f).padding(8.dp)
+        ) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Text(strings.epgManualMapping, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("${channel.name} (${channel.group.orEmpty()})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text(strings.searchXmltvChannels) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                if (xmltvChannels.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(strings.noXmltvChannelsFound, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(xmltvChannels, key = { it.id }) { xmltvCh ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                onClick = { onSelectXmltvChannel(xmltvCh) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(xmltvCh.displayName ?: xmltvCh.id, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                        Text(xmltvCh.id, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text(strings.close)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun UnmatchedEpgDialog(
     unmatchedChannels: List<PlaylistChannel>,
+    allChannels: List<PlaylistChannel> = emptyList(),
+    epgGuide: EpgGuide? = null,
+    epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
+    onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
+    onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
+    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
     onDismiss: () -> Unit,
     onSelectChannel: (PlaylistChannel) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showAllChannels by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var channelToMap by remember { mutableStateOf<Pair<PlaylistChannel, String?>?>(null) }
+
+    val baseList = if (showAllChannels && allChannels.isNotEmpty()) allChannels else unmatchedChannels
+    val displayedChannels = remember(baseList, searchQuery) {
+        if (searchQuery.isBlank()) baseList
+        else {
+            val q = searchQuery.trim().lowercase()
+            baseList.filter {
+                it.name.lowercase().contains(q) ||
+                (it.group?.lowercase()?.contains(q) == true) ||
+                (it.tvgId?.lowercase()?.contains(q) == true)
+            }
+        }
+    }
 
     val currentUnmatched by rememberUpdatedState(unmatchedChannels)
     val saveFileLauncher = rememberLauncherForActivityResult(
@@ -18393,12 +18911,12 @@ private fun UnmatchedEpgDialog(
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
             modifier = Modifier
-                .widthIn(max = 560.dp)
+                .widthIn(max = 640.dp)
                 .fillMaxWidth(0.95f)
-                .fillMaxHeight(0.85f)
+                .fillMaxHeight(0.9f)
                 .padding(8.dp)
         ) {
-            Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -18428,25 +18946,57 @@ private fun UnmatchedEpgDialog(
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(10.dp))
+
+                if (allChannels.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = !showAllChannels,
+                            onClick = { showAllChannels = false },
+                            label = { Text("${strings.unmatchedEpgChannels} (${unmatchedChannels.size})", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = showAllChannels,
+                            onClick = { showAllChannels = true },
+                            label = { Text("${strings.allChannels} (${allChannels.size})", fontSize = 12.sp) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(strings.searchChannels) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                )
+
+                Spacer(Modifier.height(10.dp))
 
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(unmatchedChannels, key = { "${it.position}:${it.streamUrl}" }) { channel ->
+                    items(displayedChannels, key = { "${it.sourceId}:${it.sourceItemId}" }) { channel ->
+                        val mapping = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]
+                        val hasMapping = mapping != null
+                        val isMappingAvailable = if (hasMapping) {
+                            epgGuide?.channels?.containsKey(mapping!!.xmltvChannelId) == true ||
+                            epgGuide?.programmes?.containsKey(mapping!!.xmltvChannelId) == true
+                        } else true
+
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                onSelectChannel(channel)
-                                onDismiss()
-                            }
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
@@ -18472,12 +19022,17 @@ private fun UnmatchedEpgDialog(
                                         }
                                     }
                                 }
-                                Spacer(Modifier.width(12.dp))
-                                Column(Modifier.weight(1f)) {
+                                Spacer(Modifier.width(10.dp))
+                                Column(
+                                    Modifier.weight(1f).clickable {
+                                        onSelectChannel(channel)
+                                        onDismiss()
+                                    }
+                                ) {
                                     Text(
                                         channel.name,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
+                                        fontSize = 13.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -18488,24 +19043,77 @@ private fun UnmatchedEpgDialog(
                                             fontSize = 11.sp
                                         )
                                     }
-                                    val reason = when {
-                                        channel.tvgId.isNullOrBlank() -> strings.missingTvgId
-                                        else -> strings.tvgIdNotFound(channel.tvgId.orEmpty())
+                                    if (hasMapping) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(
+                                                "${strings.mappedTo}: ${mapping!!.xmltvChannelId}",
+                                                color = if (isMappingAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            if (!isMappingAvailable) {
+                                                Text(
+                                                    "(${strings.mappingUnavailable})",
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        val reason = when {
+                                            channel.tvgId.isNullOrBlank() -> strings.missingTvgId
+                                            else -> strings.tvgIdNotFound(channel.tvgId.orEmpty())
+                                        }
+                                        Text(
+                                            reason,
+                                            color = MaterialTheme.colorScheme.error,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
                                     }
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        reason,
-                                        color = MaterialTheme.colorScheme.error,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (hasMapping) {
+                                        IconButton(
+                                            onClick = {
+                                                onRequestAdultAuth { token ->
+                                                    onResetMapping(channel, token)
+                                                }
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Clear,
+                                                contentDescription = strings.resetToAutomatic,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            onRequestAdultAuth { token ->
+                                                channelToMap = channel to token
+                                            }
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = strings.mapEpgChannel,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -18527,6 +19135,18 @@ private fun UnmatchedEpgDialog(
                 }
             }
         }
+    }
+
+    channelToMap?.let { (channel, unlockToken) ->
+        ManualEpgMappingDialog(
+            channel = channel,
+            epgGuide = epgGuide,
+            onDismiss = { channelToMap = null },
+            onSelectXmltvChannel = { xmltvCh ->
+                channelToMap = null
+                onSaveMapping(channel, xmltvCh, unlockToken)
+            }
+        )
     }
 }
 

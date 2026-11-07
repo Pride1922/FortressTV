@@ -187,6 +187,7 @@ fun ProfileSelectionDialog(
                                     fontSize = 44.sp,
                                     shape = RoundedCornerShape(12.dp),
                                     usePalette = true,
+                                    avatarUrl = prof.avatarUrl,
                                     modifier = if (isLastUsed) {
                                         Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
                                     } else Modifier
@@ -399,7 +400,8 @@ internal fun ProfileManagementDialog(
                                     name = prof.name,
                                     isChild = prof.isChild,
                                     size = 40.dp,
-                                    fontSize = 18.sp
+                                    fontSize = 18.sp,
+                                    avatarUrl = prof.avatarUrl
                                 )
 
                                 Spacer(Modifier.width(12.dp))

@@ -197,6 +197,10 @@ class UserLibraryStore internal constructor(
         return order
     }
 
+    fun setHiddenCategories(profileId: String, hidden: Set<String>) {
+        preferences.edit().putStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$profileId", hidden).apply()
+    }
+
     fun setFavoriteChannelIds(ids: Set<String>) {
         preferences.edit().putStringSet(KEY_FAVORITE_CHANNELS, ids).apply()
     }

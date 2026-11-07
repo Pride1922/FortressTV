@@ -9,7 +9,10 @@ import org.json.JSONObject
 
 enum class SyncActionType {
     UPSERT_LIBRARY,
-    UPSERT_PROGRESS
+    UPSERT_PROGRESS,
+    UPSERT_CATEGORIES,
+    UPSERT_PREFERENCES,
+    UPSERT_RECENT_CHANNELS
 }
 
 data class PendingSyncMutation(

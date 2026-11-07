@@ -32,6 +32,20 @@ data class CloudWatchProgressItem(
     val updatedAt: String? = null
 )
 
+data class CloudCategoryCustomization(
+    val sourceId: String,
+    val hiddenCategories: Set<String>,
+    val categoryOrder: List<String>
+)
+
+data class CloudProfilePreferences(
+    val preferredAudioLanguage: String,
+    val preferredSubtitleLanguage: String,
+    val subtitleFallbackEnglish: Boolean,
+    val startupDestination: String = "home",
+    val epgTimeShiftHours: Int = 0
+)
+
 object CloudIdentityHasher {
     /**
      * Preserves exact raw source item identity without extra prefixes.
@@ -221,5 +235,131 @@ internal class SupabaseSyncApi(
             }
             transport.request("POST", "/rest/v1/rpc/fortress_sync_profile_watch_progress", rpcBody, accessToken, headers)
         }
+    }
+
+    fun saveProfileCategories(
+        profileId: String,
+        sourceId: String,
+        hiddenCategories: Set<String>,
+        categoryOrder: List<String>,
+        accessToken: String
+    ) {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+            put("p_source_id", sourceId)
+            put("p_hidden_categories", JSONArray(hiddenCategories.toList()))
+            put("p_category_order", JSONArray(categoryOrder))
+        }
+        transport.request("POST", "/rest/v1/rpc/fortress_save_profile_categories", rpcBody, accessToken, null)
+    }
+
+    fun getProfileCategories(
+        profileId: String,
+        accessToken: String
+    ): List<CloudCategoryCustomization> {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+        }
+        return runCatching {
+            val text = transport.request("POST", "/rest/v1/rpc/fortress_get_profile_categories", rpcBody, accessToken, null)
+            val arr = JSONArray(text)
+            val list = mutableListOf<CloudCategoryCustomization>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val sourceId = obj.getString("source_id")
+                val hiddenArr = obj.optJSONArray("hidden_categories") ?: JSONArray()
+                val hiddenSet = mutableSetOf<String>()
+                for (j in 0 until hiddenArr.length()) {
+                    hiddenSet.add(hiddenArr.getString(j))
+                }
+                val orderArr = obj.optJSONArray("category_order") ?: JSONArray()
+                val orderList = mutableListOf<String>()
+                for (j in 0 until orderArr.length()) {
+                    orderList.add(orderArr.getString(j))
+                }
+                list.add(CloudCategoryCustomization(sourceId, hiddenSet, orderList))
+            }
+            list
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveProfilePreferences(
+        profileId: String,
+        audioLang: String,
+        subtitleLang: String,
+        subFallback: Boolean,
+        startupDestination: String = "home",
+        epgTimeShiftHours: Int = 0,
+        accessToken: String
+    ) {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+            put("p_audio_lang", audioLang)
+            put("p_subtitle_lang", subtitleLang)
+            put("p_sub_fallback", subFallback)
+            put("p_startup_destination", startupDestination)
+            put("p_epg_time_shift_hours", epgTimeShiftHours)
+        }
+        transport.request("POST", "/rest/v1/rpc/fortress_save_profile_preferences", rpcBody, accessToken, null)
+    }
+
+    fun getProfilePreferences(
+        profileId: String,
+        accessToken: String
+    ): CloudProfilePreferences? {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+        }
+        return runCatching {
+            val text = transport.request("POST", "/rest/v1/rpc/fortress_get_profile_preferences", rpcBody, accessToken, null)
+            val obj = JSONObject(text)
+            CloudProfilePreferences(
+                preferredAudioLanguage = obj.optString("preferred_audio_language", "default"),
+                preferredSubtitleLanguage = obj.optString("preferred_subtitle_language", "off"),
+                subtitleFallbackEnglish = obj.optBoolean("subtitle_fallback_english", true),
+                startupDestination = obj.optString("startup_destination", "home"),
+                epgTimeShiftHours = obj.optInt("epg_time_shift_hours", 0)
+            )
+        }.getOrNull()
+    }
+
+    fun saveProfileRecentChannels(
+        profileId: String,
+        recentChannels: List<String>,
+        accessToken: String
+    ) {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+            put("p_recent_channels", JSONArray(recentChannels.take(20)))
+        }
+        transport.request("POST", "/rest/v1/rpc/fortress_save_profile_recent_channels", rpcBody, accessToken, null)
+    }
+
+    fun clearProfileRecentChannels(
+        profileId: String,
+        accessToken: String
+    ) {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+        }
+        transport.request("POST", "/rest/v1/rpc/fortress_clear_profile_recent_channels", rpcBody, accessToken, null)
+    }
+
+    fun getProfileRecentChannels(
+        profileId: String,
+        accessToken: String
+    ): List<String> {
+        val rpcBody = JSONObject().apply {
+            put("p_profile_id", profileId)
+        }
+        return runCatching {
+            val text = transport.request("POST", "/rest/v1/rpc/fortress_get_profile_recent_channels", rpcBody, accessToken, null)
+            val arr = JSONArray(text)
+            val list = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                list.add(arr.getString(i))
+            }
+            list
+        }.getOrDefault(emptyList())
     }
 }

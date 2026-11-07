@@ -110,6 +110,7 @@ interface Strings {
     val settings: String
     val close: String
     val clearSearch: String
+    val clearRecentChannels: String
     val save: String
     val cancel: String
     val delete: String
@@ -348,6 +349,21 @@ interface Strings {
     val battery: String
     val timeShift: String
     val timeShiftDesc: String
+    val epgScheduleCorrection: String
+    val epgScheduleCorrectionDesc: String
+    fun epgPreview(baseHour: String, correctedHour: String): String
+    val epgSourceTimezone: String
+    val epgSourceTimezoneDesc: String
+    val timezoneAutoDevice: String
+    val directEntryMinutes: String
+    val epgManualMapping: String
+    val epgManualMappingDesc: String
+    val mapEpgChannel: String
+    val resetToAutomatic: String
+    val mappingUnavailable: String
+    val searchXmltvChannels: String
+    val noXmltvChannelsFound: String
+    val mappedTo: String
     val epgLoadedDays: String
     val epgLoadedDaysDesc: String
     fun epgDaysCount(days: Int): String
@@ -560,6 +576,7 @@ object EnglishStrings : Strings {
     override val settings = "Settings"
     override val close = "Close"
     override val clearSearch = "Clear search"
+    override val clearRecentChannels = "Clear recently watched channels"
     override val save = "Save"
     override val cancel = "Cancel"
     override val delete = "Delete"
@@ -796,8 +813,24 @@ object EnglishStrings : Strings {
     override val removeEpg = "Remove EPG"
     override val removeEpgConfirmation = "FortressTV will forget this EPG source and clear its local schedule cache. Playlists will not be affected."
     override val battery = "Battery"
-    override val timeShift = "Time Shift (Hours)"
+    override val timeShift = "EPG Schedule Correction"
     override val timeShiftDesc = "Adjust this if programme times are offset from your local timezone."
+    override val epgScheduleCorrection = "EPG Schedule Correction"
+    override val epgScheduleCorrectionDesc = "+1 hour makes programmes appear one hour later."
+    override fun epgPreview(baseHour: String, correctedHour: String) =
+        "Programme starts at $baseHour → corrected to $correctedHour"
+    override val epgSourceTimezone = "EPG Source Timezone"
+    override val epgSourceTimezoneDesc = "Used only when XMLTV listings omit a timezone offset."
+    override val timezoneAutoDevice = "Automatic (Device timezone)"
+    override val directEntryMinutes = "Direct entry (minutes)"
+    override val epgManualMapping = "EPG Channel Mapping"
+    override val epgManualMappingDesc = "Manually associate an IPTV channel with an XMLTV guide channel."
+    override val mapEpgChannel = "Map EPG Channel"
+    override val resetToAutomatic = "Reset to Automatic"
+    override val mappingUnavailable = "Unavailable"
+    override val searchXmltvChannels = "Search XMLTV channels..."
+    override val noXmltvChannelsFound = "No matching XMLTV channels found"
+    override val mappedTo = "Mapped to"
     override val epgLoadedDays = "EPG Days to Load"
     override val epgLoadedDaysDesc = "Number of calendar days of programme data to retain in memory and cache (1 to 7 days)."
     override fun epgDaysCount(days: Int) = if (days == 1) "1 day" else "$days days"
@@ -1012,6 +1045,7 @@ object PortugueseStrings : Strings {
     override val settings = "Definições"
     override val close = "Fechar"
     override val clearSearch = "Limpar pesquisa"
+    override val clearRecentChannels = "Limpar canais vistos recentemente"
     override val save = "Guardar"
     override val cancel = "Cancelar"
     override val delete = "Eliminar"
@@ -1248,8 +1282,24 @@ object PortugueseStrings : Strings {
     override val removeEpg = "Remover EPG"
     override val removeEpgConfirmation = "A FortressTV irá esquecer esta fonte de EPG e limpar a programação guardada localmente. As listas não serão afetadas."
     override val battery = "Bateria"
-    override val timeShift = "Ajuste de Fuso Horário (Horas)"
+    override val timeShift = "Correção de Horário do EPG"
     override val timeShiftDesc = "Ajuste este valor se os horários dos programas não coincidirem com o seu fuso horário local."
+    override val epgScheduleCorrection = "Correção de Horário do EPG"
+    override val epgScheduleCorrectionDesc = "+1 hora faz com que os programas apareçam uma hora mais tarde."
+    override fun epgPreview(baseHour: String, correctedHour: String) =
+        "O programa começa às $baseHour → corrigido para as $correctedHour"
+    override val epgSourceTimezone = "Fuso Horário da Fonte de EPG"
+    override val epgSourceTimezoneDesc = "Utilizado apenas quando a grelha XMLTV omite o fuso horário."
+    override val timezoneAutoDevice = "Automático (Fuso horário do dispositivo)"
+    override val directEntryMinutes = "Introdução direta (minutos)"
+    override val epgManualMapping = "Associação Manual de EPG"
+    override val epgManualMappingDesc = "Associe manualmente um canal IPTV a um canal do guia XMLTV."
+    override val mapEpgChannel = "Associar Canal EPG"
+    override val resetToAutomatic = "Repor Automático"
+    override val mappingUnavailable = "Indisponível"
+    override val searchXmltvChannels = "Pesquisar canais XMLTV..."
+    override val noXmltvChannelsFound = "Nenhum canal XMLTV correspondente encontrado"
+    override val mappedTo = "Associado a"
     override val epgLoadedDays = "Dias de EPG a Carregar"
     override val epgLoadedDaysDesc = "Número de dias do guia de programação a reter na memória e cache (1 a 7 dias)."
     override fun epgDaysCount(days: Int) = if (days == 1) "1 dia" else "$days dias"

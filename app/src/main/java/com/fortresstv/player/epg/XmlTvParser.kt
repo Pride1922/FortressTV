@@ -18,9 +18,10 @@ object XmlTvParser {
     fun parse(
         input: InputStream,
         referenceTimeMillis: Long = System.currentTimeMillis(),
-        loadedDays: Int = DEFAULT_LOADED_DAYS
+        loadedDays: Int = DEFAULT_LOADED_DAYS,
+        fallbackSourceZone: ZoneId = ZoneId.systemDefault()
     ): EpgGuide {
-        val handler = InMemXmlTvHandler(referenceTimeMillis, loadedDays.coerceIn(1, 7))
+        val handler = InMemXmlTvHandler(referenceTimeMillis, loadedDays.coerceIn(1, 7), fallbackSourceZone)
         parseXml(input, handler)
         return handler.guide()
     }
@@ -31,7 +32,8 @@ object XmlTvParser {
         fingerprint: String,
         referenceTimeMillis: Long = System.currentTimeMillis(),
         loadedDays: Int = DEFAULT_LOADED_DAYS,
-        timezoneId: String = ZoneId.systemDefault().id
+        timezoneId: String = ZoneId.systemDefault().id,
+        fallbackSourceZone: ZoneId = ZoneId.systemDefault()
     ): EpgManifest {
         val zone = runCatching { ZoneId.of(timezoneId) }.getOrDefault(ZoneId.systemDefault())
         val today = Instant.ofEpochMilli(referenceTimeMillis).atZone(zone).toLocalDate()
@@ -41,7 +43,7 @@ object XmlTvParser {
         val session = EpgDiskCache.createStagingSession(
             context = context,
             generationId = genId,
-            fingerprint = fingerprint,
+            fingerprint = "$fingerprint:${fallbackSourceZone.id}",
             timezoneId = zone.id,
             loadedDays = loadedDays.coerceIn(1, 7),
             todayEpochDay = todayEpochDay
@@ -52,7 +54,8 @@ object XmlTvParser {
                 stagingSession = session,
                 referenceTime = referenceTimeMillis,
                 loadedDays = loadedDays.coerceIn(1, 7),
-                zone = zone
+                zone = zone,
+                fallbackSourceZone = fallbackSourceZone
             )
             parseXml(input, handler)
 
@@ -87,7 +90,8 @@ object XmlTvParser {
         private val stagingSession: EpgDiskCache.StagingSession,
         private val referenceTime: Long,
         private val loadedDays: Int,
-        private val zone: ZoneId
+        private val zone: ZoneId,
+        private val fallbackSourceZone: ZoneId = ZoneId.systemDefault()
     ) : DefaultHandler() {
         val channels = linkedMapOf<String, EpgChannel>()
         private val pastCutoff = if (referenceTime > 0L) referenceTime - (6 * 3600_000L) else Long.MIN_VALUE
@@ -147,8 +151,8 @@ object XmlTvParser {
                 "programme" -> programme?.takeIf {
                     it.channelId.isNotBlank() && it.start.isNotBlank() && !it.title.isNullOrBlank()
                 }?.let {
-                    val startEpoch = XmlTvTime.parseToEpoch(it.start) ?: 0L
-                    val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s) }
+                    val startEpoch = XmlTvTime.parseToEpoch(it.start, fallbackSourceZone) ?: 0L
+                    val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s, fallbackSourceZone) }
                     val effectiveStop = stopEpoch ?: (startEpoch + 30 * 60_000L)
                     val isObsolete = (effectiveStop < pastCutoff) || (startEpoch > 0L && startEpoch < pastCutoff && stopEpoch == null)
                     val isTooFarFuture = startEpoch >= futureCutoff
@@ -182,7 +186,8 @@ object XmlTvParser {
 
     private class InMemXmlTvHandler(
         private val referenceTime: Long,
-        private val loadedDays: Int
+        private val loadedDays: Int,
+        private val fallbackSourceZone: ZoneId = ZoneId.systemDefault()
     ) : DefaultHandler() {
         private val zone = ZoneId.systemDefault()
         private val pastCutoff = if (referenceTime > 0L) referenceTime - (6 * 3600_000L) else Long.MIN_VALUE
@@ -242,8 +247,8 @@ object XmlTvParser {
                 "programme" -> programme?.takeIf {
                     it.channelId.isNotBlank() && it.start.isNotBlank() && !it.title.isNullOrBlank()
                 }?.let {
-                    val startEpoch = XmlTvTime.parseToEpoch(it.start) ?: 0L
-                    val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s) }
+                    val startEpoch = XmlTvTime.parseToEpoch(it.start, fallbackSourceZone) ?: 0L
+                    val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s, fallbackSourceZone) }
                     val effectiveStop = stopEpoch ?: (startEpoch + 30 * 60_000L)
                     val isObsolete = (effectiveStop < pastCutoff) || (startEpoch > 0L && startEpoch < pastCutoff && stopEpoch == null)
                     val isTooFarFuture = startEpoch >= futureCutoff

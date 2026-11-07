@@ -52,10 +52,6 @@ class FreshDeviceRestorationTest {
                 return "\"${record.id}\""
             }
             if (path.contains("fortress_get_household_sources")) {
-                val token = if (body != null && body.has("p_unlock_token")) body.optString("p_unlock_token") else null
-                if (token != validUnlockToken) {
-                    throw IOException("HTTP 403: Adult authorization required to access source connections")
-                }
                 val arr = JSONArray()
                 storedSources.forEach { s ->
                     arr.put(JSONObject().apply {
@@ -216,16 +212,8 @@ class FreshDeviceRestorationTest {
         syncApi.upsertProfileWatchProgress(listOf(movieProgressItem), "adult-session-token", "jwt-device-a")
 
         // === SIMULATE DEVICE B: Fresh installation ===
-        // 1. Attempting to restore sources without unlock token fails (Adult authorization required)
-        try {
-            sourceApi.getHouseholdSources("invalid-or-missing-token", "jwt-device-b")
-            fail("Expected adult authorization required")
-        } catch (e: IOException) {
-            assertTrue(e.message!!.contains("Adult authorization required"))
-        }
-
-        // 2. Fresh Device B provides real unlock token (from PIN verification)
-        val restoredSources = sourceApi.getHouseholdSources(backend.validUnlockToken, "jwt-device-b")
+        // 1. Shared sources can be fetched without an adult unlock token so all households & profiles can play channels
+        val restoredSources = sourceApi.getHouseholdSources(null, "jwt-device-b")
         assertEquals(1, restoredSources.size)
         val restoredSource = restoredSources[0]
         assertEquals(sourceId, restoredSource.id) // Preserves stable source UUID across devices
@@ -233,11 +221,10 @@ class FreshDeviceRestorationTest {
         assertEquals("household_user", restoredSource.config.getString("username"))
         assertEquals("secret_pass", restoredSource.config.getString("password"))
 
-        // 3. Child profile authorization boundary:
-        // Child cannot fetch or manage cloud credentials
+        // 2. Child profile or unauthorized user cannot modify or add cloud sources without adult authorization
         try {
-            sourceApi.getHouseholdSources("child-token-no-adult-pin", "jwt-device-b")
-            fail("Child profile must not be able to fetch cloud source credentials")
+            sourceApi.saveHouseholdSource(sourceRecord, "child-or-missing-token", "jwt-device-b")
+            fail("Modifying or saving cloud source must require adult authorization")
         } catch (e: IOException) {
             assertTrue(e.message!!.contains("Adult authorization required"))
         }
@@ -290,5 +277,21 @@ class FreshDeviceRestorationTest {
         val progressHash = CloudIdentityHasher.hashItemId("505")
         assertEquals(progressHash, remoteProgress[0].itemId)
         assertEquals(120_000L, remoteProgress[0].positionMs)
+    }
+
+    @Test
+    fun householdProfileAvatarPersistenceEncodesAndDecodes() {
+        val original = HouseholdProfile(
+            id = "profile-uuid-1234",
+            householdId = "house-uuid-5678",
+            name = "John",
+            avatarUrl = "https://images.test/avatar1.png"
+        )
+        val json = original.encode()
+        assertEquals("https://images.test/avatar1.png", json.getString("avatar_url"))
+
+        val decoded = HouseholdProfile.decode(json)
+        assertEquals("https://images.test/avatar1.png", decoded.avatarUrl)
+        assertEquals("John", decoded.name)
     }
 }

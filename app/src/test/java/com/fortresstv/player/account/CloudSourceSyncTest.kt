@@ -133,4 +133,62 @@ class CloudSourceSyncTest {
             assertTrue(e.message!!.contains("Network timeout or auth failure"))
         }
     }
+
+    @Test
+    fun saveAndGetOpenSubtitlesCredentialsPreservesProperties() {
+        var savedBody: JSONObject? = null
+        val transport = object : com.fortresstv.player.profile.ProfileTransport {
+            override fun request(
+                method: String,
+                path: String,
+                body: JSONObject?,
+                accessToken: String?,
+                headers: Map<String, String>?
+            ): String {
+                if (path.contains("fortress_save_opensubtitles")) {
+                    savedBody = body
+                    return "{\"success\":true}"
+                }
+                if (path.contains("fortress_get_opensubtitles")) {
+                    return """
+                        {
+                            "configured": true,
+                            "enabled": true,
+                            "prefer_pt_pt": true,
+                            "auto_search": false,
+                            "api_key": "my-api-key",
+                            "username": "my-user",
+                            "password": "my-password"
+                        }
+                    """.trimIndent()
+                }
+                return "{}"
+            }
+        }
+        val api = SupabaseSourceApi(transport)
+        val testSettings = com.fortresstv.player.subtitles.OpenSubtitlesSettings(
+            enabled = true,
+            apiKey = "my-api-key",
+            username = "my-user",
+            password = "my-password",
+            preferPtPt = true,
+            autoSearch = false
+        )
+        val saveResult = api.saveOpenSubtitles(testSettings, "unlock-tok", "access-tok")
+        assertTrue(saveResult)
+        assertNotNull(savedBody)
+        assertEquals("my-api-key", savedBody!!.getString("p_api_key"))
+        assertEquals("my-user", savedBody!!.getString("p_username"))
+        assertEquals("my-password", savedBody!!.getString("p_password"))
+        assertTrue(savedBody!!.getBoolean("p_prefer_pt_pt"))
+        assertFalse(savedBody!!.getBoolean("p_auto_search"))
+
+        val restored = api.getOpenSubtitles(null, "access-tok")
+        assertNotNull(restored)
+        assertEquals("my-api-key", restored!!.apiKey)
+        assertEquals("my-user", restored.username)
+        assertEquals("my-password", restored.password)
+        assertTrue(restored.preferPtPt)
+        assertFalse(restored.autoSearch)
+    }
 }

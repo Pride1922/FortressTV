@@ -344,8 +344,9 @@ class ProfileRepository internal constructor(
                         saveProfilesLocally(list)
                         updateActiveProfileSelection(list)
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // Fall back to local profiles seamlessly when offline or on network failure
+                    android.util.Log.w("ProfileRepository", "Failed to refresh remote profiles or PIN status", e)
                     loadFromLocalStorage()
                 }
             } else {
@@ -596,7 +597,8 @@ class ProfileRepository internal constructor(
                                 maximumAge = profile.maximumAge,
                                 blockUnrated = profile.blockUnrated,
                                 unlockToken = unlockToken,
-                                accessToken = token
+                                accessToken = token,
+                                avatarUrl = profile.avatarUrl
                             )
                             profile.copy(id = serverId)
                         } else {
@@ -612,7 +614,8 @@ class ProfileRepository internal constructor(
                         maximumAge = profile.maximumAge,
                         blockUnrated = profile.blockUnrated,
                         unlockToken = unlockToken,
-                        accessToken = token
+                        accessToken = token,
+                        avatarUrl = profile.avatarUrl
                     )
                     profile.copy(id = serverId)
                 }

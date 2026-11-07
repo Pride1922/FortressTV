@@ -14,19 +14,24 @@ data class ProgrammeSnapshot(
 fun EpgGuide.snapshot(
     channelId: String?,
     now: Instant = Instant.now(),
-    timeShiftHours: Int = 0
-): ProgrammeSnapshot = snapshot(channelId, null, now, timeShiftHours)
+    correctionMinutes: Int = 0,
+    manualXmltvId: String? = null,
+    timeShiftHours: Int? = null
+): ProgrammeSnapshot = snapshot(channelId, null, now, correctionMinutes, manualXmltvId, timeShiftHours)
 
 fun EpgGuide.snapshot(
     channelId: String?,
     channelName: String?,
     now: Instant = Instant.now(),
-    timeShiftHours: Int = 0
+    correctionMinutes: Int = 0,
+    manualXmltvId: String? = null,
+    timeShiftHours: Int? = null
 ): ProgrammeSnapshot {
-    val resolvedId = resolveChannelId(channelId, channelName) ?: return ProgrammeSnapshot(null, null)
+    val effectiveMinutes = if (timeShiftHours != null) timeShiftHours * 60 else correctionMinutes
+    val resolvedId = resolveChannelId(channelId, channelName, manualXmltvId) ?: return ProgrammeSnapshot(null, null)
     val list = programmes[resolvedId]
     if (list.isNullOrEmpty()) return ProgrammeSnapshot(null, null)
-    val targetNow = now.toEpochMilli() - (timeShiftHours * 3600_000L)
+    val targetNow = now.toEpochMilli() - (effectiveMinutes * 60_000L)
 
     val binaryIndex = list.binarySearchBy(targetNow) { it.startEpochMilli }
     val candidateIndex = if (binaryIndex >= 0) binaryIndex else (-binaryIndex - 1) - 1
@@ -56,9 +61,15 @@ fun EpgGuide.snapshot(
 object XmlTvTime {
     private val valuePattern = Regex("""^(\d{14}|\d{12}|\d{8})(?:\s*([+-]\d{4}|Z))?""")
 
-    fun parseToEpoch(value: String): Long? = parse(value, 0)?.toEpochMilli()
+    fun parseToEpoch(value: String, fallbackZone: ZoneId = ZoneId.systemDefault()): Long? =
+        parse(value, 0, fallbackZone)?.toEpochMilli()
 
-    fun parse(value: String, timeShiftHours: Int = 0): Instant? = runCatching {
+    fun parse(
+        value: String,
+        correctionMinutes: Int = 0,
+        fallbackZone: ZoneId = ZoneId.systemDefault(),
+        timeShiftHours: Int? = null
+    ): Instant? = runCatching {
         val match = valuePattern.find(value.trim()) ?: return null
         val digits = match.groupValues[1]
         val pattern = when (digits.length) {
@@ -71,8 +82,12 @@ object XmlTvTime {
             else -> LocalDateTime.parse(digits, DateTimeFormatter.ofPattern(pattern))
         }
         val offsetText = match.groupValues[2]
-        val instant = if (offsetText.isBlank()) dateTime.atZone(ZoneId.systemDefault()).toInstant()
-        else dateTime.toInstant(if (offsetText == "Z") ZoneOffset.UTC else ZoneOffset.of(offsetText.substring(0, 3) + ":" + offsetText.substring(3)))
-        if (timeShiftHours != 0) instant.plus(java.time.Duration.ofHours(timeShiftHours.toLong())) else instant
+        val instant = if (offsetText.isBlank()) {
+            dateTime.atZone(fallbackZone).toInstant()
+        } else {
+            dateTime.toInstant(if (offsetText == "Z") ZoneOffset.UTC else ZoneOffset.of(offsetText.substring(0, 3) + ":" + offsetText.substring(3)))
+        }
+        val effectiveMinutes = if (timeShiftHours != null) timeShiftHours * 60 else correctionMinutes
+        if (effectiveMinutes != 0) instant.plus(java.time.Duration.ofMinutes(effectiveMinutes.toLong())) else instant
     }.getOrNull()
 }

@@ -25,7 +25,8 @@ data class HouseholdProfile(
     val language: String = "en",
     val hideAdultContent: Boolean = kind == ProfileKind.CHILD,
     val maximumAge: Int? = if (kind == ProfileKind.CHILD) 12 else null,
-    val blockUnrated: Boolean = kind == ProfileKind.CHILD
+    val blockUnrated: Boolean = kind == ProfileKind.CHILD,
+    val avatarUrl: String? = null
 ) {
     init {
         require(name.trim().isNotEmpty() && name.trim().length <= 60) {
@@ -52,12 +53,14 @@ data class HouseholdProfile(
         put("hide_adult_content", hideAdultContent)
         if (maximumAge != null) put("maximum_age", maximumAge) else put("maximum_age", JSONObject.NULL)
         put("block_unrated", blockUnrated)
+        if (avatarUrl != null) put("avatar_url", avatarUrl) else put("avatar_url", JSONObject.NULL)
     }
 
     companion object {
         fun decode(json: JSONObject): HouseholdProfile {
             val kind = ProfileKind.fromPersisted(json.optString("kind", "adult"))
             val maxAge = if (json.isNull("maximum_age")) null else json.optInt("maximum_age").takeIf { it in 0..18 }
+            val avatar = json.optString("avatar_url").takeIf { it.isNotBlank() && it != "null" }
             return HouseholdProfile(
                 id = json.getString("id"),
                 householdId = json.optString("household_id").takeIf(String::isNotBlank),
@@ -66,7 +69,8 @@ data class HouseholdProfile(
                 language = json.optString("language", "en").takeIf { it in listOf("en", "pt-PT", "pt") } ?: "en",
                 hideAdultContent = if (kind == ProfileKind.CHILD) true else json.optBoolean("hide_adult_content", false),
                 maximumAge = if (kind == ProfileKind.CHILD) (maxAge ?: 12) else maxAge,
-                blockUnrated = if (kind == ProfileKind.CHILD) true else json.optBoolean("block_unrated", false)
+                blockUnrated = if (kind == ProfileKind.CHILD) true else json.optBoolean("block_unrated", false),
+                avatarUrl = avatar
             )
         }
 

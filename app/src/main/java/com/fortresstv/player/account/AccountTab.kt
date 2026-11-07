@@ -39,6 +39,8 @@ private enum class AccountPage { LOGIN, REGISTER, SIGNUP_CODE, RECOVER, RECOVERY
 
 @Composable
 internal fun AccountTab(
+    modifier: Modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
+    showHeader: Boolean = true,
     onSignedOut: () -> Unit,
     onSignedIn: (() -> Unit)? = null
 ) {
@@ -180,10 +182,14 @@ internal fun AccountTab(
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(copy.title, style = MaterialTheme.typography.titleLarge)
-        Text(copy.introduction, style = MaterialTheme.typography.bodyMedium)
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (showHeader) {
+            Text(copy.title, style = MaterialTheme.typography.titleLarge)
+            Text(copy.introduction, style = MaterialTheme.typography.bodyMedium)
+        }
         if (!AccountConfiguration.configured) { Text(copy.unavailable); return@Column }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         notice?.let { Text(it) }

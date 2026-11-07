@@ -191,6 +191,83 @@ class CloudLibrarySyncService internal constructor(
         }
     }
 
+    fun recordCategoriesMutation(
+        profileId: String,
+        sourceId: String,
+        hiddenCategories: Set<String>,
+        categoryOrder: List<String>
+    ) {
+        scope.launch {
+            val payload = JSONObject().apply {
+                put("hidden_categories", org.json.JSONArray(hiddenCategories.toList()))
+                put("category_order", org.json.JSONArray(categoryOrder))
+            }
+            outbox.enqueue(
+                PendingSyncMutation(
+                    actionType = SyncActionType.UPSERT_CATEGORIES,
+                    profileId = profileId,
+                    sourceId = sourceId,
+                    itemKind = "categories",
+                    itemId = sourceId,
+                    payload = payload
+                )
+            )
+            triggerSync()
+        }
+    }
+
+    fun recordPreferencesMutation(
+        profileId: String,
+        audioLang: String,
+        subtitleLang: String,
+        subFallback: Boolean,
+        startupDestination: String = "home",
+        epgTimeShiftHours: Int = 0
+    ) {
+        scope.launch {
+            val payload = JSONObject().apply {
+                put("audio_lang", audioLang)
+                put("subtitle_lang", subtitleLang)
+                put("sub_fallback", subFallback)
+                put("startup_destination", startupDestination)
+                put("epg_time_shift_hours", epgTimeShiftHours)
+            }
+            outbox.enqueue(
+                PendingSyncMutation(
+                    actionType = SyncActionType.UPSERT_PREFERENCES,
+                    profileId = profileId,
+                    sourceId = "prefs",
+                    itemKind = "preferences",
+                    itemId = "prefs",
+                    payload = payload
+                )
+            )
+            triggerSync()
+        }
+    }
+
+    fun recordRecentChannelsMutation(
+        profileId: String,
+        recentChannels: List<String>
+    ) {
+        scope.launch {
+            val payload = JSONObject().apply {
+                put("recent_channels", org.json.JSONArray(recentChannels.take(20)))
+            }
+            outbox.enqueue(
+                PendingSyncMutation(
+                    actionType = SyncActionType.UPSERT_RECENT_CHANNELS,
+                    profileId = profileId,
+                    sourceId = "recent",
+                    itemKind = "recent_channels",
+                    itemId = "recent",
+                    payload = payload
+                )
+            )
+            triggerSync()
+        }
+    }
+
     fun triggerSync() {
         scope.launch {
             flushOutbox()
@@ -239,6 +316,45 @@ class CloudLibrarySyncService internal constructor(
                             )
                             syncApi.upsertProfileWatchProgress(listOf(item), sessionToken, accountState.accessToken)
                         }
+                        SyncActionType.UPSERT_CATEGORIES -> {
+                            val hiddenArr = mutation.payload.optJSONArray("hidden_categories") ?: org.json.JSONArray()
+                            val hiddenSet = mutableSetOf<String>()
+                            for (i in 0 until hiddenArr.length()) hiddenSet.add(hiddenArr.getString(i))
+                            val orderArr = mutation.payload.optJSONArray("category_order") ?: org.json.JSONArray()
+                            val orderList = mutableListOf<String>()
+                            for (i in 0 until orderArr.length()) orderList.add(orderArr.getString(i))
+
+                            val validSourceUuid = runCatching { java.util.UUID.fromString(mutation.sourceId).toString() }.getOrNull()
+                                ?: java.util.UUID.nameUUIDFromBytes("source_${mutation.sourceId}".toByteArray()).toString()
+                            syncApi.saveProfileCategories(
+                                profileId = mutation.profileId,
+                                sourceId = validSourceUuid,
+                                hiddenCategories = hiddenSet,
+                                categoryOrder = orderList,
+                                accessToken = accountState.accessToken
+                            )
+                        }
+                        SyncActionType.UPSERT_PREFERENCES -> {
+                            syncApi.saveProfilePreferences(
+                                profileId = mutation.profileId,
+                                audioLang = mutation.payload.optString("audio_lang", "default"),
+                                subtitleLang = mutation.payload.optString("subtitle_lang", "off"),
+                                subFallback = mutation.payload.optBoolean("sub_fallback", true),
+                                startupDestination = mutation.payload.optString("startup_destination", "home"),
+                                epgTimeShiftHours = mutation.payload.optInt("epg_time_shift_hours", 0),
+                                accessToken = accountState.accessToken
+                            )
+                        }
+                        SyncActionType.UPSERT_RECENT_CHANNELS -> {
+                            val channelsArr = mutation.payload.optJSONArray("recent_channels") ?: org.json.JSONArray()
+                            val channels = mutableListOf<String>()
+                            for (i in 0 until channelsArr.length()) channels.add(channelsArr.getString(i))
+                            syncApi.saveProfileRecentChannels(
+                                profileId = mutation.profileId,
+                                recentChannels = channels,
+                                accessToken = accountState.accessToken
+                            )
+                        }
                     }
                     true
                 }.getOrDefault(false)
@@ -282,10 +398,46 @@ class CloudLibrarySyncService internal constructor(
         }
     }
 
+    suspend fun pullRemoteCategories(profileId: String): List<CloudCategoryCustomization> = withContext(Dispatchers.IO) {
+        val accountState = accountRepository.resolveAccountState()
+        if (accountState !is AccountState.AuthenticatedOnline) return@withContext emptyList()
+        runCatching {
+            syncApi.getProfileCategories(profileId, accountState.accessToken)
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun pullRemotePreferences(profileId: String): CloudProfilePreferences? = withContext(Dispatchers.IO) {
+        val accountState = accountRepository.resolveAccountState()
+        if (accountState !is AccountState.AuthenticatedOnline) return@withContext null
+        runCatching {
+            syncApi.getProfilePreferences(profileId, accountState.accessToken)
+        }.getOrNull()
+    }
+
+    suspend fun pullRemoteRecentChannels(profileId: String): List<String> = withContext(Dispatchers.IO) {
+        val accountState = accountRepository.resolveAccountState()
+        if (accountState !is AccountState.AuthenticatedOnline) return@withContext emptyList()
+        runCatching {
+            syncApi.getProfileRecentChannels(profileId, accountState.accessToken)
+        }.getOrDefault(emptyList())
+    }
+
+    fun clearRecentChannels(profileId: String) {
+        scope.launch {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState is AccountState.AuthenticatedOnline) {
+                runCatching {
+                    syncApi.clearProfileRecentChannels(profileId, accountState.accessToken)
+                }
+            }
+        }
+    }
+
     suspend fun pullAndApplyProfileData(
         profileId: String,
         userLibrary: UserLibraryStore,
         progressStore: VodProgressStore,
+        settingsStore: com.fortresstv.player.source.SourceSettingsStore? = null,
         onUpdated: (() -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         coroutineContext.ensureActive()
@@ -293,6 +445,37 @@ class CloudLibrarySyncService internal constructor(
         coroutineContext.ensureActive()
         val remoteProgress = pullRemoteProgress(profileId)
         coroutineContext.ensureActive()
+        val remoteCategories = pullRemoteCategories(profileId)
+        coroutineContext.ensureActive()
+        val remoteRecent = pullRemoteRecentChannels(profileId)
+        coroutineContext.ensureActive()
+        val remotePrefs = if (settingsStore != null) pullRemotePreferences(profileId) else null
+        coroutineContext.ensureActive()
+
+        if (remoteCategories.isNotEmpty()) {
+            for (custom in remoteCategories) {
+                if (custom.hiddenCategories.isNotEmpty()) {
+                    userLibrary.setHiddenCategories(custom.sourceId, custom.hiddenCategories)
+                }
+                if (custom.categoryOrder.isNotEmpty()) {
+                    userLibrary.setCategoryOrder(custom.sourceId, custom.categoryOrder)
+                }
+            }
+        }
+
+        if (remoteRecent.isNotEmpty()) {
+            userLibrary.setRecentChannelIds(remoteRecent)
+        }
+
+        if (remotePrefs != null && settingsStore != null) {
+            settingsStore.setPreferredAudioLanguage(remotePrefs.preferredAudioLanguage)
+            settingsStore.setPreferredSubtitleLanguage(remotePrefs.preferredSubtitleLanguage)
+            settingsStore.setSubtitleFallbackEnglish(remotePrefs.subtitleFallbackEnglish)
+            settingsStore.setStartupDestination(
+                com.fortresstv.player.source.StartupDestination.fromPersisted(remotePrefs.startupDestination)
+            )
+            settingsStore.saveEpgTimeShiftHours(remotePrefs.epgTimeShiftHours)
+        }
 
         if (remoteLibrary.isNotEmpty()) {
             val favs = userLibrary.favoriteChannelIds().toMutableSet()

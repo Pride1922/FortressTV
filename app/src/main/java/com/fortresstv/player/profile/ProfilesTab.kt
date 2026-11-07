@@ -145,7 +145,8 @@ internal fun ProfilesTab(
                     isChild = activeProfile.isChild,
                     isRestrictedDefault = activeProfile.id == "restricted_default",
                     size = 54.dp,
-                    fontSize = 24.sp
+                    fontSize = 24.sp,
+                    avatarUrl = activeProfile.avatarUrl
                 )
 
                 Spacer(Modifier.width(16.dp))

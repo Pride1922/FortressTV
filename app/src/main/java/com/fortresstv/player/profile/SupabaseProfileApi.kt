@@ -92,7 +92,11 @@ internal class SupabaseProfileApi(
     }
 
     fun getPinStatus(accessToken: String): PinStatus {
-        val text = transport.request("POST", "/rest/v1/rpc/fortress_get_parental_pin_status", JSONObject(), accessToken, null)
+        val text = try {
+            transport.request("POST", "/rest/v1/rpc/fortress_get_pin_status", JSONObject(), accessToken, null)
+        } catch (_: Exception) {
+            transport.request("POST", "/rest/v1/rpc/fortress_get_parental_pin_status", JSONObject(), accessToken, null)
+        }
         val json = JSONObject(text.ifBlank { "{}" })
         val hasPin = json.optBoolean("has_pin", false)
         return PinStatus(
@@ -100,7 +104,7 @@ internal class SupabaseProfileApi(
             hasPin = hasPin,
             isLocked = json.optBoolean("is_locked", false),
             remainingAttempts = json.optInt("remaining_attempts", 5),
-            lockoutSeconds = json.optInt("lock_seconds", 0)
+            lockoutSeconds = json.optInt("lockout_seconds", json.optInt("lock_seconds", 0))
         )
     }
 
@@ -111,7 +115,7 @@ internal class SupabaseProfileApi(
         val verified = json.optBoolean("verified", false)
         val locked = json.optBoolean("locked", false)
         val remaining = json.optInt("remaining_attempts", 5)
-        val lockSeconds = json.optInt("lock_seconds", 0)
+        val lockSeconds = json.optInt("lockout_seconds", json.optInt("lock_seconds", 0))
         val unlockToken = json.optString("unlock_token").takeIf(String::isNotBlank)
 
         return when {
@@ -152,7 +156,8 @@ internal class SupabaseProfileApi(
         maximumAge: Int?,
         blockUnrated: Boolean,
         unlockToken: String?,
-        accessToken: String
+        accessToken: String,
+        avatarUrl: String? = null
     ): String {
         val body = JSONObject().apply {
             put("p_name", name.trim())
@@ -161,6 +166,7 @@ internal class SupabaseProfileApi(
             put("p_hide_adult_content", hideAdultContent)
             if (maximumAge != null) put("p_maximum_age", maximumAge) else put("p_maximum_age", JSONObject.NULL)
             put("p_block_unrated", blockUnrated)
+            if (avatarUrl != null) put("p_avatar_url", avatarUrl) else put("p_avatar_url", JSONObject.NULL)
             unlockToken?.let { put("p_unlock_token", it) }
         }
         val text = transport.request("POST", "/rest/v1/rpc/fortress_create_profile", body, accessToken, null)
@@ -180,6 +186,7 @@ internal class SupabaseProfileApi(
             put("p_hide_adult_content", profile.hideAdultContent)
             if (profile.maximumAge != null) put("p_maximum_age", profile.maximumAge) else put("p_maximum_age", JSONObject.NULL)
             put("p_block_unrated", profile.blockUnrated)
+            if (profile.avatarUrl != null) put("p_avatar_url", profile.avatarUrl) else put("p_avatar_url", JSONObject.NULL)
             unlockToken?.let { put("p_unlock_token", it) }
         }
         val text = transport.request("POST", "/rest/v1/rpc/fortress_update_profile", body, accessToken, null)

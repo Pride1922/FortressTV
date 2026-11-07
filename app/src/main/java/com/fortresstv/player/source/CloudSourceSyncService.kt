@@ -7,6 +7,8 @@ import com.fortresstv.player.account.HouseholdSourceRecord
 import com.fortresstv.player.account.SupabaseSourceApi
 import com.fortresstv.player.playlist.PlaylistProfile
 import com.fortresstv.player.profile.ProfileRepository
+import com.fortresstv.player.subtitles.OpenSubtitlesSettings
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,13 +38,18 @@ class CloudSourceSyncService internal constructor(
 
     private val mutex = Mutex()
 
-    suspend fun syncSourcesToCloud(unlockToken: String?): Boolean = withContext(Dispatchers.IO) {
+    suspend fun syncSourcesToCloud(unlockToken: String?): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             val accountState = accountRepository.resolveAccountState()
-            if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
+            android.util.Log.i("CloudSourceSync", "syncSourcesToCloud: accountState is ${accountState::class.simpleName}, token=$unlockToken")
+            if (accountState !is AccountState.AuthenticatedOnline) {
+                return@withLock Result.failure(IllegalStateException("Not authenticated online (${accountState::class.simpleName})"))
+            }
             val token = unlockToken ?: profileRepository.currentUnlockToken()
 
             val playlists = settingsStore.getPlaylists()
+            android.util.Log.i("CloudSourceSync", "Syncing ${playlists.size} playlists to cloud with token=$token")
+            var adultAuthFailure: Throwable? = null
             for (p in playlists) {
                 if (p.source is ContentSource.Xtream) {
                     val config = JSONObject().apply {
@@ -50,15 +57,24 @@ class CloudSourceSyncService internal constructor(
                         put("username", p.source.username)
                         put("password", p.source.password)
                     }
+                    val validId = runCatching { UUID.fromString(p.id).toString() }.getOrNull()
+                        ?: UUID.nameUUIDFromBytes("source_${p.id}".toByteArray()).toString()
                     val record = HouseholdSourceRecord(
-                        id = p.id,
+                        id = validId,
                         sourceType = "xtream",
                         displayName = p.name,
                         enabled = p.enabled,
                         sourceOrder = p.order,
                         config = config
                     )
-                    sourceApi.saveHouseholdSource(record, token, accountState.accessToken)
+                    runCatching {
+                        sourceApi.saveHouseholdSource(record, token, accountState.accessToken)
+                    }.onFailure { err ->
+                        android.util.Log.w("CloudSourceSync", "Failed to sync Xtream source ${p.name} to cloud", err)
+                        if (err.message?.contains("Adult authorization required", ignoreCase = true) == true) {
+                            adultAuthFailure = err
+                        }
+                    }
                 }
             }
 
@@ -66,17 +82,32 @@ class CloudSourceSyncService internal constructor(
             if (customEpg != null && customEpg is ContentSource.RemoteUrl) {
                 val epgConfig = JSONObject().apply {
                     put("url", customEpg.value)
+                    put("correction_minutes", settingsStore.epgScheduleCorrectionMinutes())
+                    put("source_timezone", settingsStore.epgSourceTimezone())
                 }
+                val epgId = UUID.nameUUIDFromBytes("custom_epg_${customEpg.value.trim()}".toByteArray()).toString()
                 val epgRecord = HouseholdSourceRecord(
+                    id = epgId,
                     sourceType = "custom_epg",
                     displayName = customEpg.displayName,
                     enabled = true,
                     config = epgConfig
                 )
-                sourceApi.saveHouseholdSource(epgRecord, token, accountState.accessToken)
+                runCatching {
+                    sourceApi.saveHouseholdSource(epgRecord, token, accountState.accessToken)
+                }.onFailure { err ->
+                    android.util.Log.w("CloudSourceSync", "Failed to sync custom EPG to cloud", err)
+                    if (err.message?.contains("Adult authorization required", ignoreCase = true) == true) {
+                        adultAuthFailure = err
+                    }
+                }
             }
 
-            true
+            if (adultAuthFailure != null) {
+                Result.failure(adultAuthFailure!!)
+            } else {
+                Result.success(Unit)
+            }
         }
     }
 
@@ -128,12 +159,57 @@ class CloudSourceSyncService internal constructor(
                     if (url.isNotBlank()) {
                         val epgSource = ContentSource.RemoteUrl(value = url, displayName = src.displayName)
                         settingsStore.saveEpg(epgSource)
+                        val correction = src.config.optInt("correction_minutes", 0)
+                        settingsStore.saveEpgScheduleCorrectionMinutes(correction)
+                        val tz = src.config.optString("source_timezone", "")
+                        if (tz.isNotBlank()) {
+                            settingsStore.saveEpgSourceTimezone(tz)
+                        }
                     }
                 }
             }
 
             settingsStore.replacePlaylists(currentLocalPlaylists)
             Result.success(restoredPlaylists)
+        }
+    }
+
+    suspend fun syncOpenSubtitlesToCloud(
+        settings: OpenSubtitlesSettings,
+        unlockToken: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) {
+                return@withLock Result.failure(IllegalStateException("Not authenticated"))
+            }
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                val ok = sourceApi.saveOpenSubtitles(settings, token, accountState.accessToken)
+                if (!ok) error("Failed to save OpenSubtitles credentials")
+            }
+        }
+    }
+
+    suspend fun restoreOpenSubtitlesFromCloud(unlockToken: String? = null): OpenSubtitlesSettings? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock null
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                sourceApi.getOpenSubtitles(token, accountState.accessToken)
+            }.getOrNull()
+        }
+    }
+
+    suspend fun deleteOpenSubtitlesFromCloud(unlockToken: String? = null): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                sourceApi.deleteOpenSubtitles(token, accountState.accessToken)
+            }.getOrDefault(false)
         }
     }
 
@@ -144,6 +220,65 @@ class CloudSourceSyncService internal constructor(
             runCatching {
                 sourceApi.deleteHouseholdSource(sourceId, unlockToken, accountState.accessToken)
             }.getOrDefault(false)
+        }
+    }
+
+    suspend fun syncEpgMappingToCloud(
+        mapping: com.fortresstv.player.epg.EpgChannelMapping,
+        unlockToken: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) {
+                return@withLock Result.failure(IllegalStateException("Not authenticated"))
+            }
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                val ok = sourceApi.saveEpgMapping(mapping, token, accountState.accessToken)
+                if (!ok) error("Failed to save channel mapping")
+            }
+        }
+    }
+
+    suspend fun deleteEpgMappingFromCloud(
+        iptvSourceId: String,
+        iptvChannelId: String,
+        unlockToken: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) {
+                return@withLock Result.failure(IllegalStateException("Not authenticated"))
+            }
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                val ok = sourceApi.deleteEpgMapping(iptvSourceId, iptvChannelId, token, accountState.accessToken)
+                if (!ok) error("Failed to delete channel mapping")
+            }
+        }
+    }
+
+    suspend fun restoreEpgMappingsFromCloud(): List<com.fortresstv.player.epg.EpgChannelMapping> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock emptyList()
+            runCatching {
+                sourceApi.getEpgMappings(accountState.accessToken)
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    suspend fun resetAllEpgMappingsInCloud(unlockToken: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) {
+                return@withLock Result.failure(IllegalStateException("Not authenticated"))
+            }
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                val ok = sourceApi.resetAllEpgMappings(token, accountState.accessToken)
+                if (!ok) error("Failed to reset channel mappings")
+            }
         }
     }
 }

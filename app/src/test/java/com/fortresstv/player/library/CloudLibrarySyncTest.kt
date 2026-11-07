@@ -102,6 +102,7 @@ class CloudLibrarySyncTest {
         var simulateNetworkError = false
         var rpcSupported = true
         var customRpcException: IOException? = null
+        var rpcResponse: String = "{\"success\":true}"
         var getResponses = mutableListOf<String>()
 
         override fun request(
@@ -121,7 +122,7 @@ class CloudLibrarySyncTest {
                     throw IOException("HTTP 404: function not found")
                 }
                 postRequests.add(path to body)
-                return "{\"success\":true}"
+                return rpcResponse
             }
             if (method == "POST") {
                 postRequests.add(path to body)
@@ -639,5 +640,53 @@ class CloudLibrarySyncTest {
 
         val estimated = com.fortresstv.player.profile.ServerClockTracker.currentEstimatedServerTimeMs()
         assertTrue(estimated > 0)
+    }
+
+    // --- BEHAVIOR TEST 9: Extended profile preferences sync ---
+    @Test
+    fun profilePreferencesSyncPreservesExtendedStartupAndEpgTimeShift() {
+        val transport = FakeSyncTransport().apply {
+            rpcResponse = """
+                {
+                    "preferred_audio_language": "por",
+                    "preferred_subtitle_language": "por",
+                    "subtitle_fallback_english": false,
+                    "startup_destination": "live_tv",
+                    "epg_time_shift_hours": 2
+                }
+            """.trimIndent()
+        }
+        val api = SupabaseSyncApi(transport)
+
+        // Test save
+        api.saveProfilePreferences(
+            profileId = "prof-test-1",
+            audioLang = "por",
+            subtitleLang = "por",
+            subFallback = false,
+            startupDestination = "live_tv",
+            epgTimeShiftHours = 2,
+            accessToken = "jwt-test"
+        )
+
+        assertEquals(1, transport.postRequests.size)
+        val (path, body) = transport.postRequests[0]
+        assertEquals("/rest/v1/rpc/fortress_save_profile_preferences", path)
+        assertNotNull(body)
+        assertEquals("prof-test-1", body!!.getString("p_profile_id"))
+        assertEquals("por", body.getString("p_audio_lang"))
+        assertEquals("por", body.getString("p_subtitle_lang"))
+        assertFalse(body.getBoolean("p_sub_fallback"))
+        assertEquals("live_tv", body.getString("p_startup_destination"))
+        assertEquals(2, body.getInt("p_epg_time_shift_hours"))
+
+        // Test get
+        val loaded = api.getProfilePreferences("prof-test-1", "jwt-test")
+        assertNotNull(loaded)
+        assertEquals("por", loaded!!.preferredAudioLanguage)
+        assertEquals("por", loaded.preferredSubtitleLanguage)
+        assertFalse(loaded.subtitleFallbackEnglish)
+        assertEquals("live_tv", loaded.startupDestination)
+        assertEquals(2, loaded.epgTimeShiftHours)
     }
 }

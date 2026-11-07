@@ -2,6 +2,7 @@ package com.fortresstv.player.profile
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -16,11 +17,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 
 // Vibrant, Netflix-style avatar palette
 private val AvatarPalette = listOf(
@@ -44,6 +47,7 @@ fun ProfileAvatar(
     fontSize: TextUnit = 16.sp,
     shape: Shape = CircleShape,
     usePalette: Boolean = false,
+    avatarUrl: String? = null,
     modifier: Modifier = Modifier
 ) {
     val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
@@ -70,6 +74,13 @@ fun ProfileAvatar(
                 contentDescription = null,
                 tint = contentColor,
                 modifier = Modifier.size(size * 0.55f)
+            )
+        } else if (!avatarUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = avatarUrl,
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
         } else {
             Text(
