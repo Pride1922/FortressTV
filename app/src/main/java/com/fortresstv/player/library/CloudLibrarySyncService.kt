@@ -274,11 +274,17 @@ class CloudLibrarySyncService internal constructor(
         }
     }
 
+    private fun toValidUuid(sourceId: String): String = runCatching {
+        java.util.UUID.fromString(sourceId).toString()
+    }.getOrElse {
+        java.util.UUID.nameUUIDFromBytes(sourceId.toByteArray(Charsets.UTF_8)).toString()
+    }
+
     suspend fun flushOutbox(): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             val accountState = accountRepository.resolveAccountState()
             if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
-            val sessionToken = profileRepository.getActiveSessionToken() ?: return@withLock false
+            val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withLock false
 
             val pending = outbox.loadPending()
             if (pending.isEmpty()) return@withLock true
@@ -287,10 +293,11 @@ class CloudLibrarySyncService internal constructor(
                 val success = runCatching {
                     when (mutation.actionType) {
                         SyncActionType.UPSERT_LIBRARY -> {
+                            val validSourceUuid = toValidUuid(mutation.sourceId)
                             val item = CloudLibraryItem(
                                 householdId = accountState.userId,
                                 profileId = mutation.profileId,
-                                sourceId = mutation.sourceId,
+                                sourceId = validSourceUuid,
                                 itemKind = mutation.itemKind,
                                 itemId = mutation.itemId,
                                 isFavourite = mutation.payload.optBoolean("is_favourite", false),
@@ -302,10 +309,11 @@ class CloudLibrarySyncService internal constructor(
                             syncApi.upsertProfileLibrary(listOf(item), sessionToken, accountState.accessToken)
                         }
                         SyncActionType.UPSERT_PROGRESS -> {
+                            val validSourceUuid = toValidUuid(mutation.sourceId)
                             val item = CloudWatchProgressItem(
                                 householdId = accountState.userId,
                                 profileId = mutation.profileId,
-                                sourceId = mutation.sourceId,
+                                sourceId = validSourceUuid,
                                 itemKind = mutation.itemKind,
                                 itemId = mutation.itemId,
                                 positionMs = mutation.payload.optLong("position_ms", 0L),
@@ -372,7 +380,7 @@ class CloudLibrarySyncService internal constructor(
     suspend fun pullRemoteLibrary(profileId: String): List<CloudLibraryItem> = withContext(Dispatchers.IO) {
         val accountState = accountRepository.resolveAccountState()
         if (accountState !is AccountState.AuthenticatedOnline) return@withContext emptyList()
-        val sessionToken = profileRepository.getActiveSessionToken() ?: return@withContext emptyList()
+        val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withContext emptyList()
         runCatching {
             syncApi.fetchAllProfileLibrary(profileId, sessionToken, accountState.accessToken)
         }.getOrDefault(emptyList())
@@ -381,7 +389,7 @@ class CloudLibrarySyncService internal constructor(
     suspend fun pullRemoteProgress(profileId: String): List<CloudWatchProgressItem> = withContext(Dispatchers.IO) {
         val accountState = accountRepository.resolveAccountState()
         if (accountState !is AccountState.AuthenticatedOnline) return@withContext emptyList()
-        val sessionToken = profileRepository.getActiveSessionToken() ?: return@withContext emptyList()
+        val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withContext emptyList()
         runCatching {
             syncApi.fetchAllProfileWatchProgress(profileId, sessionToken, accountState.accessToken)
         }.getOrDefault(emptyList())

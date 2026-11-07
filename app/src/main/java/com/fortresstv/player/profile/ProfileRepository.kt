@@ -270,6 +270,33 @@ class ProfileRepository internal constructor(
 
     fun getActiveSessionToken(): String? = persistence.loadActiveSessionToken()
 
+    suspend fun getOrOpenActiveSessionToken(): String? = withContext(Dispatchers.IO) {
+        val existing = persistence.loadActiveSessionToken()
+        if (!existing.isNullOrBlank()) {
+            return@withContext existing
+        }
+        val token = accountRepository.getValidAccessToken() ?: return@withContext null
+        val active = _activeProfile.value
+        val targetProfileId = if (active.id != "restricted_default") {
+            active.id
+        } else {
+            persistence.loadActiveProfileId() ?: _profiles.value.firstOrNull { it.isAdult }?.id
+        } ?: return@withContext null
+
+        val sessionObj = runCatching {
+            api.openProfileSession(
+                profileId = targetProfileId,
+                unlockToken = pinStore.currentUnlockToken(),
+                accessToken = token
+            )
+        }.getOrNull()
+        val newToken = sessionObj?.optString("session_token")?.takeIf(String::isNotBlank)
+        if (newToken != null) {
+            persistence.saveActiveSessionToken(newToken)
+        }
+        newToken
+    }
+
     fun getLastActiveProfileId(): String? = persistence.loadActiveProfileId()
 
     suspend fun onAccountChanged(userId: String?) = withContext(Dispatchers.IO) {
@@ -343,6 +370,21 @@ class ProfileRepository internal constructor(
                         _profiles.value = list
                         saveProfilesLocally(list)
                         updateActiveProfileSelection(list)
+                    }
+
+                    val active = _activeProfile.value
+                    if (active.id != "restricted_default") {
+                        val sessionObj = runCatching {
+                            api.openProfileSession(
+                                profileId = active.id,
+                                unlockToken = pinStore.currentUnlockToken(),
+                                accessToken = token
+                            )
+                        }.getOrNull()
+                        val sessionToken = sessionObj?.optString("session_token")?.takeIf(String::isNotBlank)
+                        if (sessionToken != null) {
+                            persistence.saveActiveSessionToken(sessionToken)
+                        }
                     }
                 } catch (e: Exception) {
                     // Fall back to local profiles seamlessly when offline or on network failure

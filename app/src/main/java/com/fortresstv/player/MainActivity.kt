@@ -653,6 +653,7 @@ private fun FortressTVApp(
     var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
     var followedSeriesIds by remember { mutableStateOf(userLibrary.followedSeriesIds()) }
     var watchedItemIds by remember { mutableStateOf(userLibrary.watchedItemIds()) }
+    var progressRefreshTrigger by remember { mutableStateOf(0) }
     var hiddenCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
     var categoryOrder by remember { mutableStateOf<List<String>>(emptyList()) }
 
@@ -834,42 +835,67 @@ private fun FortressTVApp(
         }
 
         val currentEntries = vodProgressStore.entries().toMutableList()
-        val needsTitleResolution = currentEntries.any { it.sourceId == sourceId && it.title.isBlank() && it.kind == com.fortresstv.player.library.VodProgressKind.MOVIE }
-        if (needsTitleResolution) {
-            val movieMap = mutableMapOf<String, XtreamMovie>()
-            for (movie in catalog.movies) {
-                movieMap[movie.id.toString()] = movie
-            }
-            var progressChanged = false
-            for (i in currentEntries.indices) {
-                val entry = currentEntries[i]
-                if (entry.sourceId == sourceId && entry.title.isBlank() && entry.kind == com.fortresstv.player.library.VodProgressKind.MOVIE) {
-                    var matchingMovie = movieMap[entry.itemId]
-                    if (matchingMovie == null) {
-                        matchingMovie = catalog.movies.firstOrNull {
-                            com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id.toString()) == entry.itemId
-                        }
-                    }
-                    if (matchingMovie != null) {
-                        currentEntries[i] = entry.copy(
-                            title = matchingMovie.name,
-                            posterUrl = matchingMovie.posterUrl,
-                            containerExtension = matchingMovie.containerExtension.ifBlank { "mp4" }
-                        )
-                        progressChanged = true
+        val movieMap = mutableMapOf<String, XtreamMovie>()
+        for (movie in catalog.movies) {
+            movieMap[movie.id.toString()] = movie
+        }
+        val seriesMap = mutableMapOf<String, XtreamSeries>()
+        for (series in catalog.series) {
+            seriesMap[series.id.toString()] = series
+        }
+
+        var progressChanged = false
+        for (i in currentEntries.indices) {
+            val entry = currentEntries[i]
+            if (entry.kind == com.fortresstv.player.library.VodProgressKind.MOVIE && (entry.title.isBlank() || entry.posterUrl.isNullOrBlank())) {
+                var matchingMovie = movieMap[entry.itemId]
+                if (matchingMovie == null) {
+                    matchingMovie = catalog.movies.firstOrNull {
+                        com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id.toString()) == entry.itemId
                     }
                 }
+                if (matchingMovie != null) {
+                    currentEntries[i] = entry.copy(
+                        key = "movie:$sourceId:${matchingMovie.id}",
+                        sourceId = sourceId,
+                        itemId = matchingMovie.id.toString(),
+                        title = matchingMovie.name,
+                        posterUrl = matchingMovie.posterUrl,
+                        containerExtension = matchingMovie.containerExtension.ifBlank { "mp4" }
+                    )
+                    progressChanged = true
+                }
+            } else if (entry.kind == com.fortresstv.player.library.VodProgressKind.EPISODE && (entry.title.isBlank() || entry.posterUrl.isNullOrBlank())) {
+                val matchingSeries = entry.seriesId?.let { sId -> seriesMap[sId.toString()] }
+                    ?: catalog.series.firstOrNull {
+                        val sIdStr = it.id.toString()
+                        val sHash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(sIdStr)
+                        it.id == entry.seriesId ||
+                            sIdStr == entry.itemId ||
+                            sHash == entry.itemId
+                    }
+                if (matchingSeries != null) {
+                    currentEntries[i] = entry.copy(
+                        sourceId = sourceId,
+                        seriesId = matchingSeries.id,
+                        title = if (entry.title.isNotBlank()) entry.title else matchingSeries.name,
+                        posterUrl = entry.posterUrl ?: matchingSeries.coverUrl
+                    )
+                    progressChanged = true
+                }
             }
-            if (progressChanged) {
-                vodProgressStore.setAll(currentEntries)
-            }
+        }
+        if (progressChanged) {
+            vodProgressStore.setAll(currentEntries)
         }
 
         withContext(Dispatchers.Main) {
             favoriteChannelIds = userLibrary.favoriteChannelIds()
+            recentChannelIds = userLibrary.recentChannelIds()
             movieWatchlistIds = userLibrary.movieWatchlistIds()
             followedSeriesIds = userLibrary.followedSeriesIds()
             watchedItemIds = userLibrary.watchedItemIds()
+            progressRefreshTrigger++
         }
     }
 
@@ -904,7 +930,128 @@ private fun FortressTVApp(
             categoryOrder = userLibrary.categoryOrder(activeSourceId)
         }
 
+        if (ns != "local") {
+            val localLib = UserLibraryStore(context.applicationContext, "local")
+            val targetLib = UserLibraryStore(context.applicationContext, ns)
+            val targetProg = VodProgressStore(context.applicationContext, ns)
+            val localProg = VodProgressStore(context.applicationContext, "local")
+
+            val localFollowed = localLib.followedSeriesIds()
+            if (localFollowed.isNotEmpty() && targetLib.followedSeriesIds().isEmpty()) {
+                targetLib.setFollowedSeriesIds(localFollowed)
+                for (item in localFollowed) {
+                    val parts = item.split(":")
+                    if (parts.size >= 3) {
+                        cloudLibrarySyncService.enqueueLibraryMutation(
+                            profileId = targetProfileId,
+                            sourceId = parts[1],
+                            itemKind = "series",
+                            itemId = parts[2],
+                            isFavourite = true,
+                            isWatchlisted = true,
+                            isWatched = false
+                        )
+                    }
+                }
+            }
+            val localWatchlist = localLib.movieWatchlistIds()
+            if (localWatchlist.isNotEmpty() && targetLib.movieWatchlistIds().isEmpty()) {
+                targetLib.setMovieWatchlistIds(localWatchlist)
+                for (item in localWatchlist) {
+                    val parts = item.split(":")
+                    if (parts.size >= 3) {
+                        cloudLibrarySyncService.enqueueLibraryMutation(
+                            profileId = targetProfileId,
+                            sourceId = parts[1],
+                            itemKind = "movie",
+                            itemId = parts[2],
+                            isFavourite = true,
+                            isWatchlisted = true,
+                            isWatched = false
+                        )
+                    }
+                }
+            }
+            val localFavs = localLib.favoriteChannelIds()
+            if (localFavs.isNotEmpty() && targetLib.favoriteChannelIds().isEmpty()) {
+                targetLib.setFavoriteChannelIds(localFavs)
+                for (item in localFavs) {
+                    val parts = item.split(":")
+                    if (parts.size >= 3) {
+                        cloudLibrarySyncService.enqueueLibraryMutation(
+                            profileId = targetProfileId,
+                            sourceId = parts[1],
+                            itemKind = "channel",
+                            itemId = parts[2],
+                            isFavourite = true,
+                            isWatchlisted = false,
+                            isWatched = false
+                        )
+                    }
+                }
+            }
+            val localEntries = localProg.entries()
+            if (localEntries.isNotEmpty() && targetProg.entries().isEmpty()) {
+                targetProg.setAll(localEntries)
+                for (entry in localEntries) {
+                    cloudLibrarySyncService.enqueueProgressMutation(
+                        profileId = targetProfileId,
+                        sourceId = entry.sourceId,
+                        itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                        itemId = entry.itemId,
+                        positionMs = entry.positionMs,
+                        durationMs = entry.durationMs,
+                        completed = entry.progressFraction >= 0.95f
+                    )
+                }
+            }
+        }
+
         if (uid != null && targetProfileId != "restricted_default") {
+            val currentFollowed = userLibrary.followedSeriesIds()
+            for (item in currentFollowed) {
+                val parts = item.split(":")
+                if (parts.size >= 3 && parts[2].length < 64) {
+                    cloudLibrarySyncService.enqueueLibraryMutation(
+                        profileId = targetProfileId,
+                        sourceId = parts[1],
+                        itemKind = "series",
+                        itemId = parts[2],
+                        isFavourite = true,
+                        isWatchlisted = true,
+                        isWatched = false
+                    )
+                }
+            }
+            val currentWatchlist = userLibrary.movieWatchlistIds()
+            for (item in currentWatchlist) {
+                val parts = item.split(":")
+                if (parts.size >= 3 && parts[2].length < 64) {
+                    cloudLibrarySyncService.enqueueLibraryMutation(
+                        profileId = targetProfileId,
+                        sourceId = parts[1],
+                        itemKind = "movie",
+                        itemId = parts[2],
+                        isFavourite = true,
+                        isWatchlisted = true,
+                        isWatched = false
+                    )
+                }
+            }
+            val currentProgress = vodProgressStore.entries()
+            for (entry in currentProgress) {
+                if (entry.itemId.length < 64) {
+                    cloudLibrarySyncService.enqueueProgressMutation(
+                        profileId = targetProfileId,
+                        sourceId = entry.sourceId,
+                        itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                        itemId = entry.itemId,
+                        positionMs = entry.positionMs,
+                        durationMs = entry.durationMs,
+                        completed = entry.progressFraction >= 0.95f
+                    )
+                }
+            }
             cloudLibrarySyncService.triggerSync()
             val profileLibrary = UserLibraryStore(context.applicationContext, ns)
             val profileProgress = VodProgressStore(context.applicationContext, ns)
@@ -1752,6 +1899,7 @@ private fun FortressTVApp(
                     progressStore = vodProgressStore,
                     hiddenCategories = hiddenCategories,
                     categoryOrder = categoryOrder,
+                    progressRefreshTrigger = progressRefreshTrigger,
                     onCategoriesChanged = { newHidden, newOrder ->
                         hiddenCategories = newHidden
                         categoryOrder = newOrder
@@ -4118,11 +4266,15 @@ private fun FortressLibrary(
     onOpenSettings: (Int) -> Unit,
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
     onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
-    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {}
+    onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
+    progressRefreshTrigger: Int = 0
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     var progressEntries by remember { mutableStateOf(progressStore.entries()) }
+    LaunchedEffect(activeHouseholdProfile?.id, progressRefreshTrigger) {
+        progressEntries = progressStore.entries()
+    }
     val libraryConfiguration = LocalConfiguration.current
     val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
     var destination by rememberSaveable {
@@ -9406,11 +9558,22 @@ private fun HomeScreen(
     }
 
     val favoriteChannels = remember(channels, favoriteChannelIds) {
-        channels.filter { it.libraryId()?.let(favoriteChannelIds::contains) == true }
+        channels.filter { ch ->
+            val lid = ch.libraryId()
+            (lid != null && lid in favoriteChannelIds) ||
+                favoriteChannelIds.contains("channel:${ch.sourceId}:${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId)}") ||
+                favoriteChannelIds.any { f -> f.endsWith(":${ch.sourceItemId}") || f.endsWith(":${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId)}") }
+        }
     }
 
     val recentChannelsList = remember(channels, recentChannelIds) {
-        recentChannelIds.mapNotNull { id -> channels.firstOrNull { it.libraryId() == id } }
+        recentChannelIds.mapNotNull { id ->
+            val rawItemId = id.substringAfterLast(':')
+            channels.firstOrNull { ch ->
+                ch.libraryId() == id ||
+                    (ch.sourceItemId.isNotBlank() && (ch.sourceItemId == rawItemId || com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId) == rawItemId))
+            }
+        }
     }
 
     val followedSeries = remember(catalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
