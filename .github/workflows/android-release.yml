@@ -33,7 +33,9 @@ jobs:
           java-version: '21'
           cache: gradle
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0' 'platform-tools'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36.1' 'build-tools;36.0.0' 'platform-tools'
       - name: Run checks before loading the signing key
         run: bash ./gradlew --no-daemon --max-workers=2 :app:compileDebugKotlin :app:testDebugUnitTest :app:lintDebug
       - name: Configure release signing
