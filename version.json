@@ -1,7 +1,7 @@
 {
-  "version": "2.0.0-RC1",
-  "versionCode": 35,
-  "notes": "FortressTV 2.0.0 RC1: Cloud profile settings and favorites sync, Live TV active category filtering, and GitHub Releases auto-update.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC1/fortresstv.apk",
-  "sha256": "76bb2c546079e7e439e7fd7f7f9c541f40c2f822d1b2a3e7ef2098d518ec4b53"
+    "version":  "2.0.0-RC2",
+    "versionCode":  36,
+    "notes":  "Add Account tab to settings, cloud account access in profile switcher, and update onboarding prompt",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC2/fortresstv.apk",
+    "sha256":  "9C1EF5B7BD2E0DA92A5C17F56FDEE24B76E566122D039FE4F5190D2AC9883A3A"
 }
