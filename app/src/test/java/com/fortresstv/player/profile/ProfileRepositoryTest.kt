@@ -908,7 +908,7 @@ class ProfileRepositoryTest {
 
         // 1. Must NOT grant adult access automatically
         assertFalse(repo.isAdultUnlocked())
-        assertTrue(repo.activeProfile.value.id == "restricted_default" || repo.activeProfile.value.isChild)
+        assertEquals(adultProfile.id, repo.activeProfile.value.id)
 
         // 2. Must preserve the remembered last active profile ID for highlighting in the picker
         assertEquals(adultProfile.id, repo.getLastActiveProfileId())

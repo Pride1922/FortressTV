@@ -43,7 +43,7 @@ object XmlTvParser {
         val session = EpgDiskCache.createStagingSession(
             context = context,
             generationId = genId,
-            fingerprint = "$fingerprint:${fallbackSourceZone.id}",
+            fingerprint = fingerprint,
             timezoneId = zone.id,
             loadedDays = loadedDays.coerceIn(1, 7),
             todayEpochDay = todayEpochDay

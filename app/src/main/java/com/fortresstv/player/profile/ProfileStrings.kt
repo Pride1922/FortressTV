@@ -3,7 +3,7 @@ package com.fortresstv.player.profile
 internal class ProfileStrings(private val portuguese: Boolean) {
     private fun text(en: String, pt: String) = if (portuguese) pt else en
 
-    val profilesTitle = text("Household Profiles", "Perfis do Agregado")
+    val profilesTitle = text("Profiles", "Perfis")
     val profile = text("Profile", "Perfil")
     val switchProfile = text("Switch Profile", "Mudar de Perfil")
     val manageProfiles = text("Manage Profiles", "Gerir Perfis")
@@ -45,14 +45,14 @@ internal class ProfileStrings(private val portuguese: Boolean) {
     val selectProfileToContinue = text("Select a profile to continue", "Selecione um perfil para continuar")
     val lastUsed = text("Last used", "Último utilizado")
     val forgotPin = text("Forgot PIN?", "Esqueceu-se do PIN?")
-    val resetPin = text("Reset Household PIN", "Repor PIN do Agregado")
+    val resetPin = text("Reset PIN", "Repor PIN")
     val resetHouseholdPinNotice = text("This changes the PIN for all adult profiles.", "Isto altera o PIN para todos os perfis de adulto.")
     val enterVerificationCode = text("Enter the code sent to your email", "Introduza o código enviado para o seu email")
     val verificationCode = text("Verification code / token", "Código / token de verificação")
     val sendCode = text("Send code", "Enviar código")
     val verifyCode = text("Verify code", "Verificar código")
     val invalidCode = text("Invalid or expired code", "Código inválido ou expirado")
-    val newHouseholdPin = text("New Household PIN", "Novo PIN do Agregado")
+    val newHouseholdPin = text("New PIN", "Novo PIN")
     val enterPasswordToReset = text("Or verify with account password", "Ou confirme com a palavra-passe da conta")
     val accountPassword = text("Account password", "Palavra-passe da conta")
     val wrongPassword = text("Incorrect account password", "Palavra-passe da conta incorreta")

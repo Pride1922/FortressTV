@@ -229,10 +229,12 @@ begin
 
     update public.household_profiles set
         name = btrim(p_name),
-        is_adult = not v_is_child,
-        content_rating_limit = case when v_is_child then coalesce(p_maximum_age, 12)::text else null end,
-        avatar_url = case when p_avatar_url is not null then p_avatar_url else avatar_url end,
+        kind = p_kind,
         language = v_lang,
+        hide_adult_content = case when v_is_child then true else coalesce(p_hide_adult_content, false) end,
+        maximum_age = case when v_is_child then coalesce(p_maximum_age, 12) else null end,
+        block_unrated = case when v_is_child then true else coalesce(p_block_unrated, false) end,
+        avatar_url = case when p_avatar_url is not null then p_avatar_url else avatar_url end,
         updated_at = clock_timestamp()
     where id = p_profile_id and household_id = v_uid;
 

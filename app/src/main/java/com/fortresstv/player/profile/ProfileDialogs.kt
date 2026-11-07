@@ -158,7 +158,7 @@ fun ProfileSelectionDialog(
                         val isActive = (prof.id == activeProfile.id && activeProfile.id != "restricted_default")
                         val isLastUsed = (prof.id == lastUsedProfileId)
                         val status = repository.getPinStatus()
-                        val requiresPin = prof.isAdult && (status.hasPin || activeProfile.isChild) && !repository.isAdultUnlocked()
+                        val requiresPin = prof.isAdult && (activeProfile.isChild || activeProfile.id == "restricted_default") && status.hasPin && !repository.isAdultUnlocked()
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -193,7 +193,7 @@ fun ProfileSelectionDialog(
                                         Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
                                     } else Modifier
                                 )
-                                if (prof.isAdult && status.hasPin) {
+                                if (prof.isAdult && status.hasPin && (activeProfile.isChild || activeProfile.id == "restricted_default")) {
                                     Box(
                                         modifier = Modifier
                                             .padding(4.dp)
@@ -235,7 +235,7 @@ fun ProfileSelectionDialog(
                     OutlinedButton(
                         onClick = {
                             val status = repository.getPinStatus()
-                            if (status.hasPin && !repository.isAdultUnlocked()) {
+                            if (status.hasPin && (activeProfile.isChild || activeProfile.id == "restricted_default") && !repository.isAdultUnlocked()) {
                                 showPinDialogForManagement = true
                             } else {
                                 showManagementDialog = true
@@ -525,7 +525,7 @@ internal fun ProfileEditDialog(
     }
     var maximumAge by remember { mutableIntStateOf(profile?.maximumAge ?: 12) }
     var blockUnrated by remember { mutableStateOf(profile?.blockUnrated ?: true) }
-    var hideAdultContent by remember { mutableStateOf(profile?.hideAdultContent ?: true) }
+    var hideAdultContent by remember { mutableStateOf(profile?.hideAdultContent ?: (kind == ProfileKind.CHILD)) }
     var isSaving by remember { mutableStateOf(false) }
 
     val trimmedName = name.trim()
@@ -576,7 +576,10 @@ internal fun ProfileEditDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = kind == ProfileKind.ADULT,
-                        onClick = { kind = ProfileKind.ADULT },
+                        onClick = {
+                            kind = ProfileKind.ADULT
+                            if (profile == null) hideAdultContent = false
+                        },
                         label = { Text(copy.adult) },
                         modifier = Modifier.tvFocusHighlight()
                     )

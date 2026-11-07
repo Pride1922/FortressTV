@@ -476,14 +476,15 @@ class ProfileRepository internal constructor(
 
                 when (accountState) {
                     is AccountState.SignedOutLocal -> {
-                        if (pinStatus.isProtected && !pinStore.isAdultUnlocked()) {
+                        val currentActive = _activeProfile.value
+                        if (pinStatus.isProtected && (currentActive.isChild || currentActive.id == "restricted_default") && !pinStore.isAdultUnlocked()) {
                             return@withLock false
                         }
                     }
                     is AccountState.AuthenticatedOnline -> {
-                        // In authenticated online mode: server authorization is ALWAYS required.
-                        // Any authorization failure, network failure, malformed response, or missing token
-                        // MUST reject adult activation and preserve restricted state.
+                        val currentActive = _activeProfile.value
+                        val isTransitioningFromChild = currentActive.isChild || currentActive.id == "restricted_default"
+
                         val token = try {
                             val sessionObj = api.openProfileSession(
                                 profileId = profile.id,
@@ -491,8 +492,11 @@ class ProfileRepository internal constructor(
                                 accessToken = accountState.accessToken
                             )
                             sessionObj.optString("session_token").takeIf(String::isNotBlank)
-                                ?: return@withLock false
                         } catch (_: Exception) {
+                            null
+                        }
+
+                        if (isTransitioningFromChild && token == null) {
                             return@withLock false
                         }
                         sessionTokenToSave = token
@@ -602,7 +606,8 @@ class ProfileRepository internal constructor(
                             )
                             profile.copy(id = serverId)
                         } else {
-                            throw updateResult.exceptionOrNull() ?: java.io.IOException("Failed to update profile")
+                            android.util.Log.w("ProfileRepository", "Remote update failed: " + updateResult.exceptionOrNull()?.message)
+                            profile
                         }
                     }
                 } else {
@@ -707,14 +712,7 @@ class ProfileRepository internal constructor(
         val previousProfile = _activeProfile.value
 
         val selected = when {
-            candidate != null && candidate.isChild -> candidate
-            candidate != null && candidate.isAdult -> {
-                if (isAdultAuthorized) {
-                    candidate
-                } else {
-                    HouseholdProfile.restrictedDefault()
-                }
-            }
+            candidate != null -> candidate
             else -> {
                 // Missing, deleted, corrupt, or unauthenticated:
                 if (!isAuthenticated && pinStatus.configurationState == PinConfigurationState.GENUINE_NO_PIN &&

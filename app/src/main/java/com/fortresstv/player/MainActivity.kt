@@ -700,7 +700,7 @@ private fun FortressTVApp(
     var showProfileSelectionDialog by remember { mutableStateOf(false) }
     var pinPromptAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pendingAdultTokenAction by remember { mutableStateOf<((String?) -> Unit)?>(null) }
-    var requireProfileSelection by rememberSaveable { mutableStateOf(true) }
+    var requireProfileSelection by rememberSaveable { mutableStateOf(false) }
 
     val accountRepository = remember { com.fortresstv.player.account.AccountRepository.get(context) }
     var currentUserId by remember { mutableStateOf(accountRepository.currentUserId()) }
@@ -755,14 +755,11 @@ private fun FortressTVApp(
     var showLocalImportDialog by remember { mutableStateOf(false) }
 
     val pinStatus = remember(currentUserId, householdProfiles, requireProfileSelection) { profileRepository.getPinStatus() }
-    val hasMultipleProfilesOrPin = (currentUserId != null || householdProfiles.size > 1 || pinStatus.hasPin)
-    val shouldGateWithProfilePicker = requireProfileSelection && hasMultipleProfilesOrPin
+    val shouldGateWithProfilePicker = requireProfileSelection
 
     LaunchedEffect(inactivityLockTriggered) {
         if (inactivityLockTriggered) {
             profileRepository.revokeAdultUnlock()
-            requireProfileSelection = true
-            playbackResetGeneration++
             onInactivityLockConsumed()
         }
     }
@@ -865,8 +862,29 @@ private fun FortressTVApp(
         }
     }
 
-    val effectiveHideAdultContent = if (activeHouseholdProfile.isChild || (parentalControlEnabled && !isAdultContentUnlockedByPin)) true
-        else (activeHouseholdProfile.hideAdultContent || hideAdultContent)
+    LaunchedEffect(activeHouseholdProfile.id, activeHouseholdProfile.hideAdultContent, activeHouseholdProfile.kind) {
+        hideAdultContent = if (activeHouseholdProfile.isChild) true else activeHouseholdProfile.hideAdultContent
+    }
+
+    val effectiveHideAdultContent = when {
+        activeHouseholdProfile.isChild -> true
+        else -> hideAdultContent
+    }
+
+    val handleHideAdultContentChanged: (Boolean) -> Unit = { enabled ->
+        if (!activeHouseholdProfile.isChild) {
+            hideAdultContent = enabled
+            scope.launch(Dispatchers.IO) { settings.setHideAdultContent(enabled) }
+            if (activeHouseholdProfile.isAdult && activeHouseholdProfile.hideAdultContent != enabled) {
+                val updated = activeHouseholdProfile.copy(hideAdultContent = enabled)
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        profileRepository.saveProfile(updated)
+                    }
+                }
+            }
+        }
+    }
     val effectiveMaximumAge = if (activeHouseholdProfile.isChild) (activeHouseholdProfile.maximumAge ?: 12) else activeHouseholdProfile.maximumAge
     val effectiveBlockUnrated = if (activeHouseholdProfile.isChild) true else activeHouseholdProfile.blockUnrated
 
@@ -959,7 +977,7 @@ private fun FortressTVApp(
                     epgRepository.setGuide(cached)
                     return@withContext cached
                 }
-            } else if (manifest != null && manifest.partitions.containsKey(currentTodayEpoch)) {
+            } else if (manifest != null && manifest.partitions.isNotEmpty()) {
                 EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { partialCached ->
                     epgRepository.setGuide(partialCached)
                     withContext(Dispatchers.Main) { epgGuide = partialCached }
@@ -1316,9 +1334,16 @@ private fun FortressTVApp(
 
     var sourcesLoadedForSession by rememberSaveable { mutableStateOf(false) }
     var isProfileLoadingScreenVisible by remember { mutableStateOf(false) }
-    LaunchedEffect(shouldGateWithProfilePicker) {
+
+    LaunchedEffect(isProfileLoadingScreenVisible, playlist, activeProfile) {
+        if (isProfileLoadingScreenVisible && playlist != null && activeProfile != null) {
+            isProfileLoadingScreenVisible = false
+        }
+    }
+
+    LaunchedEffect(shouldGateWithProfilePicker, playbackResetGeneration) {
         if (shouldGateWithProfilePicker) return@LaunchedEffect
-        if (sourcesLoadedForSession) {
+        if (sourcesLoadedForSession && playbackResetGeneration == 0) {
             isProfileLoadingScreenVisible = false
             return@LaunchedEffect
         }
@@ -1529,6 +1554,15 @@ private fun FortressTVApp(
                         epgMappings = epgMappingStore.getAllMappings()
                     }
                 }
+                val restoredSubs = cloudSourceService.restoreOpenSubtitlesFromCloud(profileRepository.currentUnlockToken())
+                if (restoredSubs != null) {
+                    openSubtitlesStore.saveSettings(restoredSubs)
+                    withContext(Dispatchers.Main) {
+                        openSubtitlesSettings = restoredSubs
+                    }
+                } else if (openSubtitlesSettings.apiKey.isNotBlank()) {
+                    cloudSourceService.syncOpenSubtitlesToCloud(openSubtitlesSettings, profileRepository.currentUnlockToken())
+                }
             }
         }
 
@@ -1652,17 +1686,15 @@ private fun FortressTVApp(
                         onDismiss = {}
                     )
                 }
-            } else if (isProfileLoadingScreenVisible && activeHouseholdProfile.id != "restricted_default") {
+            } else if (isProfileLoadingScreenVisible || (playlist == null && (loading || restoring || !sourcesLoadedForSession))) {
                 ProfileLoadingScreen(
                     profile = activeHouseholdProfile,
                     statusText = strings.loadingPlaylistAndSettings
                 )
-            } else if (restoring) {
-                WelcomeScreen(loading = true, showActions = false, error = null, onRetry = null, onAddSource = {})
             } else if (playlist == null || activeProfile == null) {
                 WelcomeScreen(
-                    loading = loading,
-                    showActions = !loading && (activeProfile == null || error != null),
+                    loading = false,
+                    showActions = (activeProfile == null || error != null),
                     error = error,
                     onRetry = retryLoad,
                     onAddSource = { showAddPlaylistDialog = true },
@@ -1703,6 +1735,7 @@ private fun FortressTVApp(
                     subtitleFallbackEnglish = subtitleFallbackEnglish,
                     openSubtitlesSettings = openSubtitlesSettings,
                     hideAdultContent = effectiveHideAdultContent,
+                    onHideAdultContentChanged = handleHideAdultContentChanged,
                     loading = loading,
                     error = error,
                     onRetryLoad = retryLoad,
@@ -1834,8 +1867,16 @@ private fun FortressTVApp(
                     activeHouseholdProfile = activeHouseholdProfile,
                     onOpenProfiles = { showProfileSelectionDialog = true },
                     onOpenSettings = { tab ->
-                        settingsInitialTab = tab
-                        showSettings = true
+                        val status = profileRepository.getPinStatus()
+                        if (activeHouseholdProfile.isChild && status.hasPin && !profileRepository.isAdultUnlocked()) {
+                            pinPromptAction = {
+                                settingsInitialTab = tab
+                                showSettings = true
+                            }
+                        } else {
+                            settingsInitialTab = tab
+                            showSettings = true
+                        }
                     },
                     onSaveMapping = { channel, xmltvCh, token ->
                         handleSaveEpgMapping(channel, xmltvCh, token)
@@ -1884,6 +1925,15 @@ private fun FortressTVApp(
                         val token = profileRepository.currentUnlockToken()
                         cloudSourceSyncService.restoreSourcesFromCloud(token)
                         cloudSourceSyncService.syncSourcesToCloud(token)
+                        val restoredSubs = cloudSourceSyncService.restoreOpenSubtitlesFromCloud(token)
+                        if (restoredSubs != null) {
+                            openSubtitlesStore.saveSettings(restoredSubs)
+                            withContext(Dispatchers.Main) {
+                                openSubtitlesSettings = restoredSubs
+                            }
+                        } else if (openSubtitlesSettings.apiKey.isNotBlank()) {
+                            cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings, token)
+                        }
                     }
                 },
                 playlists = playlists,
@@ -1968,17 +2018,15 @@ private fun FortressTVApp(
                 openSubtitlesSettings = openSubtitlesSettings,
                 onOpenSubtitlesSettingsChanged = { newSettings ->
                     openSubtitlesSettings = newSettings
-                    scope.launch(Dispatchers.IO) { openSubtitlesStore.saveSettings(newSettings) }
-                },
-                hideAdultContent = hideAdultContent,
-                onHideAdultContentChanged = { enabled ->
-                    if (parentalControlEnabled && !isAdultContentUnlockedByPin) {
-                        activePinDialog = PinDialogMode.UNLOCK_ADULT
-                    } else {
-                        hideAdultContent = enabled
-                        scope.launch(Dispatchers.IO) { settings.setHideAdultContent(enabled) }
+                    scope.launch(Dispatchers.IO) {
+                        openSubtitlesStore.saveSettings(newSettings)
+                        if (currentUserId != null) {
+                            cloudSourceSyncService.syncOpenSubtitlesToCloud(newSettings)
+                        }
                     }
                 },
+                hideAdultContent = hideAdultContent,
+                onHideAdultContentChanged = handleHideAdultContentChanged,
                 parentalControlEnabled = parentalControlEnabled,
                 hasParentalPin = parentalPin != null,
                 onParentalControlToggled = { enabled ->
@@ -2425,6 +2473,16 @@ private fun FortressTVApp(
                         }
                         PinDialogMode.UNLOCK_ADULT -> {
                             isAdultContentUnlockedByPin = true
+                            hideAdultContent = false
+                            scope.launch(Dispatchers.IO) { settings.setHideAdultContent(false) }
+                            if (activeHouseholdProfile.isAdult && activeHouseholdProfile.hideAdultContent) {
+                                val updated = activeHouseholdProfile.copy(hideAdultContent = false)
+                                scope.launch(Dispatchers.IO) {
+                                    runCatching {
+                                        profileRepository.saveProfile(updated)
+                                    }
+                                }
+                            }
                         }
                         PinDialogMode.UNLOCK_SETTINGS -> {}
                     }
@@ -2484,6 +2542,9 @@ private fun ProfileLoadingScreen(
     statusText: String
 ) {
     val strings = LocalAppStrings.current
+    val configuration = LocalConfiguration.current
+    val isCompact = configuration.screenWidthDp < 600
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -2494,29 +2555,24 @@ private fun ProfileLoadingScreen(
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(if (isCompact) 14.dp else 18.dp)
             ) {
-                ProfileAvatar(
-                    name = profile.name,
-                    isChild = profile.isChild,
-                    size = 96.dp,
-                    fontSize = 44.sp,
-                    shape = RoundedCornerShape(16.dp),
-                    usePalette = true,
-                    avatarUrl = profile.avatarUrl
-                )
+                ShieldMark(Modifier.size(if (isCompact) 100.dp else 140.dp))
+
+                val displayName = profile.name.takeIf { it.isNotBlank() && profile.id != "restricted_default" } ?: ""
+                val welcomeText = if (displayName.isNotBlank()) strings.welcomeUser(displayName) else strings.appName
 
                 Text(
-                    text = strings.welcomeUser(profile.name),
-                    style = MaterialTheme.typography.headlineMedium,
+                    text = welcomeText,
+                    style = if (isCompact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
 
                 CircularProgressIndicator(
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(if (isCompact) 32.dp else 40.dp),
                     strokeWidth = 3.dp,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -4016,6 +4072,7 @@ private fun FortressLibrary(
     subtitleFallbackEnglish: Boolean = true,
     openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     hideAdultContent: Boolean = false,
+    onHideAdultContentChanged: ((Boolean) -> Unit)? = null,
     loading: Boolean,
     error: String?,
     userLibrary: UserLibraryStore,
@@ -4216,7 +4273,7 @@ private fun FortressLibrary(
                     }
                 )
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
-                    playlist = effectivePlaylist,
+                    playlist = if (activeHouseholdProfile?.isChild == true) effectivePlaylist else playlist,
                     activeProfile = activeProfile,
                     contentFocusRequester = contentFocusRequester,
                     sidebarFocusRequester = selectedItemFocusRequester,
@@ -4239,15 +4296,25 @@ private fun FortressLibrary(
                     onRecordChannelWatched = onRecordChannelWatched,
                     hiddenCategories = hiddenCategories,
                     categoryOrder = categoryOrder,
+                    hideAdultContent = hideAdultContent,
                     onToggleCategoryHidden = { category ->
-                        val targetSourceId = effectivePlaylist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
-                        val isHidden = category in hiddenCategories
-                        val updatedHidden = userLibrary.setCategoryHidden(targetSourceId, category, !isHidden)
+                        val targetSourceId = playlist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
+                        val isAdult = isAdultContent(null, category)
+                        val isHidden = category in hiddenCategories || (hideAdultContent && isAdult)
+                        val updatedHidden = if (isHidden) {
+                            hiddenCategories - category
+                        } else {
+                            hiddenCategories + category
+                        }
+                        userLibrary.setCategoryHidden(targetSourceId, category, !isHidden)
+                        if (isAdult && isHidden && hideAdultContent) {
+                            onHideAdultContentChanged?.invoke(false)
+                        }
                         onCategoriesChanged(updatedHidden, categoryOrder)
                     },
                     onMoveCategory = { category, moveUp ->
-                        val targetSourceId = effectivePlaylist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
-                        val list = (if (categoryOrder.isEmpty()) effectivePlaylist.groups else categoryOrder).toMutableList()
+                        val targetSourceId = playlist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
+                        val list = (if (categoryOrder.isEmpty()) playlist.groups else categoryOrder).toMutableList()
                         if (category !in list) list.add(category)
                         val index = list.indexOf(category)
                         if (moveUp && index > 0) {
@@ -10244,6 +10311,7 @@ private fun ChannelBrowser(
     onRecordChannelWatched: (PlaylistChannel) -> Unit = {},
     hiddenCategories: Set<String> = emptySet(),
     categoryOrder: List<String> = emptyList(),
+    hideAdultContent: Boolean = false,
     onToggleCategoryHidden: (String) -> Unit = {},
     onMoveCategory: (String, Boolean) -> Unit = { _, _ -> },
     onUnhideAllCategories: () -> Unit = {},
@@ -10310,30 +10378,37 @@ private fun ChannelBrowser(
         }
     }
 
+    val isCategoryHidden: (String) -> Boolean = remember(hiddenCategories, hideAdultContent) {
+        { category ->
+            category in hiddenCategories || (hideAdultContent && isAdultContent(null, category))
+        }
+    }
     val groupCounts = remember(playlist) {
         playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
     }
     val rawCategories = remember(playlist) {
         groupCounts.keys.filter { it.isNotBlank() }
     }
-    val orderedCategories = remember(rawCategories, categoryOrder, hiddenCategories) {
-        val nonHidden = rawCategories.filter { it !in hiddenCategories }
+    val orderedCategories = remember(rawCategories, categoryOrder, hiddenCategories, hideAdultContent) {
+        val nonHidden = rawCategories.filter { !isCategoryHidden(it) }
         val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
         nonHidden.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
     }
-    val allVisibleChannels = remember(playlist.channels, hiddenCategories) {
-        if (hiddenCategories.isEmpty()) playlist.channels
-        else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+    val allVisibleChannels = remember(playlist.channels, hiddenCategories, hideAdultContent) {
+        playlist.channels.filter { channel ->
+            val group = channel.group.orEmpty()
+            !isCategoryHidden(group) && (!hideAdultContent || !isAdultContent(channel.name, group))
+        }
     }
 
     var selectedFilter by remember(playlist) {
         mutableStateOf(allFilter)
     }
 
-    LaunchedEffect(hiddenCategories) {
+    LaunchedEffect(hiddenCategories, hideAdultContent) {
         if (selectedFilter.startsWith("group:")) {
             val group = selectedFilter.removePrefix("group:")
-            if (group in hiddenCategories) {
+            if (isCategoryHidden(group)) {
                 selectedFilter = allFilter
             }
         }
@@ -11266,10 +11341,13 @@ private fun ChannelBrowser(
         }
 
         if (showManageCategories) {
+            val effectivelyHidden = remember(rawCategories, hiddenCategories, hideAdultContent) {
+                rawCategories.filter { isCategoryHidden(it) }.toSet()
+            }
             ManageCategoriesDialog(
                 categories = rawCategories,
                 groupCounts = groupCounts,
-                hiddenCategories = hiddenCategories,
+                hiddenCategories = effectivelyHidden,
                 categoryOrder = categoryOrder,
                 onToggleCategoryHidden = onToggleCategoryHidden,
                 onMoveCategory = onMoveCategory,
@@ -12658,7 +12736,7 @@ private fun FullscreenPlayer(
             resizeModeNotice = null
         }
     }
-    val schedule = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, epgTimeShiftHours)
+    val schedule = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, timeShiftHours = epgTimeShiftHours)
     val channelIndex = channels.indexOf(channel)
     val previousChannel = channels.getOrNull(channelIndex - 1)
     val nextChannel = channels.getOrNull(channelIndex + 1)
@@ -13841,8 +13919,8 @@ private fun QuickZapTray(
                         key = { _, it -> "zap-${it.position}:${it.streamUrl}" }
                     ) { index, itemChannel ->
                         val isCurrent = itemChannel == currentChannel
-                        val schedule = remember(itemChannel, scheduleNow) {
-                            epgGuide?.snapshot(itemChannel.tvgId, itemChannel.name, scheduleNow, epgTimeShiftHours)
+                        val schedule = remember(itemChannel, scheduleNow, epgGuide, epgTimeShiftHours) {
+                            epgGuide?.snapshot(itemChannel.tvgId, itemChannel.name, scheduleNow, timeShiftHours = epgTimeShiftHours)
                         }
                         val isTargetFocusCard = index == focusedChannelIndex.coerceIn(0, activeChannels.lastIndex)
                         val cardFocusModifier = if (isTargetFocusCard) {
@@ -14585,7 +14663,7 @@ private fun FullscreenChannelDrawer(
                             val isSelected = item == selectedChannel
                             val isFav = item.libraryId()?.let(favoriteChannelIds::contains) == true
                             val presentation = remember(item.tvgId, item.name, epgGuide, scheduleNow, epgTimeShiftHours, strings) {
-                                val current = epgGuide?.snapshot(item.tvgId, item.name, scheduleNow, epgTimeShiftHours)?.current
+                                val current = epgGuide?.snapshot(item.tvgId, item.name, scheduleNow, timeShiftHours = epgTimeShiftHours)?.current
                                 val shiftMillis = epgTimeShiftHours * 3_600_000L
                                 val adjustedStart = current?.startEpochMilli?.plus(shiftMillis)
                                 val adjustedStop = current?.stopEpochMilli?.plus(shiftMillis)
@@ -14831,19 +14909,6 @@ private fun SettingsDialog(
     val isTwoPane = configuration.screenWidthDp >= 640
     val isTv = LocalFormFactor.current.isTelevision
 
-    var selectedTab by remember { mutableIntStateOf(initialTab) }
-    val tabFocusRequesters = remember { List(5) { FocusRequester() } }
-    var settingsContentHasFocus by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isTv) {
-        if (isTv) {
-            delay(150)
-            try {
-                tabFocusRequesters[initialTab.coerceIn(tabFocusRequesters.indices)].requestFocus()
-            } catch (_: Throwable) {}
-        }
-    }
-
     val tabItems = listOf(
         Pair(strings.tabGeneral, Icons.Default.Settings),
         Pair(strings.tabPlaylists, Icons.Default.FolderOpen),
@@ -14852,6 +14917,19 @@ private fun SettingsDialog(
         Pair(strings.tabAccount, Icons.Default.AccountCircle),
         Pair(strings.tabAbout, Icons.Default.Info)
     )
+
+    var selectedTab by remember { mutableIntStateOf(initialTab.coerceIn(0, (tabItems.size - 1).coerceAtLeast(0))) }
+    val tabFocusRequesters = remember(tabItems.size) { List(tabItems.size) { FocusRequester() } }
+    var settingsContentHasFocus by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            delay(150)
+            try {
+                tabFocusRequesters.getOrNull(initialTab.coerceIn(tabFocusRequesters.indices))?.requestFocus()
+            } catch (_: Throwable) {}
+        }
+    }
 
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -14863,7 +14941,7 @@ private fun SettingsDialog(
     BackHandler(onBack = {
         hideKeyboard()
         if (isTv && settingsContentHasFocus) {
-            runCatching { tabFocusRequesters[selectedTab].requestFocus() }
+            runCatching { tabFocusRequesters.getOrNull(selectedTab)?.requestFocus() }
         } else {
             onDismiss()
         }
@@ -14960,7 +15038,9 @@ private fun SettingsDialog(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(42.dp)
-                                        .focusRequester(tabFocusRequesters[index])
+                                        .then(
+                                            tabFocusRequesters.getOrNull(index)?.let { Modifier.focusRequester(it) } ?: Modifier
+                                        )
                                         .tvFocusHighlight(
                                             shape = RoundedCornerShape(10.dp),
                                             scaleOnFocus = if (isTv) 1.03f else 1.0f

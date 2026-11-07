@@ -3,7 +3,7 @@ package com.fortresstv.player.account
 internal class AccountStrings(private val portuguese: Boolean) {
     private fun text(en: String, pt: String) = if (portuguese) pt else en
     val title = text("Account", "Conta")
-    val introduction = text("Sign in to your FortressTV account. Household profiles and sync will be added in a later update. Your library is currently stored on this device.", "Inicie sessão na sua conta FortressTV. Os perfis do agregado familiar e a sincronização serão adicionados numa atualização futura. A sua biblioteca está atualmente guardada neste dispositivo.")
+    val introduction = text("Sign in to your FortressTV account. Household profiles and sync will be added in a later update. Your library is currently stored on this device.", "Inicie sessão na sua conta FortressTV. Os perfis e a sincronização serão adicionados numa atualização futura. A sua biblioteca está atualmente guardada neste dispositivo.")
     val email = text("Email address", "Endereço de e-mail")
     val password = text("Password", "Palavra-passe")
     val repeatPassword = text("Confirm password", "Confirmar palavra-passe")

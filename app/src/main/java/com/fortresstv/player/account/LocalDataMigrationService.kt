@@ -102,6 +102,16 @@ internal class LocalDataMigrationService(
             }
         }
 
+        // 1b. Sync local OpenSubtitles credentials to cloud if configured
+        val openSubtitlesStore = com.fortresstv.player.subtitles.OpenSubtitlesSettingsStore(context)
+        val localSubs = openSubtitlesStore.loadSettings()
+        if (localSubs.apiKey.isNotBlank()) {
+            try {
+                sourceApi.saveOpenSubtitles(localSubs, token, accountState.accessToken)
+            } catch (_: Exception) {
+            }
+        }
+
         // 2. Import local library and progress into target adult profile
         val localLibrary = UserLibraryStore(context, "local")
         val localProgress = VodProgressStore(context, "local")
