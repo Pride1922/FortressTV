@@ -89,14 +89,25 @@ object SportsBindingResolver {
         // Track channels used per kickoff slot and broadcaster family: "kickoffEpoch_family" -> setOf(channelNorm)
         val usedChannelsAtSlot = mutableMapOf<String, MutableSet<String>>()
 
+        // Pre-filter candidate channel pools once to avoid repeatedly scanning thousands of channels per fixture
+        val ptChannels = channels.filter { isPortugueseChannel(it) }
+        val sportsChannels = channels.filter { ch ->
+            val g = ch.group?.lowercase(Locale.ROOT).orEmpty()
+            val n = ch.name.lowercase(Locale.ROOT)
+            g.contains("sport") || g.contains("desporto") || g.contains("futebol") ||
+                n.contains("sport") || n.contains("dazn") || n.contains("eleven") ||
+                n.contains("rtp") || n.contains("sic") || n.contains("tvi") || n.contains("canal 11")
+        }.ifEmpty { channels }
+        val ptSportsChannels = sportsChannels.filter { isPortugueseChannel(it) }.ifEmpty { ptChannels }
+
         for (fixture in fixtures) {
             val family = extractBroadcasterFamily(fixture.broadcasterOfficial)
             val slotKey = "${fixture.kickoffUtc.epochSecond}_$family"
             val used = usedChannelsAtSlot.getOrPut(slotKey) { mutableSetOf() }
 
-            // 1. EPG schedule match on Portuguese channel
-            var matched: PlaylistChannel? = if (epgGuide != null) {
-                matchViaEpg(fixture, channels, epgGuide, alreadyUsed = used, portugueseOnly = true)
+            // 1. EPG schedule match on Portuguese sports channel pool (fast: ~30 channels)
+            var matched: PlaylistChannel? = if (epgGuide != null && ptSportsChannels.isNotEmpty()) {
+                matchViaEpg(fixture, ptSportsChannels, epgGuide, alreadyUsed = used, portugueseOnly = true)
             } else null
 
             // 2. Broadcaster family distribution fallback on Portuguese channels
@@ -106,7 +117,9 @@ object SportsBindingResolver {
 
             // 3. Fallback to foreign EPG match if no Portuguese channel exists
             if (matched == null && epgGuide != null) {
-                matched = matchViaEpg(fixture, channels, epgGuide, alreadyUsed = used, portugueseOnly = false)
+                matchViaEpg(fixture, sportsChannels, epgGuide, alreadyUsed = used, portugueseOnly = false)?.let {
+                    matched = it
+                }
             }
 
             if (matched != null) {

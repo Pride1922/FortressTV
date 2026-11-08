@@ -125,6 +125,14 @@ class VodProgressStore internal constructor(
 
     fun save(entry: VodProgressEntry): List<VodProgressEntry> = synchronized(lock) {
         val hash = CloudIdentityHasher.hashItemId(entry.itemId)
+        val existing = entries().firstOrNull {
+            it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (it.itemId == entry.itemId || it.itemId == hash))
+        }
+        if (entry.positionMs < MINIMUM_PROGRESS_MS) {
+            if (existing != null && existing.positionMs >= MINIMUM_PROGRESS_MS) {
+                return entries()
+            }
+        }
         val updated = entries().filterNot {
             it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (it.itemId == entry.itemId || it.itemId == hash))
         }.toMutableList()

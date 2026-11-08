@@ -66,6 +66,10 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+internal object SportsPlayableCache {
+    var cached: List<Pair<SportsFixture, PlaylistChannel>> = emptyList()
+}
+
 @Composable
 fun SportsHubSection(
     fixtures: List<SportsFixture>,
@@ -79,12 +83,14 @@ fun SportsHubSection(
     // Stream Filter Rule: Only show matches/events that can actually be played on the user's active stream
     // Resolve off the main thread: EPG matching scans the whole guide and must never block composition.
     val playableFixtures by androidx.compose.runtime.produceState(
-        initialValue = emptyList<Pair<SportsFixture, PlaylistChannel>>(),
+        initialValue = SportsPlayableCache.cached,
         fixtures, channels, epgGuide
     ) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             SportsBindingResolver.resolveAll(fixtures, channels, epgGuide)
         }
+        SportsPlayableCache.cached = resolved
+        value = resolved
         android.util.Log.d("FortressTV", "[SportsHub] fixtures=${fixtures.size}, playable=${value.size}, channels=${channels.size}")
     }
 

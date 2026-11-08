@@ -345,4 +345,37 @@ class VodProgressStoreTest {
         assertEquals(emptyList<VodProgressEntry>(), VodProgressStore.decode("not-json"))
         assertEquals(emptyList<VodProgressEntry>(), VodProgressStore.decode("[{}]"))
     }
+
+    @Test
+    fun saveDoesNotEraseExistingProgressWhenPositionBelowMinimum() {
+        val store = VodProgressStore(
+            prefsProvider = { TestSharedPreferences() },
+            initialNamespace = "test"
+        )
+        val validEntry = VodProgressEntry(
+            key = "episode:source-1:701",
+            kind = VodProgressKind.EPISODE,
+            sourceId = "source-1",
+            itemId = "701",
+            seriesId = 20,
+            title = "Pilot",
+            posterUrl = null,
+            containerExtension = "mkv",
+            season = 1,
+            episode = 1,
+            positionMs = 120_000,
+            durationMs = 2_400_000,
+            updatedAtMs = 1000
+        )
+        store.save(validEntry)
+        assertEquals(1, store.entries().size)
+
+        // Now attempt to save 0ms during player teardown
+        val teardownEntry = validEntry.copy(positionMs = 0L, updatedAtMs = 2000)
+        store.save(teardownEntry)
+
+        // Existing progress must NOT be erased
+        assertEquals(1, store.entries().size)
+        assertEquals(120_000L, store.entries().first().positionMs)
+    }
 }

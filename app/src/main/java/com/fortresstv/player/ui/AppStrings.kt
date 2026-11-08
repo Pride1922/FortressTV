@@ -342,6 +342,17 @@ interface Strings {
     val tmdbConnectionFailed: String
     val tmdbInfoHelp: String
     val tmdbInfoLink: String
+    val skipIntro: String
+    val skipRecap: String
+    val skipCredits: String
+    val skipPreview: String
+    val introDbHeader: String
+    val introDbEnabled: String
+    val introDbEnabledDesc: String
+    val introDbAutoSkipIntro: String
+    val introDbAutoSkipIntroDesc: String
+    val introDbAutoSkipRecap: String
+    val introDbAutoSkipRecapDesc: String
     val watchTrailer: String
     val genres: String
     val tabAbout: String
@@ -831,6 +842,17 @@ object EnglishStrings : Strings {
     override val tmdbConnectionFailed = "Connection failed"
     override val tmdbInfoHelp = "Obtain a free TMDB API key or Read Access Token at themoviedb.org"
     override val tmdbInfoLink = "https://www.themoviedb.org/settings/api"
+    override val skipIntro = "Skip Intro"
+    override val skipRecap = "Skip Recap"
+    override val skipCredits = "Skip Credits"
+    override val skipPreview = "Skip Preview"
+    override val introDbHeader = "TheIntroDB (Intro / Recap / Credits)"
+    override val introDbEnabled = "Enable Skip Buttons"
+    override val introDbEnabledDesc = "Displays Skip Intro, Skip Recap, and Skip Credits buttons during series episodes"
+    override val introDbAutoSkipIntro = "Auto-skip Intro"
+    override val introDbAutoSkipIntroDesc = "Automatically skips opening intros without asking"
+    override val introDbAutoSkipRecap = "Auto-skip Recap"
+    override val introDbAutoSkipRecapDesc = "Automatically skips previous episode recaps"
     override val watchTrailer = "Watch Trailer"
     override val genres = "Genres"
     override val tabAbout = "About"
@@ -1323,6 +1345,17 @@ object PortugueseStrings : Strings {
     override val tmdbConnectionFailed = "Falha na ligação"
     override val tmdbInfoHelp = "Obtenha uma chave gratuita da API TMDB ou Token de Leitura em themoviedb.org"
     override val tmdbInfoLink = "https://www.themoviedb.org/settings/api"
+    override val skipIntro = "Saltar Introdução"
+    override val skipRecap = "Saltar Resumo"
+    override val skipCredits = "Saltar Créditos"
+    override val skipPreview = "Saltar Pré-visualização"
+    override val introDbHeader = "TheIntroDB (Saltar Introdução / Resumo / Créditos)"
+    override val introDbEnabled = "Ativar Botões de Salto"
+    override val introDbEnabledDesc = "Apresenta botões para saltar introdução, resumo e créditos em episódios de séries"
+    override val introDbAutoSkipIntro = "Saltar Introdução Automaticamente"
+    override val introDbAutoSkipIntroDesc = "Avança as introduções automaticamente sem confirmação"
+    override val introDbAutoSkipRecap = "Saltar Resumo Automaticamente"
+    override val introDbAutoSkipRecapDesc = "Avança os resumos de episódios anteriores automaticamente"
     override val watchTrailer = "Ver Trailer"
     override val genres = "Géneros"
     override val tabAbout = "Sobre"

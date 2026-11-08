@@ -38,6 +38,7 @@ class SportsRepository internal constructor(
 
     fun setFixtures(list: List<SportsFixture>) {
         val realFixtures = list.filterNot { isFakeOrSeedId(it.id) }
+        if (_fixtures.value == realFixtures) return
         android.util.Log.d("FortressTV", "[SportsRepository] Setting ${realFixtures.size} real fixtures (received: ${list.size})")
         _fixtures.value = realFixtures
         persistAsync(realFixtures)

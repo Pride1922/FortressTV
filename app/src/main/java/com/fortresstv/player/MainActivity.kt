@@ -329,6 +329,13 @@ import com.fortresstv.player.tmdb.TmdbLanguages
 import com.fortresstv.player.tmdb.TmdbMetadata
 import com.fortresstv.player.tmdb.TmdbMetadataResolver
 import com.fortresstv.player.tmdb.TmdbSettings
+import com.fortresstv.player.introdb.EpisodeSegments
+import com.fortresstv.player.introdb.LocalTheIntroDbSettings
+import com.fortresstv.player.introdb.MediaSegment
+import com.fortresstv.player.introdb.SegmentType
+import com.fortresstv.player.introdb.TheIntroDbClient
+import com.fortresstv.player.introdb.TheIntroDbSettings
+import com.fortresstv.player.introdb.TheIntroDbSettingsStore
 import com.fortresstv.player.tmdb.TmdbSettingsStore
 import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
@@ -628,6 +635,8 @@ private fun FortressTVApp(
     var openSubtitlesSettings by remember { mutableStateOf(openSubtitlesStore.loadSettings()) }
     val tmdbStore = remember { TmdbSettingsStore(context.applicationContext) }
     var tmdbSettings by remember { mutableStateOf(tmdbStore.loadSettings()) }
+    val introDbStore = remember { TheIntroDbSettingsStore(context.applicationContext) }
+    var introDbSettings by remember { mutableStateOf(introDbStore.loadSettings()) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -1811,7 +1820,8 @@ private fun FortressTVApp(
         LocalAppStrings provides strings,
         LocalFormFactor provides formFactor,
         LocalPlaybackMode provides playbackMode,
-        LocalTmdbSettings provides tmdbSettings
+        LocalTmdbSettings provides tmdbSettings,
+        LocalTheIntroDbSettings provides introDbSettings
     ) {
         Box(Modifier.fillMaxSize()) {
             if (showOnboardingDialog) {
@@ -2245,6 +2255,11 @@ private fun FortressTVApp(
                             cloudSourceSyncService.syncTmdbToCloud(newTmdb)
                         }
                     }
+                },
+                introDbSettings = introDbSettings,
+                onIntroDbSettingsChanged = { newIntroDb ->
+                    introDbSettings = newIntroDb
+                    introDbStore.saveSettings(newIntroDb)
                 },
                 hideAdultContent = hideAdultContent,
                 isChildProfile = activeHouseholdProfile.isChild,
@@ -4332,7 +4347,9 @@ private data class VodPlaybackRequest(
     val containerExtension: String,
     val season: Int? = null,
     val episode: Int? = null,
-    val streamUrl: String
+    val streamUrl: String,
+    val tmdbId: String? = null,
+    val imdbId: String? = null
 )
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -4394,7 +4411,7 @@ private fun FortressLibrary(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
-    var progressEntries by remember { mutableStateOf(emptyList<VodProgressEntry>()) }
+    var progressEntries by remember { mutableStateOf(progressStore.entries()) }
     LaunchedEffect(activeHouseholdProfile?.id, progressRefreshTrigger) {
         withContext(Dispatchers.IO) {
             progressStore.entries()
@@ -4615,7 +4632,8 @@ private fun FortressLibrary(
                             seriesName = series.name,
                             title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
                             posterUrl = episode.posterUrl ?: series.coverUrl, containerExtension = episode.containerExtension,
-                            season = episode.season, episode = episode.episodeNumber, streamUrl = url
+                            season = episode.season, episode = episode.episodeNumber, streamUrl = url,
+                            tmdbId = series.tmdbId, imdbId = series.imdbId
                         )
                     },
                     onWatchChannel = { channel ->
@@ -4808,7 +4826,9 @@ private fun FortressLibrary(
                             containerExtension = episode.containerExtension,
                             season = episode.season,
                             episode = episode.episodeNumber,
-                            streamUrl = url
+                            streamUrl = url,
+                            tmdbId = series.tmdbId,
+                            imdbId = series.imdbId
                         )
                     }
                 )
@@ -4863,7 +4883,8 @@ private fun FortressLibrary(
                             seriesName = series.name,
                             title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
                             posterUrl = episode.posterUrl ?: series.coverUrl, containerExtension = episode.containerExtension,
-                            season = episode.season, episode = episode.episodeNumber, streamUrl = url
+                            season = episode.season, episode = episode.episodeNumber, streamUrl = url,
+                            tmdbId = series.tmdbId, imdbId = series.imdbId
                         )
                     },
                     onWatch = { channel ->
@@ -4874,7 +4895,7 @@ private fun FortressLibrary(
             }
         }
         vodPlayback?.let { request ->
-            val previous = progressEntries.firstOrNull { it.key == request.key }
+            val previous = progressEntries.firstOrNull { it.key == request.key } ?: progressStore.entries().firstOrNull { it.key == request.key }
             VodPlayerDialog(
                 request = request,
                 initialPositionMs = previous?.positionMs ?: 0L,
@@ -5251,14 +5272,15 @@ private fun resolveVodPlayback(
             }
         }
     }
-    val seriesName = if (entry.kind == VodProgressKind.EPISODE && entry.seriesId != null) {
-        catalogs.firstOrNull { it.sourceId == entry.sourceId }?.series?.firstOrNull { it.id == entry.seriesId }?.name
+    val series = if (entry.kind == VodProgressKind.EPISODE && entry.seriesId != null) {
+        catalogs.firstOrNull { it.sourceId == entry.sourceId }?.series?.firstOrNull { it.id == entry.seriesId }
     } else null
+    val seriesName = series?.name
     return VodPlaybackRequest(
         key = entry.key, kind = entry.kind, sourceId = entry.sourceId, itemId = entry.itemId,
         seriesId = entry.seriesId, seriesName = seriesName, title = entry.title, posterUrl = entry.posterUrl,
         containerExtension = entry.containerExtension, season = entry.season, episode = entry.episode,
-        streamUrl = streamUrl
+        streamUrl = streamUrl, tmdbId = series?.tmdbId, imdbId = series?.imdbId
     )
 }
 
@@ -5270,7 +5292,8 @@ private suspend fun resolveNextEpisodePlayback(
     val seriesId = current.seriesId ?: return null
     val source = profiles.firstOrNull { it.id == current.sourceId }?.source as? ContentSource.Xtream ?: return null
     val client = XtreamClient(context.applicationContext, current.sourceId, source)
-    val episodes = client.loadSeriesDetails(seriesId).episodes
+    val details = client.loadSeriesDetails(seriesId)
+    val episodes = details.episodes
     val currentIndex = episodes.indexOfFirst { it.id == current.itemId }
     val next = episodes.getOrNull(currentIndex + 1) ?: return null
     return VodPlaybackRequest(
@@ -5285,7 +5308,9 @@ private suspend fun resolveNextEpisodePlayback(
         containerExtension = next.containerExtension,
         season = next.season,
         episode = next.episodeNumber,
-        streamUrl = client.episodeStreamUrl(next)
+        streamUrl = client.episodeStreamUrl(next),
+        tmdbId = details.tmdbId ?: current.tmdbId,
+        imdbId = details.imdbId ?: current.imdbId
     )
 }
 
@@ -5297,7 +5322,8 @@ private suspend fun resolveAllSeriesEpisodesPlayback(
     val seriesId = current.seriesId ?: return emptyList()
     val source = profiles.firstOrNull { it.id == current.sourceId }?.source as? ContentSource.Xtream ?: return emptyList()
     val client = XtreamClient(context.applicationContext, current.sourceId, source)
-    val episodes = client.loadSeriesDetails(seriesId).episodes
+    val details = client.loadSeriesDetails(seriesId)
+    val episodes = details.episodes
     return episodes.map { episode ->
         VodPlaybackRequest(
             key = "episode:${current.sourceId}:${episode.id}",
@@ -5311,7 +5337,9 @@ private suspend fun resolveAllSeriesEpisodesPlayback(
             containerExtension = episode.containerExtension,
             season = episode.season,
             episode = episode.episodeNumber,
-            streamUrl = client.episodeStreamUrl(episode)
+            streamUrl = client.episodeStreamUrl(episode),
+            tmdbId = details.tmdbId ?: current.tmdbId,
+            imdbId = details.imdbId ?: current.imdbId
         )
     }
 }
@@ -5800,7 +5828,10 @@ private fun XtreamSeriesScreen(
                 onToggleFollow = { onToggleFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
                 onDismiss = { selected = null },
-                onPlay = { episode, url -> onPlay(entry.catalog, entry.series, episode, url) }
+                onPlay = { episode, url ->
+                    selected = null
+                    onPlay(entry.catalog, entry.series, episode, url)
+                }
             )
         }
     }
@@ -7492,6 +7523,8 @@ private fun SeriesEpisodesDialog(
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
+                                    val nextEpProgress = progressEntries.firstOrNull { it.key == nextUnwatchedEpisode.libraryId(sourceId) }
+                                    val isNextEpInProgress = nextEpProgress != null && nextEpProgress.positionMs >= 10_000L
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Surface(
                                             shape = RoundedCornerShape(4.dp),
@@ -7499,7 +7532,7 @@ private fun SeriesEpisodesDialog(
                                             contentColor = MaterialTheme.colorScheme.onPrimary
                                         ) {
                                             Text(
-                                                text = strings.nextUpBadge,
+                                                text = if (isNextEpInProgress) strings.resume else strings.nextUpBadge,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
@@ -8096,6 +8129,51 @@ private fun VodPlayerDialog(
     val vodForwardFocusRequester = remember { FocusRequester() }
     val vodTimelineFocusRequester = remember { FocusRequester() }
     val vodDrawerCloseFocusRequester = remember { FocusRequester() }
+    val vodSkipIntroFocusRequester = remember { FocusRequester() }
+    val tmdbSettings = LocalTmdbSettings.current
+    val introDbSettings = LocalTheIntroDbSettings.current
+    var episodeSegments by remember(request.key) { mutableStateOf<EpisodeSegments?>(null) }
+    var hasAutoSkippedIntro by remember(request.key) { mutableStateOf(false) }
+    var hasAutoSkippedRecap by remember(request.key) { mutableStateOf(false) }
+
+    LaunchedEffect(request.key, introDbSettings.enabled) {
+        if (!introDbSettings.enabled || request.kind != VodProgressKind.EPISODE || request.season == null || request.episode == null) {
+            episodeSegments = null
+            return@LaunchedEffect
+        }
+        val client = TheIntroDbClient.getInstance(context.applicationContext)
+        val tmdbId = request.tmdbId ?: if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank() && !request.seriesName.isNullOrBlank()) {
+            TmdbMetadataResolver.resolveSeries(
+                context = context,
+                settings = tmdbSettings,
+                rawTitle = request.seriesName,
+                year = null
+            )?.tmdbId?.toString()
+        } else null
+
+        val segments = client.getSegments(
+            tmdbId = tmdbId,
+            imdbId = request.imdbId,
+            season = request.season,
+            episode = request.episode
+        )
+        episodeSegments = segments
+    }
+
+    val activeSegment = remember(episodeSegments, currentPositionMs, totalDurationMs) {
+        episodeSegments?.activeSegment(currentPositionMs, totalDurationMs)
+    }
+
+    LaunchedEffect(activeSegment, introDbSettings) {
+        val segment = activeSegment ?: return@LaunchedEffect
+        if (segment.type == SegmentType.INTRO && introDbSettings.autoSkipIntro && !hasAutoSkippedIntro) {
+            hasAutoSkippedIntro = true
+            segment.endMs?.let { player.seekTo(it) }
+        } else if (segment.type == SegmentType.RECAP && introDbSettings.autoSkipRecap && !hasAutoSkippedRecap) {
+            hasAutoSkippedRecap = true
+            segment.endMs?.let { player.seekTo(it) }
+        }
+    }
     val vodInteractionSignal = remember { Channel<Unit>(Channel.CONFLATED) }
 
     LaunchedEffect(Unit) {
@@ -8271,7 +8349,11 @@ private fun VodPlayerDialog(
             player.removeAnalyticsListener(tracker)
             mainActivity?.updatePictureInPictureState(enabled = false, fullscreenPlaying = false)
             mainActivity?.setOnPictureInPictureDismissedListener(null)
-            onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+            val pos = maxOf(player.currentPosition.coerceAtLeast(0L), currentPositionMs)
+            val dur = maxOf(player.duration.coerceAtLeast(0L), totalDurationMs)
+            if (pos >= 10_000L) {
+                onSaveProgress(pos, dur)
+            }
             player.removeListener(listener)
             unregisterSleepTimerPlayer?.invoke()
             player.release()
@@ -8402,7 +8484,11 @@ private fun VodPlayerDialog(
     }
     val dismissAndSaveProgress = {
         tracker.finalizeSession()
-        onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+        val pos = maxOf(player.currentPosition.coerceAtLeast(0L), currentPositionMs)
+        val dur = maxOf(player.duration.coerceAtLeast(0L), totalDurationMs)
+        if (pos >= 10_000L) {
+            onSaveProgress(pos, dur)
+        }
         onDismiss()
     }
     Dialog(onDismissRequest = dismissAndSaveProgress, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -9069,6 +9155,81 @@ private fun VodPlayerDialog(
                                     Text(strings.playNextEpisode)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            activeSegment?.let { segment ->
+                AnimatedVisibility(
+                    visible = autoPlayCountdown <= 0 && resumeDecisionMade && !showEpisodesDrawer && !showTracksDialog && !showSleepTimerDialog,
+                    enter = fadeIn() + slideInHorizontally { it / 2 },
+                    exit = fadeOut() + slideOutHorizontally { it / 2 },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = 28.dp,
+                            bottom = if (controlsVisible) 115.dp else 36.dp
+                        )
+                ) {
+                    val label = when (segment.type) {
+                        SegmentType.INTRO -> strings.skipIntro
+                        SegmentType.RECAP -> strings.skipRecap
+                        SegmentType.CREDITS -> strings.skipCredits
+                        SegmentType.PREVIEW -> strings.skipPreview
+                    }
+                    val icon = when (segment.type) {
+                        SegmentType.CREDITS -> Icons.Default.SkipNext
+                        else -> Icons.Default.FastForward
+                    }
+
+                    Surface(
+                        onClick = {
+                            when (segment.type) {
+                                SegmentType.CREDITS -> {
+                                    if (segment.endMs != null) {
+                                        player.seekTo(segment.endMs)
+                                    } else if (nextEpisode != null) {
+                                        onPlayNext(nextEpisode!!)
+                                    } else if (totalDurationMs > 1000L) {
+                                        player.seekTo(totalDurationMs - 1000L)
+                                    }
+                                }
+                                else -> {
+                                    segment.endMs?.let { player.seekTo(it) }
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.Black.copy(alpha = 0.85f),
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)),
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.tvFullscreenControl(
+                            enabled = isTv,
+                            requester = vodSkipIntroFocusRequester,
+                            shape = RoundedCornerShape(24.dp),
+                            scaleOnFocus = 1.08f,
+                            upTarget = vodPlayFocusRequester,
+                            downTarget = vodTimelineFocusRequester
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = label,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = label,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
                         }
                     }
                 }
@@ -10052,10 +10213,10 @@ private fun HomeScreen(
     }
 
     // Dynamic polling: 30s when live matches exist, 60s otherwise
-    LaunchedEffect(sportsFixtures) {
+    LaunchedEffect(Unit) {
         while (true) {
             sportsRepo.refresh()
-            val hasLiveMatches = sportsFixtures.any { it.isLive() }
+            val hasLiveMatches = sportsRepo.fixtures.value.any { it.isLive() }
             val nextDelay = if (hasLiveMatches) 30_000L else 60_000L
             delay(nextDelay)
         }
@@ -10805,7 +10966,10 @@ private fun HomeScreen(
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
                 onDismiss = { selectedSeries = null },
-                onPlay = { episode, url -> onPlayEpisode(entry.catalog, entry.series, episode, url) }
+                onPlay = { episode, url ->
+                    selectedSeries = null
+                    onPlayEpisode(entry.catalog, entry.series, episode, url)
+                }
             )
         }
     }
@@ -11076,7 +11240,10 @@ private fun FavoriteLibraryScreen(
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
                 onDismiss = { selectedSeries = null },
-                onPlay = { episode, url -> onPlayEpisode(entry.catalog, entry.series, episode, url) }
+                onPlay = { episode, url ->
+                    selectedSeries = null
+                    onPlayEpisode(entry.catalog, entry.series, episode, url)
+                }
             )
         }
     }
@@ -15957,6 +16124,8 @@ private fun SettingsDialog(
     onOpenSubtitlesSettingsChanged: (OpenSubtitlesSettings) -> Unit = {},
     tmdbSettings: TmdbSettings = TmdbSettings(),
     onTmdbSettingsChanged: (TmdbSettings) -> Unit = {},
+    introDbSettings: TheIntroDbSettings = TheIntroDbSettings(),
+    onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit = {},
     hideAdultContent: Boolean,
     isChildProfile: Boolean = false,
     onHideAdultContentChanged: (Boolean) -> Unit,
@@ -16262,7 +16431,9 @@ private fun SettingsDialog(
                                 )
                                 4 -> ApiKeysTab(
                                     tmdbSettings = tmdbSettings,
-                                    onTmdbSettingsChanged = onTmdbSettingsChanged
+                                    onTmdbSettingsChanged = onTmdbSettingsChanged,
+                                    introDbSettings = introDbSettings,
+                                    onIntroDbSettingsChanged = onIntroDbSettingsChanged
                                 )
                                 5 -> AccountTab(
                                     showHeader = false,
@@ -16392,7 +16563,9 @@ private fun SettingsDialog(
                             )
                             4 -> ApiKeysTab(
                                 tmdbSettings = tmdbSettings,
-                                onTmdbSettingsChanged = onTmdbSettingsChanged
+                                onTmdbSettingsChanged = onTmdbSettingsChanged,
+                                introDbSettings = introDbSettings,
+                                onIntroDbSettingsChanged = onIntroDbSettingsChanged
                             )
                             5 -> AccountTab(
                                 showHeader = false,
@@ -16667,7 +16840,9 @@ private fun SettingsDropdownPickerRow(
 @Composable
 private fun ApiKeysTab(
     tmdbSettings: TmdbSettings,
-    onTmdbSettingsChanged: (TmdbSettings) -> Unit
+    onTmdbSettingsChanged: (TmdbSettings) -> Unit,
+    introDbSettings: TheIntroDbSettings,
+    onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -16841,6 +17016,44 @@ private fun ApiKeysTab(
                         }
                     }
                 }
+            }
+        }
+
+        SettingsGroup(title = strings.introDbHeader) {
+            SettingsToggleRow(
+                title = strings.introDbEnabled,
+                subtitle = strings.introDbEnabledDesc,
+                icon = Icons.Default.FastForward,
+                checked = introDbSettings.enabled,
+                onCheckedChange = { checked ->
+                    onIntroDbSettingsChanged(introDbSettings.copy(enabled = checked))
+                }
+            )
+
+            if (introDbSettings.enabled) {
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                SettingsToggleRow(
+                    title = strings.introDbAutoSkipIntro,
+                    subtitle = strings.introDbAutoSkipIntroDesc,
+                    icon = Icons.Default.FastForward,
+                    checked = introDbSettings.autoSkipIntro,
+                    onCheckedChange = { checked ->
+                        onIntroDbSettingsChanged(introDbSettings.copy(autoSkipIntro = checked))
+                    }
+                )
+
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                SettingsToggleRow(
+                    title = strings.introDbAutoSkipRecap,
+                    subtitle = strings.introDbAutoSkipRecapDesc,
+                    icon = Icons.Default.FastForward,
+                    checked = introDbSettings.autoSkipRecap,
+                    onCheckedChange = { checked ->
+                        onIntroDbSettingsChanged(introDbSettings.copy(autoSkipRecap = checked))
+                    }
+                )
             }
         }
     }
