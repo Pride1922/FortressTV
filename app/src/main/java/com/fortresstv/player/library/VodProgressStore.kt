@@ -193,13 +193,14 @@ class VodProgressStore internal constructor(
                 val item = array.optJSONObject(index) ?: return@mapNotNull null
                 val key = item.optString("key").takeIf(String::isNotBlank) ?: return@mapNotNull null
                 val sourceId = item.optString("sourceId").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val title = item.optString("title").takeIf(String::isNotBlank) ?: return@mapNotNull null
                 VodProgressEntry(
                     key = key,
                     kind = runCatching { VodProgressKind.valueOf(item.optString("kind")) }.getOrNull() ?: return@mapNotNull null,
                     sourceId = sourceId,
                     itemId = item.optString("itemId"),
                     seriesId = item.optInt("seriesId").takeIf { !item.isNull("seriesId") },
-                    title = item.optString("title"),
+                    title = title,
                     posterUrl = item.optString("posterUrl").takeIf { !item.isNull("posterUrl") && it.isNotBlank() },
                     containerExtension = item.optString("containerExtension").ifBlank { "mp4" },
                     season = item.optInt("season").takeIf { !item.isNull("season") },

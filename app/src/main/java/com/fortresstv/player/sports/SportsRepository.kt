@@ -34,15 +34,26 @@ class SportsRepository internal constructor(
 
     init {
         loadPersisted()
-        if (_fixtures.value.isEmpty()) {
-            _fixtures.value = createDefaultSeedFixtures()
-        }
     }
 
     fun setFixtures(list: List<SportsFixture>) {
-        if (list.isEmpty()) return
-        _fixtures.value = list
-        persistAsync(list)
+        val realFixtures = list.filterNot { isFakeOrSeedId(it.id) }
+        android.util.Log.d("FortressTV", "[SportsRepository] Setting ${realFixtures.size} real fixtures (received: ${list.size})")
+        _fixtures.value = realFixtures
+        persistAsync(realFixtures)
+    }
+
+    suspend fun refresh(accessToken: String? = null) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val api = SupabaseSyncApi()
+            val fetched = api.fetchSportsFixtures(accessToken)
+            android.util.Log.d("FortressTV", "[SportsRepository] Fetched ${fetched.size} fixtures from Supabase")
+            if (fetched.isNotEmpty()) {
+                setFixtures(fetched)
+            }
+        }.onFailure { err ->
+            android.util.Log.e("FortressTV", "[SportsRepository] Failed to fetch fixtures from Supabase", err)
+        }
     }
 
     internal fun refreshFromNetwork(api: SupabaseSyncApi, accessToken: String? = null) {
@@ -52,6 +63,11 @@ class SportsRepository internal constructor(
         }
     }
 
+    fun clearCache() {
+        _fixtures.value = emptyList()
+        preferences.edit().remove(KEY_FIXTURES).apply()
+    }
+
     private fun loadPersisted() {
         val raw = preferences.getString(KEY_FIXTURES, null) ?: return
         runCatching {
@@ -59,12 +75,19 @@ class SportsRepository internal constructor(
             val list = mutableListOf<SportsFixture>()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
+                val id = obj.optString("id", "")
+                if (isFakeOrSeedId(id)) continue
                 list.add(SportsFixture.fromJson(obj))
             }
-            if (list.isNotEmpty()) {
-                _fixtures.value = list
-            }
+            _fixtures.value = list
         }
+    }
+
+    private fun isFakeOrSeedId(id: String): Boolean {
+        val lower = id.lowercase()
+        return lower.startsWith("fixture-") || lower.startsWith("pl-") || lower.startsWith("ucl-") ||
+            lower.startsWith("mock-") || lower.startsWith("fake-") || lower.startsWith("seed-") ||
+            lower.startsWith("sdb-")
     }
 
     private fun persistAsync(list: List<SportsFixture>) {
@@ -92,67 +115,5 @@ class SportsRepository internal constructor(
             }
             preferences.edit().putString(KEY_FIXTURES, arr.toString()).apply()
         }
-    }
-
-    private fun createDefaultSeedFixtures(): List<SportsFixture> {
-        val now = Instant.now()
-        return listOf(
-            SportsFixture(
-                id = "pl-benfica-porto",
-                sport = SportsKind.FOOTBALL,
-                competition = "Primeira Liga",
-                competitionLogoUrl = "https://upload.wikimedia.org/wikipedia/pt/e/ee/Liga_Portugal_Betclic_logo.png",
-                homeTeam = "SL Benfica",
-                awayTeam = "FC Porto",
-                homeTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/pt/2/2a/Sport_Lisboa_e_Benfica_logo.png",
-                awayTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/pt/1/1b/FC_Porto.png",
-                kickoffUtc = now.plusSeconds(7200),
-                broadcasterOfficial = "Sport TV 1",
-                status = FixtureStatus.SCHEDULED,
-                venue = "Estádio da Luz, Lisboa"
-            ),
-            SportsFixture(
-                id = "pl-sporting-braga",
-                sport = SportsKind.FOOTBALL,
-                competition = "Primeira Liga",
-                competitionLogoUrl = "https://upload.wikimedia.org/wikipedia/pt/e/ee/Liga_Portugal_Betclic_logo.png",
-                homeTeam = "Sporting CP",
-                awayTeam = "SC Braga",
-                homeTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/pt/1/13/Sporting_Clube_de_Portugal_%28logo%29.png",
-                awayTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/pt/7/79/Sporting_Clube_de_Braga_logo.png",
-                kickoffUtc = now.plusSeconds(18000),
-                broadcasterOfficial = "Sport TV 1",
-                status = FixtureStatus.SCHEDULED,
-                venue = "Estádio José Alvalade, Lisboa"
-            ),
-            SportsFixture(
-                id = "ucl-arsenal-realmadrid",
-                sport = SportsKind.FOOTBALL,
-                competition = "UEFA Champions League",
-                competitionLogoUrl = "https://upload.wikimedia.org/wikipedia/en/b/bf/UEFA_Champions_League_logo_2.svg",
-                homeTeam = "Arsenal",
-                awayTeam = "Real Madrid",
-                homeTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg",
-                awayTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/en/5/56/Real_Madrid_CF.svg",
-                kickoffUtc = now.plusSeconds(86400 + 25200),
-                broadcasterOfficial = "DAZN 1",
-                status = FixtureStatus.SCHEDULED,
-                venue = "Emirates Stadium, Londres"
-            ),
-            SportsFixture(
-                id = "f1-interlagos",
-                sport = SportsKind.MOTORSPORT,
-                competition = "Formula 1",
-                competitionLogoUrl = "https://upload.wikimedia.org/wikipedia/commons/3/33/F1.svg",
-                homeTeam = "GP São Paulo (Interlagos)",
-                awayTeam = "Corrida Principal",
-                homeTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/commons/3/33/F1.svg",
-                awayTeamLogoUrl = "https://upload.wikimedia.org/wikipedia/commons/3/33/F1.svg",
-                kickoffUtc = now.plusSeconds(10800),
-                broadcasterOfficial = "Sport TV 4",
-                status = FixtureStatus.SCHEDULED,
-                venue = "Autódromo José Carlos Pace"
-            )
-        )
     }
 }

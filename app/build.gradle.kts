@@ -102,6 +102,7 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
     implementation(libs.coil.compose)
+    implementation("io.coil-kt:coil-svg:2.7.0")
     implementation(libs.androidx.profileinstaller)
     implementation(libs.nanohttpd)
     implementation(libs.zxing.core)

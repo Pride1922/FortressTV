@@ -539,6 +539,9 @@ class MainActivity : ComponentActivity() {
         FormFactorDetector.detect(this)
 
         val imageLoader = ImageLoader.Builder(this)
+            .components {
+                add(coil.decode.SvgDecoder.Factory())
+            }
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)
@@ -5285,7 +5288,7 @@ private fun ContinueWatchingRow(
     firstItemFocusRequester: FocusRequester? = null,
     sidebarFocusRequester: FocusRequester? = null
 ) {
-    val distinctEntries = remember(entries) { entries.distinctBy { it.key } }
+    val distinctEntries = remember(entries) { entries.filter { it.title.isNotBlank() }.distinctBy { it.key } }
     if (distinctEntries.isEmpty()) return
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
@@ -5583,12 +5586,19 @@ private fun XtreamMoviesScreen(
             contentType = { _, _ -> "movie_poster" }
         ) { index, entry ->
             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+            val client = remember(entry.catalog.sourceId) {
+                val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+                source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
+            }
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
                 isWatched = libraryId in watchedItemIds,
                 progressFraction = progressByKey[libraryId]?.progressFraction,
+                loadPosterFallback = if (entry.movie.posterUrl.isNullOrBlank()) {
+                    client?.let { c -> { c.loadMovieDetails(entry.movie.id).posterUrl } }
+                } else null,
                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                 onClick = { selectedMovie = entry }
             )
@@ -6493,19 +6503,36 @@ private fun VodPosterCard(
     isWatched: Boolean = false,
     progressFraction: Float? = null,
     modifier: Modifier = Modifier,
+    loadPosterFallback: (suspend () -> String?)? = null,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
-    val posterRequest = remember(posterUrl) {
-        posterUrl?.takeIf(String::isNotBlank)?.let { url ->
+    var dynamicPosterUrl by remember(posterUrl) { mutableStateOf(posterUrl) }
+
+    LaunchedEffect(posterUrl, loadPosterFallback, title) {
+        if (dynamicPosterUrl.isNullOrBlank()) {
+            val fromFallback = runCatching { loadPosterFallback?.invoke() }.getOrNull()
+            if (!fromFallback.isNullOrBlank()) {
+                dynamicPosterUrl = fromFallback
+            } else {
+                val resolved = com.fortresstv.player.library.VodPosterResolver.resolveMoviePoster(title)
+                if (!resolved.isNullOrBlank()) {
+                    dynamicPosterUrl = resolved
+                }
+            }
+        }
+    }
+
+    val posterRequest = remember(dynamicPosterUrl) {
+        dynamicPosterUrl?.takeIf(String::isNotBlank)?.let { url ->
             ImageRequest.Builder(context)
                 .data(url)
                 .size(240, 360)
                 .precision(Precision.INEXACT)
                 .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                 .allowHardware(true)
-                .crossfade(false)
+                .crossfade(true)
                 .build()
         }
     }
@@ -9872,6 +9899,12 @@ private fun HomeScreen(
 
     val sportsRepo = remember { com.fortresstv.player.sports.SportsRepository.get(context) }
     val sportsFixtures by sportsRepo.fixtures.collectAsState()
+    LaunchedEffect(Unit) {
+        while (true) {
+            sportsRepo.refresh()
+            delay(60_000)
+        }
+    }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
     val hasContent = (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.SPORTS !in homeHiddenSections && sportsFixtures.isNotEmpty()) ||
@@ -10502,12 +10535,19 @@ private fun HomeScreen(
                             LazyRow(state = moviesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(recentMovies, key = { index, it -> "home_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                    val client = remember(entry.catalog.sourceId) {
+                                        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+                                        source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
+                                    }
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
                                         subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
+                                        loadPosterFallback = if (entry.movie.posterUrl.isNullOrBlank()) {
+                                            client?.let { c -> { c.loadMovieDetails(entry.movie.id).posterUrl } }
+                                        } else null,
                                         onClick = { selectedMovie = entry },
                                         modifier = Modifier.width(120.dp)
                                     )

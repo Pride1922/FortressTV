@@ -199,6 +199,12 @@ interface Strings {
     val watchLive: String
     val liveNow: String
     fun broadcastOn(channel: String): String
+    val matchDetails: String
+    val matchEvents: String
+    val noEventsYet: String
+    val matchNotStarted: String
+    fun watchLiveOn(channel: String): String
+    val topLeaders: String
     val channelNotDetected: String
     fun kickoffAt(time: String): String
     val customizeHome: String
@@ -668,6 +674,12 @@ object EnglishStrings : Strings {
     override val watchLive = "Watch Live"
     override val liveNow = "Live Now"
     override fun broadcastOn(channel: String) = "Live on $channel"
+    override val matchDetails = "Match Details"
+    override val matchEvents = "Key Events"
+    override val noEventsYet = "No goals or key events yet"
+    override val matchNotStarted = "Match has not started yet"
+    override fun watchLiveOn(channel: String) = "Watch Live on $channel"
+    override val topLeaders = "Top Performers"
     override val channelNotDetected = "Channel not found"
     override fun kickoffAt(time: String) = "Kickoff at $time"
     override val customizeHome = "Customize Home"
@@ -1140,6 +1152,12 @@ object PortugueseStrings : Strings {
     override val watchLive = "Ver em Direto"
     override val liveNow = "Em Direto"
     override fun broadcastOn(channel: String) = "Em direto na $channel"
+    override val matchDetails = "Detalhes do Jogo"
+    override val matchEvents = "Eventos Principais"
+    override val noEventsYet = "Ainda sem golos ou cartões"
+    override val matchNotStarted = "O jogo ainda não começou"
+    override fun watchLiveOn(channel: String) = "Ver em direto na $channel"
+    override val topLeaders = "Melhores Marcadores"
     override val channelNotDetected = "Canal não detetado"
     override fun kickoffAt(time: String) = "Início às $time"
     override val customizeHome = "Personalizar Início"

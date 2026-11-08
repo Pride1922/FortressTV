@@ -57,19 +57,23 @@ data class SportsFixture(
             val kickoffStr = json.optString("kickoff_utc", "")
             val kickoff = runCatching { Instant.parse(kickoffStr) }.getOrDefault(Instant.now())
 
+            val rawHome = json.optString("home_team", "")
+            val rawAway = json.optString("away_team", "")
+            val home = if (rawHome.isNotBlank()) rawHome else json.optString("event", "")
+
             return SportsFixture(
                 id = json.getString("id"),
                 sport = sport,
                 competition = json.optString("competition", ""),
                 competitionLogoUrl = json.optString("competition_logo_url").takeIf { it.isNotBlank() },
-                homeTeam = json.optString("home_team", ""),
-                awayTeam = json.optString("away_team", ""),
+                homeTeam = home,
+                awayTeam = rawAway,
                 homeTeamLogoUrl = json.optString("home_team_logo_url").takeIf { it.isNotBlank() },
                 awayTeamLogoUrl = json.optString("away_team_logo_url").takeIf { it.isNotBlank() },
                 kickoffUtc = kickoff,
                 broadcasterOfficial = json.optString("broadcaster_official", ""),
                 status = status,
-                minute = json.optString("minute").takeIf { it.isNotBlank() },
+                minute = json.optString("minute").takeIf { it.isNotBlank() && it.lowercase() != "null" },
                 homeScore = if (json.has("home_score") && !json.isNull("home_score")) json.getInt("home_score") else null,
                 awayScore = if (json.has("away_score") && !json.isNull("away_score")) json.getInt("away_score") else null,
                 venue = json.optString("venue").takeIf { it.isNotBlank() }

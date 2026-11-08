@@ -19,3 +19,7 @@ supabase.properties
 work/
 *.jks
 *.keystore
+
+supabase/.temp/
+.temp/
+

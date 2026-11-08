@@ -24,12 +24,18 @@ object SportsBindingResolver {
         setOf("sporttv4", "sportv4", "spt4", "sporttv4pt", "sptv4"),
         setOf("sporttv5", "sportv5", "spt5", "sporttv5pt", "sptv5"),
         setOf("sporttv6", "sportv6", "spt6", "sporttv6pt", "sptv6"),
+        setOf("sporttvplus", "sportvplus", "sptplus", "sporttvmais"),
         setOf("dazn1", "dazn1pt", "elevensports1", "eleven1", "eleven1pt"),
         setOf("dazn2", "dazn2pt", "elevensports2", "eleven2", "eleven2pt"),
         setOf("dazn3", "dazn3pt", "elevensports3", "eleven3", "eleven3pt"),
         setOf("dazn4", "dazn4pt", "elevensports4", "eleven4", "eleven4pt"),
         setOf("dazn5", "dazn5pt", "elevensports5", "eleven5", "eleven5pt"),
         setOf("dazn6", "dazn6pt", "elevensports6", "eleven6", "eleven6pt"),
+        setOf("eurosport1", "eurosport1pt", "eurosport1hd"),
+        setOf("eurosport2", "eurosport2pt", "eurosport2hd"),
+        setOf("benficatv", "btv", "benficatv1"),
+        setOf("sportingtv", "stv"),
+        setOf("portocanal"),
         setOf("rtp1", "rtp1pt", "rtp1hd"),
         setOf("rtp2", "rtp2pt", "rtp2hd"),
         setOf("sic", "sicpt", "sichd"),
@@ -46,14 +52,105 @@ object SportsBindingResolver {
     ): PlaylistChannel? {
         if (channels.isEmpty()) return null
 
-        // 1. Direct Broadcaster Match
-        val directMatch = matchBroadcasterDirectly(fixture.broadcasterOfficial, channels)
-        if (directMatch != null) return directMatch
-
-        // 2. EPG Schedule Fallback
+        // 1. EPG Schedule Match on Portuguese channels first
         if (epgGuide != null) {
-            val epgMatch = matchViaEpg(fixture, channels, epgGuide)
-            if (epgMatch != null) return epgMatch
+            val epgPt = matchViaEpg(fixture, channels, epgGuide, portugueseOnly = true)
+            if (epgPt != null) return epgPt
+        }
+
+        // 2. Direct Broadcaster Match (prefers Portuguese)
+        val direct = matchBroadcasterDirectly(fixture.broadcasterOfficial, channels)
+        if (direct != null && isPortugueseChannel(direct)) return direct
+
+        // 3. Fallback to foreign EPG match
+        if (epgGuide != null) {
+            val foreignEpg = matchViaEpg(fixture, channels, epgGuide, portugueseOnly = false)
+            if (foreignEpg != null) return foreignEpg
+        }
+
+        return direct
+    }
+
+    /**
+     * Resolves all fixtures at once, distributing simultaneous matches across broadcaster channels
+     * (e.g. DAZN 1, DAZN 2, DAZN 3, DAZN 4 or Sport TV 1, Sport TV 2, Sport TV 3) so that
+     * simultaneous games in the same competition are never bound to the exact same channel.
+     * Strictly prioritizes Portuguese feeds (PT:) over foreign feeds (BR:, ES:, etc.).
+     */
+    fun resolveAll(
+        fixtures: List<SportsFixture>,
+        channels: List<PlaylistChannel>,
+        epgGuide: EpgGuide? = null
+    ): List<Pair<SportsFixture, PlaylistChannel>> {
+        if (channels.isEmpty() || fixtures.isEmpty()) return emptyList()
+
+        val results = mutableListOf<Pair<SportsFixture, PlaylistChannel>>()
+        // Track channels used per kickoff slot and broadcaster family: "kickoffEpoch_family" -> setOf(channelNorm)
+        val usedChannelsAtSlot = mutableMapOf<String, MutableSet<String>>()
+
+        for (fixture in fixtures) {
+            val family = extractBroadcasterFamily(fixture.broadcasterOfficial)
+            val slotKey = "${fixture.kickoffUtc.epochSecond}_$family"
+            val used = usedChannelsAtSlot.getOrPut(slotKey) { mutableSetOf() }
+
+            // 1. EPG schedule match on Portuguese channel
+            var matched: PlaylistChannel? = if (epgGuide != null) {
+                matchViaEpg(fixture, channels, epgGuide, alreadyUsed = used, portugueseOnly = true)
+            } else null
+
+            // 2. Broadcaster family distribution fallback on Portuguese channels
+            if (matched == null) {
+                matched = findAvailableChannelInFamily(fixture.broadcasterOfficial, channels, used)
+            }
+
+            // 3. Fallback to foreign EPG match if no Portuguese channel exists
+            if (matched == null && epgGuide != null) {
+                matched = matchViaEpg(fixture, channels, epgGuide, alreadyUsed = used, portugueseOnly = false)
+            }
+
+            if (matched != null) {
+                val norm = ChannelFailoverResolver.normalizeChannelName(matched.name)
+                used.add(norm)
+                results.add(fixture to matched)
+            }
+        }
+        return results
+    }
+
+    private fun extractBroadcasterFamily(broadcaster: String): String {
+        val lower = broadcaster.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("dazn") || lower.contains("eleven") -> "dazn"
+            lower.contains("sport") || lower.contains("spt") -> "sporttv"
+            lower.contains("btv") || lower.contains("benfica") -> "btv"
+            lower.contains("eurosport") -> "eurosport"
+            else -> lower.filter { it.isLetter() }
+        }
+    }
+
+    private fun findAvailableChannelInFamily(
+        preferredBroadcaster: String,
+        channels: List<PlaylistChannel>,
+        alreadyUsed: Set<String>
+    ): PlaylistChannel? {
+        val family = extractBroadcasterFamily(preferredBroadcaster)
+
+        val candidateNames = when (family) {
+            "dazn" -> listOf("DAZN 1", "DAZN 2", "DAZN 3", "DAZN 4", "DAZN 5", "DAZN 6")
+            "sporttv" -> listOf("Sport TV 1", "Sport TV 2", "Sport TV 3", "Sport TV 4", "Sport TV 5", "Sport TV 6")
+            else -> listOf(preferredBroadcaster)
+        }
+
+        val orderedCandidates = listOf(preferredBroadcaster) + candidateNames.filterNot { it.equals(preferredBroadcaster, true) }
+
+        for (cand in orderedCandidates) {
+            val matched = matchBroadcasterDirectly(cand, channels)
+            if (matched != null) {
+                val norm = ChannelFailoverResolver.normalizeChannelName(matched.name)
+                if (!alreadyUsed.contains(norm)) {
+                    return matched
+                }
+            }
         }
 
         return null
@@ -69,16 +166,35 @@ object SportsBindingResolver {
 
         val aliasSet = BROADCASTER_ALIASES.firstOrNull { it.contains(targetNorm) } ?: setOf(targetNorm)
 
-        return channels.firstOrNull { channel ->
+        val candidates = channels.filter { channel ->
             val channelNorm = ChannelFailoverResolver.normalizeChannelName(channel.name)
             aliasSet.contains(channelNorm)
         }
+        if (candidates.isEmpty()) return null
+
+        return candidates.firstOrNull { isPortugueseChannel(it) } ?: candidates.first()
+    }
+
+    fun isPortugueseChannel(channel: PlaylistChannel): Boolean {
+        val n = channel.name.lowercase(Locale.ROOT).trim()
+        val g = channel.group?.lowercase(Locale.ROOT).orEmpty().trim()
+        if (n.startsWith("br:") || n.startsWith("br |") || n.startsWith("br -") ||
+            n.startsWith("es:") || n.startsWith("fr:") || n.startsWith("it:") ||
+            n.startsWith("de:") || n.startsWith("uk:") || n.startsWith("us:") ||
+            g.startsWith("brasil") || g.startsWith("brazil")) {
+            return false
+        }
+        return n.startsWith("pt:") || n.startsWith("pt |") || n.startsWith("pt-") ||
+            n.contains("portugal") || g.contains("portugal") || g.startsWith("pt") ||
+            n.contains(" (pt)") || n.endsWith(" pt")
     }
 
     fun matchViaEpg(
         fixture: SportsFixture,
         channels: List<PlaylistChannel>,
-        epgGuide: EpgGuide
+        epgGuide: EpgGuide,
+        alreadyUsed: Set<String> = emptySet(),
+        portugueseOnly: Boolean = false
     ): PlaylistChannel? {
         val homeKeywords = extractTeamKeywords(fixture.homeTeam)
         val awayKeywords = extractTeamKeywords(fixture.awayTeam)
@@ -97,7 +213,16 @@ object SportsBindingResolver {
                 n.contains("rtp") || n.contains("sic") || n.contains("tvi") || n.contains("canal 11")
         }.ifEmpty { channels }
 
-        for (channel in sportsChannels) {
+        val candidates = if (portugueseOnly) {
+            sportsChannels.filter { isPortugueseChannel(it) }
+        } else {
+            sportsChannels.sortedWith(compareByDescending { isPortugueseChannel(it) })
+        }
+
+        for (channel in candidates) {
+            val norm = ChannelFailoverResolver.normalizeChannelName(channel.name)
+            if (alreadyUsed.contains(norm)) continue
+
             val programmes = epgGuide.findProgrammes(channel.tvgId, channel.name)
             for (prog in programmes) {
                 val stopMs = prog.stopEpochMilli ?: (prog.startEpochMilli + 90 * 60 * 1000L)

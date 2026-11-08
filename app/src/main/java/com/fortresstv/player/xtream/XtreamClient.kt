@@ -185,7 +185,10 @@ class XtreamClient(
             id = id,
             name = item.optString("name").ifBlank { "Movie $id" },
             categoryId = item.nullableString("category_id"),
-            posterUrl = item.nullableString("stream_icon"),
+            posterUrl = item.nullableString("stream_icon")
+                ?: item.nullableString("cover_big")
+                ?: item.nullableString("movie_image")
+                ?: item.nullableString("cover"),
             containerExtension = item.optString("container_extension").ifBlank { "mp4" },
             rating = item.nullableString("rating"),
             year = item.nullableString("year"),

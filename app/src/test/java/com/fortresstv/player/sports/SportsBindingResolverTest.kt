@@ -143,4 +143,45 @@ class SportsBindingResolverTest {
         val resolved = SportsBindingResolver.resolve(fixture, channels, epgGuide = null)
         assertNull(resolved)
     }
+
+    @Test
+    fun matchBroadcasterDirectly_matchesBtvAndEurosportAliases() {
+        val btvFixture = sampleFixture("BTV", home = "SL Benfica", away = "FC Arouca")
+        val euroFixture = sampleFixture("Eurosport 1", home = "Roland Garros", away = "Final")
+
+        val channels = listOf(
+            sampleChannel("PT: BENFICA TV HD"),
+            sampleChannel("PT: EUROSPORT 1 FHD")
+        )
+
+        val matchedBtv = SportsBindingResolver.matchBroadcasterDirectly(btvFixture.broadcasterOfficial, channels)
+        val matchedEuro = SportsBindingResolver.matchBroadcasterDirectly(euroFixture.broadcasterOfficial, channels)
+
+        assertNotNull(matchedBtv)
+        assertEquals("PT: BENFICA TV HD", matchedBtv!!.name)
+        assertNotNull(matchedEuro)
+        assertEquals("PT: EUROSPORT 1 FHD", matchedEuro!!.name)
+    }
+
+    @Test
+    fun filterToPlayableStreams_excludesFixturesWithoutMatchingStream() {
+        val f1Playable = sampleFixture("DAZN 1", home = "F1 GP Monaco", away = "Race")
+        val f2Unplayable = sampleFixture("Sport TV 6", home = "Padel WPT", away = "Quarterfinal")
+
+        val channels = listOf(
+            sampleChannel("PT | DAZN 1 HD"),
+            sampleChannel("PT | RTP 1 HD")
+        )
+
+        val fixtures = listOf(f1Playable, f2Unplayable)
+
+        val playable = fixtures.mapNotNull { f ->
+            val resolved = SportsBindingResolver.resolve(f, channels)
+            if (resolved != null) f to resolved else null
+        }
+
+        assertEquals(1, playable.size)
+        assertEquals("fix-1", playable[0].first.id)
+        assertEquals("PT | DAZN 1 HD", playable[0].second.name)
+    }
 }
