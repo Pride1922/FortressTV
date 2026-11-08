@@ -32,8 +32,8 @@ android {
         applicationId = "com.fortresstv.player"
         minSdk = 26
         targetSdk = 36
-        versionCode = 46
-        versionName = "2.0.0-RC12"
+        versionCode = 47
+        versionName = "2.0.0-RC13"
         buildConfigField("String", "SUPABASE_URL", buildConfigString(accountConfig("SUPABASE_URL", "projectUrl")))
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", buildConfigString(accountConfig("SUPABASE_PUBLISHABLE_KEY", "publishableKey")))
 
