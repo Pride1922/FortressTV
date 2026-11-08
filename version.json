@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC9",
-    "versionCode":  43,
-    "notes":  "Rework fullscreen gestures with 3-zone controls, side HUD overlays, QuickZap swipe, and fix center tap controls toggle",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC9/fortresstv.apk",
-    "sha256":  "17BDF1081141411D5B0289287099FE79A4700680FCA5CEF486DDC4B99C28F49E"
+    "version":  "2.0.0-RC10",
+    "versionCode":  44,
+    "notes":  "FortressTV 2.0.0-RC10:\n- Isolated watch history and Continue Watching row per active household profile\n- Added VOD and catch-up timeshift watch progress persistence with canonical item identity\n- Channel-level catchup capability detection (tv_archive / catchup tags) to prevent source errors on channels without archive support\n- Immediate progress saving on player pause, stop, and dismiss\n- Full Portuguese (pt-PT) and English parity",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC10/fortresstv.apk",
+    "sha256":  "61C930BA04B533832EEC5090FDB2B5E6CE4F590A49232108B77B1734567538E0"
 }
