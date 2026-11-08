@@ -40,7 +40,8 @@ object SportsBindingResolver {
         setOf("rtp2", "rtp2pt", "rtp2hd"),
         setOf("sic", "sicpt", "sichd"),
         setOf("tvi", "tvipt", "tvihd"),
-        setOf("canal11", "canal11pt", "c11")
+        setOf("canal11", "canal11pt", "c11"),
+        setOf("vmais", "vmaistvi", "vplus", "vplustvi", "vtvi", "vpluspt")
     )
 
     private val TEAM_PREFIXES = Regex("(?i)\\b(?:sl|fc|sc|cf|cp|cd|ud|gd|ac|afc|sad|clube|futebol|de|e|the)\\b")
@@ -124,6 +125,7 @@ object SportsBindingResolver {
             lower.contains("sport") || lower.contains("spt") -> "sporttv"
             lower.contains("btv") || lower.contains("benfica") -> "btv"
             lower.contains("eurosport") -> "eurosport"
+            lower.contains("v+") || lower.contains("vmais") || lower.contains("vplus") -> "vmais"
             else -> lower.filter { it.isLetter() }
         }
     }
@@ -189,6 +191,44 @@ object SportsBindingResolver {
             n.contains(" (pt)") || n.endsWith(" pt")
     }
 
+    private val COMMENTARY_CHANNELS_REGEX = Regex("(?i)(?:\\bcmtv\\b|\\bcnn\\b|not[ií]cias|informa[cç][aã]o|\\ba bola\\b|\\babolatv\\b|\\bnews\\b)")
+    private val NON_LIVE_KEYWORDS = listOf("antevisão", "antevisao", "pós-jogo", "pos-jogo", "rescaldo", "comentários", "comentarios", "debate", "análise", "analise", "especial informação", "magazine", "diário", "diario")
+
+    internal fun getChannelPriority(
+        channel: PlaylistChannel,
+        broadcasterOfficial: String
+    ): Int {
+        val n = channel.name.lowercase(Locale.ROOT)
+        if (COMMENTARY_CHANNELS_REGEX.containsMatchIn(n)) {
+            return -100 // Exclude non-live commentary/news channels
+        }
+
+        val norm = ChannelFailoverResolver.normalizeChannelName(channel.name)
+        val targetNorm = ChannelFailoverResolver.normalizeChannelName(broadcasterOfficial)
+
+        // Exact match with official broadcaster (e.g. "PT: SPORT TV 1" when official is "Sport TV 1")
+        val aliasSet = BROADCASTER_ALIASES.firstOrNull { it.contains(targetNorm) } ?: (if (targetNorm.isNotBlank()) setOf(targetNorm) else emptySet())
+        if (aliasSet.isNotEmpty() && aliasSet.contains(norm)) {
+            return 100
+        }
+
+        // Same broadcaster family (e.g. other Sport TV channels when official is Sport TV 1)
+        val family = extractBroadcasterFamily(broadcasterOfficial)
+        val channelFamily = extractBroadcasterFamily(channel.name)
+        if (family.isNotBlank() && channelFamily == family) {
+            return 80
+        }
+
+        // Dedicated sports channel network
+        if (channelFamily == "sporttv" || channelFamily == "dazn" || channelFamily == "btv" ||
+            channelFamily == "eurosport" || norm.contains("canal11")) {
+            return 50
+        }
+
+        // General TV channels (RTP 1, RTP 2, SIC, TVI)
+        return 10
+    }
+
     fun matchViaEpg(
         fixture: SportsFixture,
         channels: List<PlaylistChannel>,
@@ -213,15 +253,22 @@ object SportsBindingResolver {
                 n.contains("rtp") || n.contains("sic") || n.contains("tvi") || n.contains("canal 11")
         }.ifEmpty { channels }
 
-        val candidates = if (portugueseOnly) {
-            sportsChannels.filter { isPortugueseChannel(it) }
-        } else {
-            sportsChannels.sortedWith(compareByDescending { isPortugueseChannel(it) })
+        val nonCommentary = sportsChannels.filter { getChannelPriority(it, fixture.broadcasterOfficial) >= 0 }
+        val candidatePool = if (nonCommentary.isNotEmpty()) nonCommentary else sportsChannels
+
+        val candidates = candidatePool.sortedWith(
+            compareByDescending<PlaylistChannel> { if (portugueseOnly) (if (isPortugueseChannel(it)) 1 else 0) else 0 }
+                .thenByDescending { isPortugueseChannel(it) }
+                .thenByDescending { getChannelPriority(it, fixture.broadcasterOfficial) }
+        ).let { list ->
+            if (portugueseOnly) list.filter { isPortugueseChannel(it) } else list
         }
 
         for (channel in candidates) {
             val norm = ChannelFailoverResolver.normalizeChannelName(channel.name)
             if (alreadyUsed.contains(norm)) continue
+
+            val isDedicatedSports = getChannelPriority(channel, fixture.broadcasterOfficial) >= 50
 
             val programmes = epgGuide.findProgrammes(channel.tvgId, channel.name)
             for (prog in programmes) {
@@ -231,6 +278,13 @@ object SportsBindingResolver {
                 val titleLower = prog.title.lowercase(Locale.ROOT)
                 val descLower = prog.description?.lowercase(Locale.ROOT).orEmpty()
                 val fullText = "$titleLower $descLower"
+
+                if (!isDedicatedSports) {
+                    val isCommentary = NON_LIVE_KEYWORDS.any { titleLower.contains(it) || descLower.contains(it) }
+                    if (isCommentary && !titleLower.contains("direto")) {
+                        continue
+                    }
+                }
 
                 val matchesHome = homeKeywords.any { fullText.contains(it) }
                 val matchesAway = awayKeywords.any { fullText.contains(it) }

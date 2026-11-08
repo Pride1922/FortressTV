@@ -77,10 +77,15 @@ fun SportsHubSection(
     if (fixtures.isEmpty()) return
 
     // Stream Filter Rule: Only show matches/events that can actually be played on the user's active stream
-    val playableFixtures = remember(fixtures, channels, epgGuide) {
-        val result = SportsBindingResolver.resolveAll(fixtures, channels, epgGuide)
-        android.util.Log.d("FortressTV", "[SportsHub] fixtures=${fixtures.size}, playable=${result.size}, channels=${channels.size}")
-        result
+    // Resolve off the main thread: EPG matching scans the whole guide and must never block composition.
+    val playableFixtures by androidx.compose.runtime.produceState(
+        initialValue = emptyList<Pair<SportsFixture, PlaylistChannel>>(),
+        fixtures, channels, epgGuide
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            SportsBindingResolver.resolveAll(fixtures, channels, epgGuide)
+        }
+        android.util.Log.d("FortressTV", "[SportsHub] fixtures=${fixtures.size}, playable=${value.size}, channels=${channels.size}")
     }
 
     if (playableFixtures.isEmpty()) return

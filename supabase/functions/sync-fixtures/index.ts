@@ -111,8 +111,12 @@ async function fetchSoccerScoreboard(league: typeof SOCCER_LEAGUES[0]): Promise<
 
       // Portuguese broadcaster rules:
       let broadcaster = league.defaultBroadcaster;
-      if (league.slug === "por.1" && /benfica/i.test(homeTeam)) {
-        broadcaster = "BTV";
+      if (league.slug === "por.1") {
+        if (/benfica/i.test(homeTeam)) {
+          broadcaster = "BTV";
+        } else if (/moreirense/i.test(homeTeam)) {
+          broadcaster = "V+";
+        }
       }
 
       results.push({

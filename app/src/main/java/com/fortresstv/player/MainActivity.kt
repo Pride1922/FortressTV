@@ -9899,10 +9899,26 @@ private fun HomeScreen(
 
     val sportsRepo = remember { com.fortresstv.player.sports.SportsRepository.get(context) }
     val sportsFixtures by sportsRepo.fixtures.collectAsState()
-    LaunchedEffect(Unit) {
+
+    // Immediate refresh when tablet wakes up or app returns to foreground
+    val homeLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(homeLifecycleOwner) {
+        val observer = object : DefaultLifecycleObserver {
+            override fun onResume(owner: LifecycleOwner) {
+                coroutineScope.launch { sportsRepo.refresh() }
+            }
+        }
+        homeLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { homeLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Dynamic polling: 30s when live matches exist, 60s otherwise
+    LaunchedEffect(sportsFixtures) {
         while (true) {
             sportsRepo.refresh()
-            delay(60_000)
+            val hasLiveMatches = sportsFixtures.any { it.isLive() }
+            val nextDelay = if (hasLiveMatches) 30_000L else 60_000L
+            delay(nextDelay)
         }
     }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }

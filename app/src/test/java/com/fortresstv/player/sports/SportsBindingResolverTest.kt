@@ -184,4 +184,111 @@ class SportsBindingResolverTest {
         assertEquals("fix-1", playable[0].first.id)
         assertEquals("PT | DAZN 1 HD", playable[0].second.name)
     }
+
+    @Test
+    fun matchViaEpg_prefersOfficialSportChannelOverCommentaryChannel() {
+        val kickoff = Instant.now().plusSeconds(1800)
+        val fixture = sampleFixture(
+            broadcaster = "Sport TV 1",
+            home = "Vitória SC",
+            away = "FC Porto",
+            kickoff = kickoff
+        )
+
+        val vPlusChannel = sampleChannel(
+            name = "PT: V+ TVI",
+            tvgId = "vplus.pt"
+        )
+        val sportTv1Channel = sampleChannel(
+            name = "PT: SPORT TV 1 HD",
+            tvgId = "sporttv1.pt"
+        )
+
+        val epgGuide = EpgGuide(
+            channels = mapOf(
+                "vplus.pt" to EpgChannel("vplus.pt", "V+ TVI"),
+                "sporttv1.pt" to EpgChannel("sporttv1.pt", "SPORT TV 1")
+            ),
+            programmes = mapOf(
+                "vplus.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "vplus.pt",
+                        title = "V+ Futebol: Vitória SC x FC Porto - Antevisão e Análise",
+                        description = "Comentários ao jogo entre Vitória e FC Porto",
+                        category = "Informação",
+                        startEpochMilli = kickoff.minusSeconds(600).toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(5400).toEpochMilli()
+                    )
+                ),
+                "sporttv1.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "sporttv1.pt",
+                        title = "Vitória SC x FC Porto - Primeira Liga (Direto)",
+                        description = "Transmissão em direto do jogo da Liga",
+                        category = "Desporto",
+                        startEpochMilli = kickoff.toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(6300).toEpochMilli()
+                    )
+                )
+            )
+        )
+
+        // Put V+ first in the channel list to ensure sorting logic takes precedence over list order
+        val resolved = SportsBindingResolver.resolve(
+            fixture = fixture,
+            channels = listOf(vPlusChannel, sportTv1Channel),
+            epgGuide = epgGuide
+        )
+
+        assertNotNull(resolved)
+        assertEquals("PT: SPORT TV 1 HD", resolved!!.name)
+    }
+
+    @Test
+    fun matchViaEpg_matchesVPlusWhenItIsOfficialBroadcasterForMoreirense() {
+        val kickoff = Instant.now().plusSeconds(1800)
+        val fixture = sampleFixture(
+            broadcaster = "V+",
+            home = "Moreirense FC",
+            away = "SL Benfica",
+            kickoff = kickoff
+        )
+
+        val vPlusChannel = sampleChannel(
+            name = "PT: V+ TVI",
+            tvgId = "vplus.pt"
+        )
+        val sportTv1Channel = sampleChannel(
+            name = "PT: SPORT TV 1 HD",
+            tvgId = "sporttv1.pt"
+        )
+
+        val epgGuide = EpgGuide(
+            channels = mapOf(
+                "vplus.pt" to EpgChannel("vplus.pt", "V+ TVI"),
+                "sporttv1.pt" to EpgChannel("sporttv1.pt", "SPORT TV 1")
+            ),
+            programmes = mapOf(
+                "vplus.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "vplus.pt",
+                        title = "Liga Portugal Betclic: Moreirense vs Benfica (Direto)",
+                        description = "Transmissão exclusiva em direto",
+                        category = "Desporto",
+                        startEpochMilli = kickoff.toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(7200).toEpochMilli()
+                    )
+                )
+            )
+        )
+
+        val resolved = SportsBindingResolver.resolve(
+            fixture = fixture,
+            channels = listOf(sportTv1Channel, vPlusChannel),
+            epgGuide = epgGuide
+        )
+
+        assertNotNull(resolved)
+        assertEquals("PT: V+ TVI", resolved!!.name)
+    }
 }
