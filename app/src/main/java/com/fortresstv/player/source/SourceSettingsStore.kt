@@ -342,6 +342,16 @@ class SourceSettingsStore internal constructor(
         editor.apply()
     }
 
+    fun homeHiddenSections(profileId: String? = null): Set<String> {
+        val key = if (!profileId.isNullOrBlank()) "home_hidden_sections_$profileId" else "home_hidden_sections"
+        return preferences.getStringSet(key, emptySet()) ?: emptySet()
+    }
+
+    fun setHomeHiddenSections(hidden: Set<String>, profileId: String? = null) {
+        val key = if (!profileId.isNullOrBlank()) "home_hidden_sections_$profileId" else "home_hidden_sections"
+        preferences.edit().putStringSet(key, hidden).apply()
+    }
+
     fun hideAdultContent(): Boolean =
         preferences.getBoolean("hide_adult_content", false)
 

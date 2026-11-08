@@ -201,6 +201,15 @@ interface Strings {
     fun broadcastOn(channel: String): String
     val channelNotDetected: String
     fun kickoffAt(time: String): String
+    val customizeHome: String
+    val customizeHomeDescription: String
+    val sectionSports: String
+    val sectionContinueWatching: String
+    val sectionFavoriteChannels: String
+    val sectionRecentChannels: String
+    val sectionFollowedSeries: String
+    val sectionRecentMovies: String
+    val sectionFeaturedSeries: String
     val buildingPlaybackBuffer: String
     val reconnecting: String
     val resumePlayback: String
@@ -661,6 +670,15 @@ object EnglishStrings : Strings {
     override fun broadcastOn(channel: String) = "Live on $channel"
     override val channelNotDetected = "Channel not found"
     override fun kickoffAt(time: String) = "Kickoff at $time"
+    override val customizeHome = "Customize Home"
+    override val customizeHomeDescription = "Choose which rows appear on your Home screen"
+    override val sectionSports = "Matches & Sports"
+    override val sectionContinueWatching = "Continue Watching"
+    override val sectionFavoriteChannels = "Favorite Channels Now"
+    override val sectionRecentChannels = "Recent Channels"
+    override val sectionFollowedSeries = "Followed Series"
+    override val sectionRecentMovies = "Recent Movies"
+    override val sectionFeaturedSeries = "Featured Series"
     override val buildingPlaybackBuffer = "Preparing playback…"
     override val reconnecting = "Reconnecting…"
     override val resumePlayback = "Continue watching?"
@@ -1124,6 +1142,15 @@ object PortugueseStrings : Strings {
     override fun broadcastOn(channel: String) = "Em direto na $channel"
     override val channelNotDetected = "Canal não detetado"
     override fun kickoffAt(time: String) = "Início às $time"
+    override val customizeHome = "Personalizar Início"
+    override val customizeHomeDescription = "Escolha quais as secções que surgem no seu ecrã inicial"
+    override val sectionSports = "Jogos e Desporto"
+    override val sectionContinueWatching = "Continuar a ver"
+    override val sectionFavoriteChannels = "Canais favoritos agora"
+    override val sectionRecentChannels = "Canais recentes"
+    override val sectionFollowedSeries = "Séries seguidas"
+    override val sectionRecentMovies = "Filmes recentes"
+    override val sectionFeaturedSeries = "Séries em destaque"
     override val buildingPlaybackBuffer = "A preparar a reprodução…"
     override val reconnecting = "A restabelecer ligação…"
     override val resumePlayback = "Continuar a ver?"

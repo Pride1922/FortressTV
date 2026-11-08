@@ -85,6 +85,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.Close
@@ -619,6 +620,8 @@ private fun FortressTVApp(
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     var startupDestination by remember { mutableStateOf(settings.startupDestination()) }
+    var homeHiddenSections by remember { mutableStateOf(settings.homeHiddenSections(initialProfileId)) }
+    var showCustomizeHomeDialog by remember { mutableStateOf(false) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
     var telemetryEnabled by remember { mutableStateOf(settings.telemetryEnabled()) }
@@ -904,6 +907,7 @@ private fun FortressTVApp(
         preferredSubtitleLanguage = settings.preferredSubtitleLanguage(targetProfileId)
         subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
         startupDestination = settings.startupDestination(targetProfileId)
+        homeHiddenSections = settings.homeHiddenSections(targetProfileId)
         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
 
         val activeSourceId = activeProfile?.id
@@ -1074,6 +1078,7 @@ private fun FortressTVApp(
                         preferredSubtitleLanguage = settings.preferredSubtitleLanguage(targetProfileId)
                         subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
                         startupDestination = settings.startupDestination(targetProfileId)
+                        homeHiddenSections = settings.homeHiddenSections(targetProfileId)
                         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
                         if (activeSourceId != null) {
                             hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
@@ -1932,6 +1937,8 @@ private fun FortressTVApp(
                     movieWatchlistIds = movieWatchlistIds,
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
+                    homeHiddenSections = homeHiddenSections,
+                    onOpenCustomizeHome = { showCustomizeHomeDialog = true },
                     xtreamCatalogs = xtreamCatalogs.values.toList(),
                     xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
                     onToggleFavorite = { channel ->
@@ -2371,7 +2378,26 @@ private fun FortressTVApp(
                     settings.saveEpgLoadedDays(clamped)
                     val currentEpg = epgSource ?: settings.epgSource()
                     currentEpg?.let { loadEpg(it, save = false, forceRefresh = false) }
-                }
+                },
+                onOpenCustomizeHome = { showCustomizeHomeDialog = true }
+            )
+        }
+
+        if (showCustomizeHomeDialog) {
+            com.fortresstv.player.ui.CustomizeHomeDialog(
+                hiddenSections = homeHiddenSections,
+                onToggleSection = { sectionId ->
+                    val updated = if (sectionId in homeHiddenSections) {
+                        homeHiddenSections - sectionId
+                    } else {
+                        homeHiddenSections + sectionId
+                    }
+                    homeHiddenSections = updated
+                    scope.launch(Dispatchers.IO) {
+                        settings.setHomeHiddenSections(updated, activeHouseholdProfile.id)
+                    }
+                },
+                onDismiss = { showCustomizeHomeDialog = false }
             )
         }
 
@@ -4299,6 +4325,8 @@ private fun FortressLibrary(
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
+    homeHiddenSections: Set<String> = emptySet(),
+    onOpenCustomizeHome: () -> Unit = {},
     xtreamCatalogs: List<XtreamCatalog>,
     xtreamProfiles: List<PlaylistProfile>,
     onToggleFavorite: (PlaylistChannel) -> Unit,
@@ -4550,7 +4578,9 @@ private fun FortressLibrary(
                     },
                     onNavigateToDestination = { target ->
                         destination = target
-                    }
+                    },
+                    homeHiddenSections = homeHiddenSections,
+                    onOpenCustomizeHome = onOpenCustomizeHome
                 )
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
                     playlist = if (activeHouseholdProfile?.isChild == true) effectivePlaylist else playlist,
@@ -9814,7 +9844,9 @@ private fun HomeScreen(
     onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
     onPlayEpisode: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
     onWatchChannel: (PlaylistChannel) -> Unit,
-    onNavigateToDestination: (LibraryDestination) -> Unit
+    onNavigateToDestination: (LibraryDestination) -> Unit,
+    homeHiddenSections: Set<String> = emptySet(),
+    onOpenCustomizeHome: () -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -9841,7 +9873,13 @@ private fun HomeScreen(
     val sportsRepo = remember { com.fortresstv.player.sports.SportsRepository.get(context) }
     val sportsFixtures by sportsRepo.fixtures.collectAsState()
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
-    val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty() || recentMovies.isNotEmpty() || featuredSeries.isNotEmpty() || sportsFixtures.isNotEmpty()
+    val hasContent = (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) ||
+        (com.fortresstv.player.ui.HomeSectionId.SPORTS !in homeHiddenSections && sportsFixtures.isNotEmpty()) ||
+        (com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS !in homeHiddenSections && favoriteChannels.isNotEmpty()) ||
+        (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) ||
+        (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) ||
+        (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) ||
+        (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty())
 
     BackHandler(enabled = isTv && isTvSearchActive) {
         isTvSearchActive = false
@@ -9894,47 +9932,51 @@ private fun HomeScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
-        // Top Search Bar
-        Surface(
-            onClick = {
-                if (isTv) {
-                    isTvSearchActive = true
-                    coroutineScope.launch {
-                        delay(50)
+        // Top Search Bar & Customize Home
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                onClick = {
+                    if (isTv) {
+                        isTvSearchActive = true
+                        coroutineScope.launch {
+                            delay(50)
+                            runCatching { searchTextFieldFocusRequester.requestFocus() }
+                            keyboardController?.show()
+                        }
+                    } else {
                         runCatching { searchTextFieldFocusRequester.requestFocus() }
-                        keyboardController?.show()
                     }
-                } else {
-                    runCatching { searchTextFieldFocusRequester.requestFocus() }
-                }
-            },
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(searchBarFocusRequester)
-                .then(
-                    if (!hasContent || isSearching) {
-                        Modifier.focusRequester(contentFocusRequester)
-                    } else Modifier
-                )
-                .focusProperties {
-                    if (sidebarFocusRequester != null) {
-                        left = sidebarFocusRequester
-                    }
-                }
-                .onPreviewKeyEvent { keyEvent ->
-                    if (isTv && !isTvSearchActive && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
-                        if (keyEvent.type == KeyEventType.KeyDown) {
-                            val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
-                            if (handled) return@onPreviewKeyEvent true
+                },
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(searchBarFocusRequester)
+                    .then(
+                        if (!hasContent || isSearching) {
+                            Modifier.focusRequester(contentFocusRequester)
+                        } else Modifier
+                    )
+                    .focusProperties {
+                        if (sidebarFocusRequester != null) {
+                            left = sidebarFocusRequester
                         }
                     }
-                    false
-                }
-                .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.02f else 1.0f)
-        ) {
+                    .onPreviewKeyEvent { keyEvent ->
+                        if (isTv && !isTvSearchActive && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
+                                if (handled) return@onPreviewKeyEvent true
+                            }
+                        }
+                        false
+                    }
+                    .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.02f else 1.0f)
+            ) {
             Row(
                 Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -10010,6 +10052,28 @@ private fun HomeScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     }
+                }
+            }
+        }
+
+            Spacer(Modifier.width(10.dp))
+
+            Surface(
+                onClick = onOpenCustomizeHome,
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .size(46.dp)
+                    .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.05f else 1.0f)
+            ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = strings.customizeHome,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
@@ -10168,7 +10232,7 @@ private fun HomeScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(22.dp)
                 ) {
-                    if (progressEntries.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) {
                         ContinueWatchingRow(
                             entries = progressEntries,
                             onClick = onContinueWatching,
@@ -10178,7 +10242,7 @@ private fun HomeScreen(
                         )
                     }
 
-                    if (sportsFixtures.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.SPORTS !in homeHiddenSections && sportsFixtures.isNotEmpty()) {
                         com.fortresstv.player.sports.SportsHubSection(
                             fixtures = sportsFixtures,
                             channels = channels,
@@ -10187,7 +10251,7 @@ private fun HomeScreen(
                         )
                     }
 
-                    if (favoriteChannels.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS !in homeHiddenSections && favoriteChannels.isNotEmpty()) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(22.dp))
@@ -10302,7 +10366,7 @@ private fun HomeScreen(
                         }
                     }
 
-                    if (recentChannelsList.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Replay, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -10367,7 +10431,7 @@ private fun HomeScreen(
                         }
                     }
 
-                    if (followedSeries.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -10415,7 +10479,7 @@ private fun HomeScreen(
                         }
                     }
 
-                    if (recentMovies.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Movie, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -10452,7 +10516,7 @@ private fun HomeScreen(
                         }
                     }
 
-                    if (featuredSeries.isNotEmpty()) {
+                    if (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty()) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -10485,7 +10549,23 @@ private fun HomeScreen(
                             }
                         }
                     }
-                    Spacer(Modifier.height(32.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Button(
+                            onClick = onOpenCustomizeHome,
+                            colors = ButtonDefaults.outlinedButtonColors(),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(strings.customizeHome, fontSize = 13.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
         }
@@ -15719,7 +15799,8 @@ private fun SettingsDialog(
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
     onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
     onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
-    onEpgLoadedDaysChanged: (Int) -> Unit
+    onEpgLoadedDaysChanged: (Int) -> Unit,
+    onOpenCustomizeHome: (() -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
@@ -15910,7 +15991,8 @@ private fun SettingsDialog(
                                     hasParentalPin = hasParentalPin,
                                     onParentalControlToggled = onParentalControlToggled,
                                     onChangeParentalPin = onChangeParentalPin,
-                                    onRemoveParentalPin = onRemoveParentalPin
+                                    onRemoveParentalPin = onRemoveParentalPin,
+                                    onOpenCustomizeHome = onOpenCustomizeHome
                                 )
                                 1 -> PlaylistsTab(
                                     playlists = playlists,
@@ -16037,7 +16119,8 @@ private fun SettingsDialog(
                                 hasParentalPin = hasParentalPin,
                                 onParentalControlToggled = onParentalControlToggled,
                                 onChangeParentalPin = onChangeParentalPin,
-                                onRemoveParentalPin = onRemoveParentalPin
+                                onRemoveParentalPin = onRemoveParentalPin,
+                                onOpenCustomizeHome = onOpenCustomizeHome
                             )
                             1 -> PlaylistsTab(
                                 playlists = playlists,
@@ -16141,6 +16224,56 @@ private fun SettingsGroup(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(content = content)
+        }
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    subtitle: String,
+    icon: ImageVector? = null,
+    onClick: () -> Unit
+) {
+    val isTv = LocalFormFactor.current.isTelevision
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent,
+        modifier = Modifier
+            .fillMaxWidth()
+            .tvFocusHighlight(
+                shape = RoundedCornerShape(8.dp),
+                scaleOnFocus = if (isTv) 1.02f else 1.0f
+            )
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (icon != null) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(16.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                if (subtitle.isNotBlank()) {
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }
@@ -16355,7 +16488,8 @@ private fun GeneralTab(
     onParentalControlToggled: (Boolean) -> Unit,
     onChangeParentalPin: () -> Unit,
     onRemoveParentalPin: () -> Unit,
-    subtitlesOnly: Boolean = false
+    subtitlesOnly: Boolean = false,
+    onOpenCustomizeHome: (() -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
     Column(
@@ -16413,6 +16547,13 @@ private fun GeneralTab(
                     StartupDestination.LIVE_TV.persistedValue to strings.homeStartupScreenLiveTv
                 ),
                 onValueSelected = { onStartupDestinationChanged(StartupDestination.fromPersisted(it)) }
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            SettingsActionRow(
+                title = strings.customizeHome,
+                subtitle = strings.customizeHomeDescription,
+                icon = Icons.Default.Tune,
+                onClick = { onOpenCustomizeHome?.invoke() }
             )
         }
 
