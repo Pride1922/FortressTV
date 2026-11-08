@@ -9838,8 +9838,10 @@ private fun HomeScreen(
         }
     }
 
+    val sportsRepo = remember { com.fortresstv.player.sports.SportsRepository.get(context) }
+    val sportsFixtures by sportsRepo.fixtures.collectAsState()
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
-    val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty() || recentMovies.isNotEmpty() || featuredSeries.isNotEmpty()
+    val hasContent = progressEntries.isNotEmpty() || favoriteChannels.isNotEmpty() || recentChannelsList.isNotEmpty() || followedSeries.isNotEmpty() || recentMovies.isNotEmpty() || featuredSeries.isNotEmpty() || sportsFixtures.isNotEmpty()
 
     BackHandler(enabled = isTv && isTvSearchActive) {
         isTvSearchActive = false
@@ -10173,6 +10175,15 @@ private fun HomeScreen(
                             onRemove = onRemoveContinueWatching,
                             firstItemFocusRequester = contentFocusRequester,
                             sidebarFocusRequester = sidebarFocusRequester
+                        )
+                    }
+
+                    if (sportsFixtures.isNotEmpty()) {
+                        com.fortresstv.player.sports.SportsHubSection(
+                            fixtures = sportsFixtures,
+                            channels = channels,
+                            epgGuide = epgGuide,
+                            onWatchChannel = onWatchChannel
                         )
                     }
 

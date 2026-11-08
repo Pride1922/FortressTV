@@ -395,6 +395,10 @@ class CloudLibrarySyncService internal constructor(
         if (aggregates.isNotEmpty()) {
             com.fortresstv.player.telemetry.ChannelHealthRepository.get(context).setAggregateSnapshots(aggregates)
         }
+        val fixtures = syncApi.fetchSportsFixtures(accessToken)
+        if (fixtures.isNotEmpty()) {
+            com.fortresstv.player.sports.SportsRepository.get(context).setFixtures(fixtures)
+        }
     }
 
     suspend fun flushTelemetry(): Unit = withContext(Dispatchers.IO) {

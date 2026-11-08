@@ -194,6 +194,13 @@ interface Strings {
     val playbackError: String
     val failoverBackupSwitched: String
     fun failoverSourceSwitched(sourceName: String): String
+    val sportsHub: String
+    val upcomingMatches: String
+    val watchLive: String
+    val liveNow: String
+    fun broadcastOn(channel: String): String
+    val channelNotDetected: String
+    fun kickoffAt(time: String): String
     val buildingPlaybackBuffer: String
     val reconnecting: String
     val resumePlayback: String
@@ -647,6 +654,13 @@ object EnglishStrings : Strings {
     override val playbackError = "Unable to play this channel."
     override val failoverBackupSwitched = "Switched to backup stream."
     override fun failoverSourceSwitched(sourceName: String) = "Switched to backup source: $sourceName"
+    override val sportsHub = "Sports Hub"
+    override val upcomingMatches = "Upcoming Matches"
+    override val watchLive = "Watch Live"
+    override val liveNow = "Live Now"
+    override fun broadcastOn(channel: String) = "Live on $channel"
+    override val channelNotDetected = "Channel not found"
+    override fun kickoffAt(time: String) = "Kickoff at $time"
     override val buildingPlaybackBuffer = "Preparing playback…"
     override val reconnecting = "Reconnecting…"
     override val resumePlayback = "Continue watching?"
@@ -1103,6 +1117,13 @@ object PortugueseStrings : Strings {
     override val playbackError = "Não foi possível reproduzir este canal."
     override val failoverBackupSwitched = "Comutado para emissão alternativa."
     override fun failoverSourceSwitched(sourceName: String) = "Comutado para fonte alternativa: $sourceName"
+    override val sportsHub = "Desporto"
+    override val upcomingMatches = "Próximos Jogos"
+    override val watchLive = "Ver em Direto"
+    override val liveNow = "Em Direto"
+    override fun broadcastOn(channel: String) = "Em direto na $channel"
+    override val channelNotDetected = "Canal não detetado"
+    override fun kickoffAt(time: String) = "Início às $time"
     override val buildingPlaybackBuffer = "A preparar a reprodução…"
     override val reconnecting = "A restabelecer ligação…"
     override val resumePlayback = "Continuar a ver?"

@@ -453,4 +453,25 @@ internal class SupabaseSyncApi(
             result
         }.getOrDefault(emptyMap())
     }
+
+    fun fetchSportsFixtures(
+        accessToken: String? = null
+    ): List<com.fortresstv.player.sports.SportsFixture> {
+        return runCatching {
+            val text = transport.request(
+                "GET",
+                "/rest/v1/sports_fixtures?select=*&status=neq.finished&order=kickoff_utc.asc&limit=50",
+                null,
+                accessToken,
+                null
+            )
+            val arr = JSONArray(text)
+            val list = mutableListOf<com.fortresstv.player.sports.SportsFixture>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                list.add(com.fortresstv.player.sports.SportsFixture.fromJson(obj))
+            }
+            list
+        }.getOrDefault(emptyList())
+    }
 }
