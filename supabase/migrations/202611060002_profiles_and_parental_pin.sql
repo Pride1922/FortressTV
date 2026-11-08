@@ -284,6 +284,8 @@ end;
 $$;
 grant execute on function public.fortress_remove_parental_pin(text, uuid) to authenticated;
 
+drop function if exists public.fortress_create_profile;
+
 -- RPC 5: Create profile with server-enforced child restrictions and adult authorization.
 create or replace function public.fortress_create_profile(
     p_name text,
@@ -328,6 +330,8 @@ begin
 end;
 $$;
 grant execute on function public.fortress_create_profile(text, text, text, boolean, int, boolean, uuid, text) to authenticated;
+
+drop function if exists public.fortress_update_profile;
 
 -- RPC 6: Update profile with server-enforced child restrictions and adult authorization.
 create or replace function public.fortress_update_profile(
