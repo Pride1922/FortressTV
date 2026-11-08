@@ -109,7 +109,7 @@ class ProfileRepositoryTest {
             if (path.contains("fortress_create_profile")) {
                 return "\"fake-profile-uuid\""
             }
-            if (path.contains("fortress_update_profile") || path.contains("fortress_delete_profile")) {
+            if (path.contains("fortress_update_profile") || path.contains("fortress_delete_profile") || path.contains("fortress_set_profile_hide_adult_content")) {
                 return "true"
             }
             if (path.contains("household_profiles")) {
@@ -1036,5 +1036,47 @@ class ProfileRepositoryTest {
         val repo2 = ProfileRepository(persistence2, accountRepo, pinStore, api)
         assertEquals(2, repo2.profiles.value.size)
         assertEquals("Sofia", repo2.profiles.value[1].name)
+    }
+
+    @Test
+    fun hideAdultContentCannotBeTurnedOffForChildProfile() = runBlocking {
+        val persistence = MemoryProfilePersistence()
+        val pinStore = ParentalPinStore(MemoryPinPersistence())
+        val accountRepo = AccountRepository(MemorySessionPersistence())
+        val repo = ProfileRepository(persistence, accountRepo, pinStore)
+
+        val child = HouseholdProfile(
+            name = "Kiddo",
+            kind = ProfileKind.CHILD,
+            hideAdultContent = true,
+            maximumAge = 10
+        )
+        repo.saveProfile(child)
+
+        val result = repo.setProfileHideAdultContent(child.id, false)
+        assertFalse(result)
+        val storedChild = repo.profiles.value.find { it.id == child.id }!!
+        assertTrue(storedChild.hideAdultContent)
+    }
+
+    @Test
+    fun hideAdultContentCanBeToggledForAdultProfile() = runBlocking {
+        val persistence = MemoryProfilePersistence()
+        val pinStore = ParentalPinStore(MemoryPinPersistence())
+        val accountRepo = AccountRepository(MemorySessionPersistence())
+        val repo = ProfileRepository(persistence, accountRepo, pinStore)
+
+        val adult = repo.activeProfile.value
+        assertFalse(adult.hideAdultContent)
+
+        // Toggling on succeeds
+        val resultOn = repo.setProfileHideAdultContent(adult.id, true)
+        assertTrue(resultOn)
+        assertTrue(repo.activeProfile.value.hideAdultContent)
+
+        // Toggling off succeeds
+        val resultOff = repo.setProfileHideAdultContent(adult.id, false)
+        assertTrue(resultOff)
+        assertFalse(repo.activeProfile.value.hideAdultContent)
     }
 }

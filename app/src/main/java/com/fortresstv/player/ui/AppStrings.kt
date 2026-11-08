@@ -398,6 +398,7 @@ interface Strings {
     val later: String
     val hideAdultContent: String
     val hideAdultContentSubtitle: String
+    val hideAdultContentChildRestricted: String
     val newUpdateAvailable: String
     fun updateFailed(error: String): String
 
@@ -838,6 +839,7 @@ object EnglishStrings : Strings {
     override val later = "Later"
     override val hideAdultContent = "Hide Adult Content"
     override val hideAdultContentSubtitle = "Filter out adult (XXX / 18+) channels, movies, and series"
+    override val hideAdultContentChildRestricted = "Adult content is permanently blocked on child profiles"
     override val newUpdateAvailable = "New Update Available"
     override fun updateFailed(error: String) = "Update failed: $error"
 
@@ -1279,6 +1281,7 @@ object PortugueseStrings : Strings {
     override val later = "Mais Tarde"
     override val hideAdultContent = "Ocultar Conteúdo para Adultos"
     override val hideAdultContentSubtitle = "Filtrar canais, filmes e séries para adultos (XXX / 18+)"
+    override val hideAdultContentChildRestricted = "O conteúdo para adultos está permanentemente bloqueado em perfis infantis"
     override val newUpdateAvailable = "Nova Atualização Disponível"
     override fun updateFailed(error: String) = "Falha na atualização: $error"
 

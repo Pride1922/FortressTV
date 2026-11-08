@@ -607,7 +607,7 @@ class ProfileRepository internal constructor(
         }
     }
 
-    suspend fun saveProfile(profile: HouseholdProfile): HouseholdProfile = withContext(Dispatchers.IO) {
+    suspend fun saveProfile(profile: HouseholdProfile, explicitUnlockToken: String? = null): HouseholdProfile = withContext(Dispatchers.IO) {
         mutex.withLock {
             val token = accountRepository.getValidAccessToken()
             if (token != null && persistence.loadPendingAdultRevocation()) {
@@ -615,7 +615,7 @@ class ProfileRepository internal constructor(
                     throw IllegalStateException("Required adult revocation cleanup unconfirmed")
                 }
             }
-            val unlockToken = pinStore.currentUnlockToken()
+            val unlockToken = explicitUnlockToken ?: pinStore.currentUnlockToken()
             val existing = _profiles.value.find { it.id == profile.id }
             val sameNameExisting = _profiles.value.find {
                 it.id != profile.id && it.name.trim().equals(profile.name.trim(), ignoreCase = true)
@@ -682,6 +682,47 @@ class ProfileRepository internal constructor(
                 persistence.saveActiveProfileId(savedProfile.id)
             }
             savedProfile
+        }
+    }
+
+    suspend fun setProfileHideAdultContent(
+        profileId: String,
+        hideAdultContent: Boolean,
+        explicitUnlockToken: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val target = _profiles.value.find { it.id == profileId } ?: return@withLock false
+            if (target.isChild && !hideAdultContent) {
+                return@withLock false
+            }
+            val unlockToken = explicitUnlockToken ?: pinStore.currentUnlockToken()
+            val token = accountRepository.getValidAccessToken()
+            val updated = target.copy(hideAdultContent = hideAdultContent)
+
+            if (token != null && isUuid(target.id)) {
+                val remoteSuccess = runCatching {
+                    api.setProfileHideAdultContent(profileId, hideAdultContent, unlockToken, token)
+                }.getOrDefault(false)
+
+                if (!remoteSuccess) {
+                    runCatching {
+                        api.updateProfile(updated, unlockToken, token)
+                    }
+                }
+            }
+
+            val updatedList = _profiles.value.toMutableList().apply {
+                val index = indexOfFirst { it.id == profileId }
+                if (index >= 0) set(index, updated)
+            }
+            _profiles.value = updatedList
+            saveProfilesLocally(updatedList)
+
+            if (_activeProfile.value.id == profileId) {
+                _activeProfile.value = updated
+                persistence.saveActiveProfileId(updated.id)
+            }
+            true
         }
     }
 

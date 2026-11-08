@@ -355,9 +355,9 @@ internal fun ProfileManagementDialog(
         ProfileEditDialog(
             profile = editingProfile,
             existingProfiles = profiles,
-            onSave = { saved ->
+            onSave = { saved, unlockToken ->
                 scope.launch {
-                    runCatching { repository.saveProfile(saved) }
+                    runCatching { repository.saveProfile(saved, unlockToken) }
                     editingProfile = null
                     isCreatingNew = false
                 }
@@ -509,9 +509,10 @@ internal fun ProfileManagementDialog(
 internal fun ProfileEditDialog(
     profile: HouseholdProfile?,
     existingProfiles: List<HouseholdProfile> = emptyList(),
-    onSave: (HouseholdProfile) -> Unit,
+    onSave: (HouseholdProfile, String?) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val repository = ProfileRepository.get(androidx.compose.ui.platform.LocalContext.current)
     val languageTag = LocalAppStrings.current.languageTag
     val copy = remember(languageTag) {
         ProfileStrings(languageTag.startsWith("pt"))
@@ -527,6 +528,8 @@ internal fun ProfileEditDialog(
     var blockUnrated by remember { mutableStateOf(profile?.blockUnrated ?: true) }
     var hideAdultContent by remember { mutableStateOf(profile?.hideAdultContent ?: (kind == ProfileKind.CHILD)) }
     var isSaving by remember { mutableStateOf(false) }
+    var showPinDialogForAdultToggle by remember { mutableStateOf(false) }
+    var explicitUnlockToken by remember { mutableStateOf<String?>(null) }
 
     val trimmedName = name.trim()
     val isDuplicateName = remember(trimmedName, profile, existingProfiles) {
@@ -536,6 +539,20 @@ internal fun ProfileEditDialog(
     }
 
     val ageOptions = listOf(6, 10, 12, 14, 16, 18)
+
+    if (showPinDialogForAdultToggle) {
+        ParentalPinDialog(
+            mode = HouseholdPinDialogMode.VERIFY,
+            onSuccess = { unlockToken ->
+                explicitUnlockToken = unlockToken
+                hideAdultContent = false
+                showPinDialogForAdultToggle = false
+            },
+            onDismiss = {
+                showPinDialogForAdultToggle = false
+            }
+        )
+    }
 
     Dialog(onDismissRequest = { if (!isSaving) onDismiss() }) {
         Card(
@@ -655,7 +672,18 @@ internal fun ProfileEditDialog(
                         Text(copy.hideAdultContent, fontSize = 14.sp)
                         Switch(
                             checked = hideAdultContent,
-                            onCheckedChange = { hideAdultContent = it },
+                            onCheckedChange = { checked ->
+                                if (checked) {
+                                    hideAdultContent = true
+                                } else {
+                                    val status = repository.getPinStatus()
+                                    if (status.hasPin && !repository.isAdultUnlocked() && explicitUnlockToken == null) {
+                                        showPinDialogForAdultToggle = true
+                                    } else {
+                                        hideAdultContent = false
+                                    }
+                                }
+                            },
                             modifier = Modifier.tvFocusHighlight()
                         )
                     }
@@ -689,7 +717,7 @@ internal fun ProfileEditDialog(
                                 maximumAge = if (kind == ProfileKind.CHILD) maximumAge else null,
                                 blockUnrated = if (kind == ProfileKind.CHILD) true else blockUnrated
                             )
-                            onSave(result)
+                            onSave(result, explicitUnlockToken)
                         },
                         modifier = Modifier.tvFocusHighlight()
                     ) {

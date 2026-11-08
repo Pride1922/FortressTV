@@ -430,6 +430,42 @@ end;
 $$;
 grant execute on function public.fortress_update_profile(uuid, text, text, text, boolean, int, boolean, uuid) to authenticated;
 
+create or replace function public.fortress_set_profile_hide_adult_content(
+    p_profile_id uuid,
+    p_hide_adult_content boolean,
+    p_unlock_token uuid default null
+)
+returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+    v_uid uuid := auth.uid();
+    v_kind text;
+begin
+    if v_uid is null then raise exception 'Not authenticated'; end if;
+
+    select kind into v_kind from public.household_profiles
+    where id = p_profile_id and household_id = v_uid;
+    if not found then raise exception 'Profile not found'; end if;
+
+    if v_kind = 'child' and not p_hide_adult_content then
+        raise exception 'Child profiles must hide adult content';
+    end if;
+
+    if not p_hide_adult_content then
+        if not public.fortress_is_adult_authorized(v_uid, p_unlock_token) then
+            raise exception 'Adult authorization required to disable adult content filtering';
+        end if;
+    end if;
+
+    update public.household_profiles set
+        hide_adult_content = p_hide_adult_content,
+        updated_at = clock_timestamp()
+    where id = p_profile_id and household_id = v_uid;
+
+    return true;
+end;
+$$;
+grant execute on function public.fortress_set_profile_hide_adult_content(uuid, boolean, uuid) to authenticated;
+
 create or replace function public.fortress_delete_profile(
     p_profile_id uuid,
     p_unlock_token uuid default null

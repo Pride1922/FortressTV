@@ -88,7 +88,7 @@ class VodProgressStore internal constructor(
     }
 
     fun setAll(entries: List<VodProgressEntry>): List<VodProgressEntry> {
-        val limited = entries.sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
+        val limited = entries.distinctBy(VodProgressEntry::key).sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
         preferences.edit().putString(KEY_ENTRIES, encode(limited)).apply()
         return limited
     }
@@ -140,7 +140,7 @@ class VodProgressStore internal constructor(
                     durationMs = item.optLong("durationMs").coerceAtLeast(0),
                     updatedAtMs = item.optLong("updatedAtMs")
                 )
-            }.sortedByDescending(VodProgressEntry::updatedAtMs)
+            }.distinctBy(VodProgressEntry::key).sortedByDescending(VodProgressEntry::updatedAtMs)
         }.getOrDefault(emptyList())
     }
 }

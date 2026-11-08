@@ -188,12 +188,15 @@ begin
     insert into public.households (id) values (v_uid) on conflict (id) do nothing;
 
     insert into public.household_profiles (
-        household_id, name, is_adult, content_rating_limit, avatar_url, language
+        household_id, name, kind, language,
+        hide_adult_content, maximum_age, block_unrated, avatar_url
     ) values (
-        v_uid, btrim(p_name), not v_is_child,
-        case when v_is_child then coalesce(p_maximum_age, 12)::text else null end,
-        p_avatar_url,
-        v_lang
+        v_uid, btrim(p_name), p_kind, v_lang,
+        case when v_is_child then true else coalesce(p_hide_adult_content, false) end,
+        case when v_is_child then coalesce(p_maximum_age, 12) else null end,
+        case when v_is_child then true else coalesce(p_block_unrated, false) end,
+        p_avatar_url
+
     ) returning id into v_id;
 
     return v_id;

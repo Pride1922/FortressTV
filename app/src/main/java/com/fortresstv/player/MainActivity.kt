@@ -1094,14 +1094,27 @@ private fun FortressTVApp(
 
     val handleHideAdultContentChanged: (Boolean) -> Unit = { enabled ->
         if (!activeHouseholdProfile.isChild) {
-            hideAdultContent = enabled
-            scope.launch(Dispatchers.IO) { settings.setHideAdultContent(enabled) }
-            if (activeHouseholdProfile.isAdult && activeHouseholdProfile.hideAdultContent != enabled) {
-                val updated = activeHouseholdProfile.copy(hideAdultContent = enabled)
-                scope.launch(Dispatchers.IO) {
-                    runCatching {
-                        profileRepository.saveProfile(updated)
+            if (!enabled) {
+                requestAdultAction { unlockToken ->
+                    hideAdultContent = false
+                    scope.launch(Dispatchers.IO) {
+                        settings.setHideAdultContent(false)
+                        profileRepository.setProfileHideAdultContent(
+                            activeHouseholdProfile.id,
+                            false,
+                            unlockToken
+                        )
                     }
+                }
+            } else {
+                hideAdultContent = true
+                scope.launch(Dispatchers.IO) {
+                    settings.setHideAdultContent(true)
+                    profileRepository.setProfileHideAdultContent(
+                        activeHouseholdProfile.id,
+                        true,
+                        null
+                    )
                 }
             }
         }
@@ -2161,6 +2174,7 @@ private fun FortressTVApp(
                     }
                 },
                 hideAdultContent = hideAdultContent,
+                isChildProfile = activeHouseholdProfile.isChild,
                 onHideAdultContentChanged = handleHideAdultContentChanged,
                 parentalControlEnabled = parentalControlEnabled,
                 hasParentalPin = parentalPin != null,
@@ -2618,10 +2632,13 @@ private fun FortressTVApp(
                             hideAdultContent = false
                             scope.launch(Dispatchers.IO) { settings.setHideAdultContent(false) }
                             if (activeHouseholdProfile.isAdult && activeHouseholdProfile.hideAdultContent) {
-                                val updated = activeHouseholdProfile.copy(hideAdultContent = false)
                                 scope.launch(Dispatchers.IO) {
                                     runCatching {
-                                        profileRepository.saveProfile(updated)
+                                        profileRepository.setProfileHideAdultContent(
+                                            activeHouseholdProfile.id,
+                                            false,
+                                            profileRepository.currentUnlockToken()
+                                        )
                                     }
                                 }
                             }
@@ -5125,11 +5142,12 @@ private fun ContinueWatchingRow(
     firstItemFocusRequester: FocusRequester? = null,
     sidebarFocusRequester: FocusRequester? = null
 ) {
-    if (entries.isEmpty()) return
+    val distinctEntries = remember(entries) { entries.distinctBy { it.key } }
+    if (distinctEntries.isEmpty()) return
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
-    val featured = entries.first()
-    val remaining = entries.drop(1)
+    val featured = distinctEntries.first()
+    val remaining = distinctEntries.drop(1)
 
     Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         Text(
@@ -5257,7 +5275,7 @@ private fun ContinueWatchingRow(
         if (remaining.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                itemsIndexed(remaining.take(15), key = { _, it -> "continue:${it.key}" }) { index, entry ->
+                itemsIndexed(remaining.take(15), key = { index, it -> "continue:${it.key}_$index" }) { index, entry ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -10014,7 +10032,7 @@ private fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val favRowState = rememberLazyListState()
                             LazyRow(state = favRowState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                itemsIndexed(favoriteChannels, key = { _, it -> "fav_now:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
+                                itemsIndexed(favoriteChannels, key = { index, it -> "fav_now:${it.sourceId}:${it.sourceItemId}_$index" }) { index, channel ->
                                     val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
                                     val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId) {
                                         epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)
@@ -10123,7 +10141,7 @@ private fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val recentRowState = rememberLazyListState()
                             LazyRow(state = recentRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(recentChannelsList, key = { _, it -> "recent:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
+                                itemsIndexed(recentChannelsList, key = { index, it -> "recent:${it.sourceId}:${it.sourceItemId}_$index" }) { index, channel ->
                                     Surface(
                                         onClick = { onWatchChannel(channel) },
                                         shape = RoundedCornerShape(12.dp),
@@ -10188,7 +10206,7 @@ private fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val followedRowState = rememberLazyListState()
                             LazyRow(state = followedRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(followedSeries, key = { _, it -> "home_series:${it.catalog.sourceId}:${it.series.id}" }) { index, entry ->
+                                itemsIndexed(followedSeries, key = { index, it -> "home_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
@@ -10242,7 +10260,7 @@ private fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val moviesRowState = rememberLazyListState()
                             LazyRow(state = moviesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(recentMovies, key = { _, it -> "home_movie:${it.catalog.sourceId}:${it.movie.id}" }) { index, entry ->
+                                itemsIndexed(recentMovies, key = { index, it -> "home_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
                                     VodPosterCard(
                                         title = entry.movie.name,
@@ -10279,7 +10297,7 @@ private fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val seriesRowState = rememberLazyListState()
                             LazyRow(state = seriesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(featuredSeries, key = { _, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}" }) { index, entry ->
+                                itemsIndexed(featuredSeries, key = { index, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
@@ -15253,6 +15271,7 @@ private fun SettingsDialog(
     openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     onOpenSubtitlesSettingsChanged: (OpenSubtitlesSettings) -> Unit = {},
     hideAdultContent: Boolean,
+    isChildProfile: Boolean = false,
     onHideAdultContentChanged: (Boolean) -> Unit,
     parentalControlEnabled: Boolean,
     hasParentalPin: Boolean,
@@ -15473,6 +15492,7 @@ private fun SettingsDialog(
                                     preferredAudioLanguage = preferredAudioLanguage,
                                     onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                                     hideAdultContent = hideAdultContent,
+                                    isChildProfile = isChildProfile,
                                     onHideAdultContentChanged = onHideAdultContentChanged,
                                     parentalControlEnabled = parentalControlEnabled,
                                     hasParentalPin = hasParentalPin,
@@ -15537,6 +15557,7 @@ private fun SettingsDialog(
                                     openSubtitlesSettings = openSubtitlesSettings,
                                     onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
                                     hideAdultContent = hideAdultContent,
+                                    isChildProfile = isChildProfile,
                                     onHideAdultContentChanged = onHideAdultContentChanged,
                                     parentalControlEnabled = parentalControlEnabled,
                                     hasParentalPin = hasParentalPin,
@@ -15596,6 +15617,7 @@ private fun SettingsDialog(
                                 preferredAudioLanguage = preferredAudioLanguage,
                                 onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                                 hideAdultContent = hideAdultContent,
+                                isChildProfile = isChildProfile,
                                 onHideAdultContentChanged = onHideAdultContentChanged,
                                 parentalControlEnabled = parentalControlEnabled,
                                 hasParentalPin = hasParentalPin,
@@ -15660,6 +15682,7 @@ private fun SettingsDialog(
                                 openSubtitlesSettings = openSubtitlesSettings,
                                 onOpenSubtitlesSettingsChanged = onOpenSubtitlesSettingsChanged,
                                 hideAdultContent = hideAdultContent,
+                                isChildProfile = isChildProfile,
                                 onHideAdultContentChanged = onHideAdultContentChanged,
                                 parentalControlEnabled = parentalControlEnabled,
                                 hasParentalPin = hasParentalPin,
@@ -15714,18 +15737,20 @@ private fun SettingsToggleRow(
     subtitle: String,
     icon: ImageVector? = null,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val isTv = LocalFormFactor.current.isTelevision
     Surface(
-        onClick = { onCheckedChange(!checked) },
+        onClick = { if (enabled) onCheckedChange(!checked) },
+        enabled = enabled,
         shape = RoundedCornerShape(8.dp),
         color = Color.Transparent,
         modifier = Modifier
             .fillMaxWidth()
             .tvFocusHighlight(
                 shape = RoundedCornerShape(8.dp),
-                scaleOnFocus = if (isTv) 1.02f else 1.0f
+                scaleOnFocus = if (isTv && enabled) 1.02f else 1.0f
             )
     ) {
         Row(
@@ -15738,17 +15763,24 @@ private fun SettingsToggleRow(
                 Icon(
                     icon,
                     contentDescription = null,
-                    tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (!enabled) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                           else if (checked) MaterialTheme.colorScheme.primary
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(10.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(
+                    title,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                )
                 if (subtitle.isNotBlank()) {
                     Text(
                         subtitle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
                         fontSize = 11.sp,
                         lineHeight = 14.sp
                     )
@@ -15758,6 +15790,7 @@ private fun SettingsToggleRow(
             Switch(
                 checked = checked,
                 onCheckedChange = null,
+                enabled = enabled,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
                     checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -15774,7 +15807,7 @@ private fun SettingsToggleRow(
                 ),
                 modifier = Modifier
                     .scale(0.8f)
-                    .focusable(!isTv)
+                    .focusable(!isTv && enabled)
             )
         }
     }
@@ -15899,6 +15932,7 @@ private fun GeneralTab(
     openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     onOpenSubtitlesSettingsChanged: (OpenSubtitlesSettings) -> Unit = {},
     hideAdultContent: Boolean,
+    isChildProfile: Boolean = false,
     onHideAdultContentChanged: (Boolean) -> Unit,
     parentalControlEnabled: Boolean,
     hasParentalPin: Boolean,
@@ -16237,9 +16271,10 @@ private fun GeneralTab(
         if (!subtitlesOnly) SettingsGroup(title = strings.categories) {
             SettingsToggleRow(
                 title = strings.hideAdultContent,
-                subtitle = strings.hideAdultContentSubtitle,
+                subtitle = if (isChildProfile) strings.hideAdultContentChildRestricted else strings.hideAdultContentSubtitle,
                 icon = Icons.Default.VisibilityOff,
-                checked = hideAdultContent,
+                checked = if (isChildProfile) true else hideAdultContent,
+                enabled = !isChildProfile,
                 onCheckedChange = onHideAdultContentChanged
             )
         }

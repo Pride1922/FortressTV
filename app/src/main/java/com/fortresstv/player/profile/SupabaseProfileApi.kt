@@ -193,6 +193,21 @@ internal class SupabaseProfileApi(
         return text.trim() == "true"
     }
 
+    fun setProfileHideAdultContent(
+        profileId: String,
+        hideAdultContent: Boolean,
+        unlockToken: String?,
+        accessToken: String
+    ): Boolean {
+        val body = JSONObject().apply {
+            put("p_profile_id", profileId)
+            put("p_hide_adult_content", hideAdultContent)
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_set_profile_hide_adult_content", body, accessToken, null)
+        return text.trim() == "true"
+    }
+
     fun deleteProfile(
         profileId: String,
         unlockToken: String?,
