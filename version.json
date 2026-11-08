@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC10",
-    "versionCode":  44,
-    "notes":  "FortressTV 2.0.0-RC10:\n- Isolated watch history and Continue Watching row per active household profile\n- Added VOD and catch-up timeshift watch progress persistence with canonical item identity\n- Channel-level catchup capability detection (tv_archive / catchup tags) to prevent source errors on channels without archive support\n- Immediate progress saving on player pause, stop, and dismiss\n- Full Portuguese (pt-PT) and English parity",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC10/fortresstv.apk",
-    "sha256":  "61C930BA04B533832EEC5090FDB2B5E6CE4F590A49232108B77B1734567538E0"
+    "version":  "2.0.0-RC11",
+    "versionCode":  45,
+    "notes":  "FortressTV 2.0.0-RC11\n\n- Added Connection Health Telemetry Pipeline and Supabase sync.\n- Added live connection health badges and detailed diagnostics dialog.\n- Added connection health dots to channel list and Quick Zap drawer.\n- Fixed stall detection to exclude initial startup buffering.\n- Supported JWT household claim in telemetry RLS policies.\n- Full pt-PT and English language parity.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC11/fortresstv.apk",
+    "sha256":  "AC703E6E9B4575906C41C921F7DF218F80893529406EEF67E7A50ED5D4F57981"
 }
