@@ -320,6 +320,14 @@ interface Strings {
     val autoPictureInPictureDesc: String
     val anonymousTelemetry: String
     val anonymousTelemetryDesc: String
+    val healthStable: String
+    val healthFair: String
+    val healthUnstable: String
+    val healthTesting: String
+    val connectionHealth: String
+    val startupLatency: String
+    val bufferStalls: String
+    val testRegion: String
     val addNewPlaylist: String
     val addPlaylist: String
     val playlistName: String
@@ -763,6 +771,14 @@ object EnglishStrings : Strings {
     override val autoPictureInPictureDesc = "Keep fullscreen video in a floating window when you press Home."
     override val anonymousTelemetry = "Anonymous playback quality data"
     override val anonymousTelemetryDesc = "Helps diagnose stream connection issues and tune playback stability."
+    override val healthStable = "Stable"
+    override val healthFair = "Fair"
+    override val healthUnstable = "Unstable"
+    override val healthTesting = "Testing..."
+    override val connectionHealth = "Connection Quality"
+    override val startupLatency = "Startup latency"
+    override val bufferStalls = "Buffer stalls"
+    override val testRegion = "Region"
     override val addNewPlaylist = "Add New Playlist"
     override val addPlaylist = "Add Playlist"
     override val playlistName = "Playlist Name"
@@ -1209,6 +1225,14 @@ object PortugueseStrings : Strings {
     override val autoPictureInPictureDesc = "Manter o vídeo em ecrã inteiro numa janela flutuante ao premir o botão Início."
     override val anonymousTelemetry = "Dados anónimos de qualidade de reprodução"
     override val anonymousTelemetryDesc = "Ajuda a diagnosticar problemas de ligação e a ajustar a estabilidade de transmissão."
+    override val healthStable = "Estável"
+    override val healthFair = "Moderada"
+    override val healthUnstable = "Instável"
+    override val healthTesting = "A testar..."
+    override val connectionHealth = "Qualidade da ligação"
+    override val startupLatency = "Tempo de arranque"
+    override val bufferStalls = "Interrupções"
+    override val testRegion = "Região"
     override val addNewPlaylist = "Adicionar Nova Lista"
     override val addPlaylist = "Adicionar Lista"
     override val playlistName = "Nome da Lista"

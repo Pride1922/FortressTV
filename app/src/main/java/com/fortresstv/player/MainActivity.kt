@@ -7744,6 +7744,7 @@ private fun VodPlayerDialog(
         com.fortresstv.player.telemetry.StreamKindWire.VOD
     }
     val telemetryChannelId = if (request.kind == VodProgressKind.CATCHUP) request.itemId else ""
+    val channelHealthRepo = remember { com.fortresstv.player.telemetry.ChannelHealthRepository.get(context.applicationContext) }
     val tracker = remember(request.key, player) {
         com.fortresstv.player.telemetry.PlaybackHealthTracker(
             householdId = currentHouseholdId,
@@ -7751,7 +7752,18 @@ private fun VodPlayerDialog(
             channelId = telemetryChannelId,
             streamKind = streamKind,
             providerId = request.sourceId,
+            onActiveMetricsUpdated = { startMs, stalls, stallMs, errCode, reg ->
+                channelHealthRepo.recordActiveMetrics(
+                    channelId = telemetryChannelId,
+                    startupMs = startMs,
+                    stallCount = stalls,
+                    totalStallMs = stallMs,
+                    errorCode = errCode,
+                    region = reg
+                )
+            },
             onFinalized = { summary ->
+                channelHealthRepo.recordSummary(summary)
                 telemetryStore.enqueue(summary)
             }
         )
@@ -9198,6 +9210,7 @@ private fun PlayerControlsDrawer(
     onUserTrackSelected: () -> Unit = {},
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
     val isCompact = LocalConfiguration.current.screenWidthDp < 600
@@ -11983,6 +11996,7 @@ private fun GuideChannelRow(
     manualXmltvId: String? = null,
     selected: Boolean,
     isFavorite: Boolean = false,
+    healthSnapshot: com.fortresstv.player.telemetry.ChannelHealthSnapshot? = null,
     modifier: Modifier = Modifier,
     sidebarFocusRequester: FocusRequester? = null,
     fallbackFocusRequester: FocusRequester? = null,
@@ -11990,6 +12004,10 @@ private fun GuideChannelRow(
     onToggleFavorite: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val healthSnapshots by remember { com.fortresstv.player.telemetry.ChannelHealthRepository.get(context.applicationContext).snapshots }.collectAsState()
+    val channelKey = remember(channel) { channel.tvgId?.takeIf { it.isNotBlank() } ?: channel.name }
+    val effectiveHealth = healthSnapshot ?: healthSnapshots[channelKey]
     val strings = LocalAppStrings.current
     val presentation = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId, strings) {
         val current = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)?.current
@@ -12023,6 +12041,7 @@ private fun GuideChannelRow(
         progress = presentation.progress,
         selected = selected,
         isFavorite = isFavorite,
+        healthSnapshot = effectiveHealth,
         modifier = modifier,
         sidebarFocusRequester = sidebarFocusRequester,
         fallbackFocusRequester = fallbackFocusRequester,
@@ -12047,6 +12066,7 @@ private fun ChannelRow(
     progress: Float? = null,
     selected: Boolean,
     isFavorite: Boolean = false,
+    healthSnapshot: com.fortresstv.player.telemetry.ChannelHealthSnapshot? = null,
     modifier: Modifier = Modifier,
     sidebarFocusRequester: FocusRequester? = null,
     fallbackFocusRequester: FocusRequester? = null,
@@ -12125,14 +12145,22 @@ private fun ChannelRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        channel.name,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f, fill = false)
-                    )
+                    ) {
+                        if (healthSnapshot != null) {
+                            com.fortresstv.player.telemetry.ConnectionHealthDot(snapshot = healthSnapshot)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            channel.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     if (timeRange != null) {
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -12260,9 +12288,13 @@ private fun PlayerPanel(
         }
     }
     val telemetryStore = remember { com.fortresstv.player.telemetry.TelemetryStore.get(context.applicationContext) }
+    val channelHealthRepo = remember { com.fortresstv.player.telemetry.ChannelHealthRepository.get(context.applicationContext) }
+    val healthSnapshots by channelHealthRepo.snapshots.collectAsState()
+    var showHealthDialog by remember { mutableStateOf(false) }
     val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
     val liveChannelId = remember(channel) { channel.tvgId?.takeIf { it.isNotBlank() } ?: channel.name }
+    val currentHealth = healthSnapshots[liveChannelId]
     val tracker = remember(channel.streamUrl, player) {
         com.fortresstv.player.telemetry.PlaybackHealthTracker(
             householdId = currentHouseholdId,
@@ -12270,7 +12302,18 @@ private fun PlayerPanel(
             channelId = liveChannelId,
             streamKind = com.fortresstv.player.telemetry.StreamKindWire.LIVE,
             providerId = channel.sourceId,
+            onActiveMetricsUpdated = { startMs, stalls, stallMs, errCode, reg ->
+                channelHealthRepo.recordActiveMetrics(
+                    channelId = liveChannelId,
+                    startupMs = startMs,
+                    stallCount = stalls,
+                    totalStallMs = stallMs,
+                    errorCode = errCode,
+                    region = reg
+                )
+            },
             onFinalized = { summary ->
+                channelHealthRepo.recordSummary(summary)
                 telemetryStore.enqueue(summary)
             }
         )
@@ -12572,6 +12615,8 @@ private fun PlayerPanel(
                 recentChannelIds = recentChannelIds,
                 onToggleFavorite = onToggleFavorite,
                 previousWatchedChannel = previousWatchedChannel,
+                healthSnapshot = currentHealth,
+                onOpenHealthDialog = { showHealthDialog = true },
                 epgGuide = epgGuide,
                 epgTimeShiftHours = epgTimeShiftHours,
                 onExit = {
@@ -12652,7 +12697,14 @@ private fun PlayerPanel(
         }
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Spacer(Modifier.width(10.dp))
+                com.fortresstv.player.telemetry.ConnectionHealthBadge(
+                    snapshot = currentHealth,
+                    onClick = { showHealthDialog = true }
+                )
+            }
             if (previousWatchedChannel != null) {
                 Spacer(Modifier.width(8.dp))
                 Surface(
@@ -12804,6 +12856,8 @@ private fun PlayerPanel(
             recentChannelIds = recentChannelIds,
             onToggleFavorite = onToggleFavorite,
             previousWatchedChannel = previousWatchedChannel,
+            healthSnapshot = currentHealth,
+            onOpenHealthDialog = { showHealthDialog = true },
             onChannelSelected = ::handleChannelSwitch,
             onExit = {
                 manualFullscreen = false
@@ -12819,6 +12873,23 @@ private fun PlayerPanel(
             },
             isReconnecting = isFreezeReconnecting,
             inPictureInPicture = inPictureInPicture
+        )
+    }
+
+    if (showHealthDialog) {
+        val snap = currentHealth ?: com.fortresstv.player.telemetry.ChannelHealthSnapshot.fromMetrics(
+            channelId = liveChannelId,
+            startupMs = 0L,
+            stallCount = 0,
+            totalStallMs = 0L,
+            errorCode = null,
+            region = com.fortresstv.player.telemetry.PlaybackHealthTracker.resolveRegion(),
+            isLiveTesting = true
+        )
+        com.fortresstv.player.telemetry.ConnectionHealthDialog(
+            channelName = channel.name,
+            snapshot = snap,
+            onDismiss = { showHealthDialog = false }
         )
     }
 }
@@ -13171,6 +13242,8 @@ private fun FullscreenPlayer(
     recentChannelIds: List<String> = emptyList(),
     onToggleFavorite: (PlaylistChannel) -> Unit = {},
     previousWatchedChannel: PlaylistChannel? = null,
+    healthSnapshot: com.fortresstv.player.telemetry.ChannelHealthSnapshot? = null,
+    onOpenHealthDialog: () -> Unit = {},
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
     onRetry: () -> Unit,
@@ -13977,6 +14050,11 @@ private fun FullscreenPlayer(
                                                 )
                                             }
                                         }
+                                        Spacer(Modifier.width(6.dp))
+                                        com.fortresstv.player.telemetry.ConnectionHealthBadge(
+                                            snapshot = healthSnapshot,
+                                            onClick = onOpenHealthDialog
+                                        )
                                     }
                                     schedule?.current?.let { current ->
                                         Spacer(Modifier.height(2.dp))
@@ -14313,6 +14391,8 @@ private fun QuickZapTray(
     onChannelSelected: (PlaylistChannel) -> Unit,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
+    val healthSnapshots by remember { com.fortresstv.player.telemetry.ChannelHealthRepository.get(context.applicationContext).snapshots }.collectAsState()
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
     val tabFocusRequesters = remember { List(2) { FocusRequester() } }
@@ -14563,14 +14643,22 @@ private fun QuickZapTray(
                                     modifier = Modifier.weight(1f),
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    Text(
-                                        itemChannel.name,
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    val zapKey = remember(itemChannel) { itemChannel.tvgId?.takeIf { it.isNotBlank() } ?: itemChannel.name }
+                                    val zapHealth = healthSnapshots[zapKey]
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (zapHealth != null) {
+                                            com.fortresstv.player.telemetry.ConnectionHealthDot(snapshot = zapHealth)
+                                            Spacer(Modifier.width(4.dp))
+                                        }
+                                        Text(
+                                            itemChannel.name,
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                     val currentProg = schedule?.current
                                     if (currentProg != null) {
                                         Spacer(Modifier.height(2.dp))

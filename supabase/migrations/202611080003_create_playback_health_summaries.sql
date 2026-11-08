@@ -33,8 +33,18 @@ alter table public.playback_health_summaries enable row level security;
 drop policy if exists playback_health_summaries_household_all on public.playback_health_summaries;
 create policy playback_health_summaries_household_all on public.playback_health_summaries
   for all to authenticated
-  using (household_id = auth.uid())
-  with check (household_id = auth.uid());
+  using (
+    household_id = coalesce(
+      nullif(auth.jwt() ->> 'household_id', '')::uuid,
+      auth.uid()
+    )
+  )
+  with check (
+    household_id = coalesce(
+      nullif(auth.jwt() ->> 'household_id', '')::uuid,
+      auth.uid()
+    )
+  );
 
 grant all on public.playback_health_summaries to authenticated;
 

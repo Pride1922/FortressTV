@@ -75,7 +75,13 @@ class PlaybackHealthTrackerTest {
 
         val eventTime = dummyEventTime()
 
-        // 1. Brief buffering < 500ms (e.g. 200ms) - should NOT count as a stall
+        // Initial buffering and first frame (normal startup)
+        tracker.onPlaybackStateChanged(eventTime, Player.STATE_BUFFERING)
+        currentTime += 600L
+        tracker.onPlaybackStateChanged(eventTime, Player.STATE_READY)
+        tracker.onRenderedFirstFrame(eventTime, Any(), 600L)
+
+        // 1. Brief mid-stream buffering < 500ms (e.g. 200ms) - should NOT count as a stall
         tracker.onPlaybackStateChanged(eventTime, Player.STATE_BUFFERING)
         currentTime += 200L
         tracker.onPlaybackStateChanged(eventTime, Player.STATE_READY)
@@ -93,6 +99,7 @@ class PlaybackHealthTrackerTest {
         tracker.finalizeSession()
 
         assertNotNull(emittedSummary)
+        // Only the 2 mid-stream stalls (800ms + 1200ms) are counted; initial 600ms startup is not a stall
         assertEquals(2, emittedSummary!!.stallCount)
         assertEquals(2000L, emittedSummary!!.totalStallMs)
     }

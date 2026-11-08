@@ -30,6 +30,7 @@ class PlaybackHealthTracker(
     val providerId: String?,
     val region: String = resolveRegion(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val onActiveMetricsUpdated: ((startupMs: Long, stallCount: Int, totalStallMs: Long, errorCode: String?, region: String) -> Unit)? = null,
     private val onFinalized: (PlaybackHealthSummary) -> Unit
 ) : AnalyticsListener {
 
@@ -56,8 +57,9 @@ class PlaybackHealthTracker(
         const val MIN_STALL_THRESHOLD_MS = 500L
 
         fun resolveRegion(): String {
-            val country = Locale.getDefault().country
-            return if (!country.isNullOrBlank()) country.uppercase() else "unknown"
+            val country = Locale.getDefault().country.takeIf { it.isNotBlank() }
+                ?: runCatching { android.content.res.Resources.getSystem().configuration.locales.get(0)?.country?.takeIf { it.isNotBlank() } }.getOrNull()
+            return country?.uppercase() ?: "unknown"
         }
     }
 
@@ -69,6 +71,7 @@ class PlaybackHealthTracker(
         if (!firstFrameRendered) {
             startupMs = (clock() - startedAtEpochMs).coerceAtLeast(0L)
             firstFrameRendered = true
+            onActiveMetricsUpdated?.invoke(startupMs, stallCount, totalStallMs, playerErrorCode, region)
         }
     }
 
@@ -78,7 +81,8 @@ class PlaybackHealthTracker(
     ) {
         val now = clock()
         if (state == Player.STATE_BUFFERING) {
-            if (bufferingStartEpochMs == null) {
+            // Only count mid-stream rebuffering as a stall after the first frame has rendered
+            if (firstFrameRendered && bufferingStartEpochMs == null) {
                 bufferingStartEpochMs = now
             }
         } else {
@@ -87,6 +91,7 @@ class PlaybackHealthTracker(
                 if (duration >= MIN_STALL_THRESHOLD_MS) {
                     stallCount++
                     totalStallMs += duration
+                    onActiveMetricsUpdated?.invoke(startupMs, stallCount, totalStallMs, playerErrorCode, region)
                 }
                 bufferingStartEpochMs = null
             }
@@ -124,6 +129,7 @@ class PlaybackHealthTracker(
         playerErrorCode = errorCodeName
         completedCleanly = false
         stallCount++
+        onActiveMetricsUpdated?.invoke(startupMs, stallCount, totalStallMs, playerErrorCode, region)
     }
 
     override fun onPlayerError(
