@@ -192,6 +192,8 @@ interface Strings {
     val aspectZoom: String
     val aspectFit: String
     val playbackError: String
+    val failoverBackupSwitched: String
+    fun failoverSourceSwitched(sourceName: String): String
     val buildingPlaybackBuffer: String
     val reconnecting: String
     val resumePlayback: String
@@ -643,6 +645,8 @@ object EnglishStrings : Strings {
     override val aspectZoom = "Aspect: Zoom"
     override val aspectFit = "Aspect: Fit"
     override val playbackError = "Unable to play this channel."
+    override val failoverBackupSwitched = "Switched to backup stream."
+    override fun failoverSourceSwitched(sourceName: String) = "Switched to backup source: $sourceName"
     override val buildingPlaybackBuffer = "Preparing playback…"
     override val reconnecting = "Reconnecting…"
     override val resumePlayback = "Continue watching?"
@@ -1097,6 +1101,8 @@ object PortugueseStrings : Strings {
     override val aspectZoom = "Proporção: Zoom"
     override val aspectFit = "Proporção: Ajustar"
     override val playbackError = "Não foi possível reproduzir este canal."
+    override val failoverBackupSwitched = "Comutado para emissão alternativa."
+    override fun failoverSourceSwitched(sourceName: String) = "Comutado para fonte alternativa: $sourceName"
     override val buildingPlaybackBuffer = "A preparar a reprodução…"
     override val reconnecting = "A restabelecer ligação…"
     override val resumePlayback = "Continuar a ver?"

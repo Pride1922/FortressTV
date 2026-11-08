@@ -59,6 +59,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -12288,7 +12289,16 @@ private fun PlayerPanel(
     var showHealthDialog by remember { mutableStateOf(false) }
     val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
-    val liveChannelId = remember(channel) { channel.tvgId?.takeIf { it.isNotBlank() } ?: channel.name }
+    var activeChannel by remember(channel) { mutableStateOf(channel) }
+    var attemptedFailoverUrls by remember(channel) { mutableStateOf(setOf(channel.streamUrl)) }
+    var failoverMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(failoverMessage) {
+        if (failoverMessage != null) {
+            delay(4500)
+            failoverMessage = null
+        }
+    }
+    val liveChannelId = remember(activeChannel) { activeChannel.tvgId?.takeIf { it.isNotBlank() } ?: activeChannel.name }
     val currentHealth = healthSnapshots[liveChannelId]
     val adaptiveLoadControl = remember {
         com.fortresstv.player.player.AdaptiveLoadControl(
@@ -12310,13 +12320,13 @@ private fun PlayerPanel(
     LaunchedEffect(liveChannelId, currentHealth?.state) {
         adaptiveLoadControl.updateHealthState(currentHealth?.state ?: com.fortresstv.player.telemetry.ConnectionHealthState.UNKNOWN)
     }
-    val tracker = remember(channel.streamUrl, player) {
+    val tracker = remember(activeChannel.streamUrl, player) {
         com.fortresstv.player.telemetry.PlaybackHealthTracker(
             householdId = currentHouseholdId,
             profileId = currentProfileId,
             channelId = liveChannelId,
             streamKind = com.fortresstv.player.telemetry.StreamKindWire.LIVE,
-            providerId = channel.sourceId,
+            providerId = activeChannel.sourceId,
             onActiveMetricsUpdated = { startMs, stalls, stallMs, errCode, reg ->
                 channelHealthRepo.recordActiveMetrics(
                     channelId = liveChannelId,
@@ -12333,7 +12343,7 @@ private fun PlayerPanel(
             }
         )
     }
-    DisposableEffect(channel.streamUrl, player) {
+    DisposableEffect(activeChannel.streamUrl, player) {
         player.addAnalyticsListener(tracker)
         onDispose {
             tracker.finalizeSession()
@@ -12445,7 +12455,26 @@ private fun PlayerPanel(
                     player.prepare()
                     player.play()
                 } else {
-                    playbackError = error.message ?: strings.playbackError
+                    val candidates = com.fortresstv.player.player.ChannelFailoverResolver.findFailoverCandidates(
+                        failedChannel = activeChannel,
+                        allChannels = channels,
+                        attemptedUrls = attemptedFailoverUrls,
+                        healthRepo = channelHealthRepo
+                    )
+                    val fallback = candidates.firstOrNull()
+                    if (fallback != null) {
+                        Log.i("FortressTV.Failover", "Failing over from ${activeChannel.name} to ${fallback.name} (${fallback.streamUrl})")
+                        attemptedFailoverUrls = attemptedFailoverUrls + fallback.streamUrl
+                        playbackError = null
+                        failoverMessage = if (fallback.sourceId.isNotBlank() && fallback.sourceId != channel.sourceId) {
+                            strings.failoverSourceSwitched(fallback.sourceId)
+                        } else {
+                            strings.failoverBackupSwitched
+                        }
+                        activeChannel = fallback
+                    } else {
+                        playbackError = error.message ?: strings.playbackError
+                    }
                 }
             }
         }
@@ -12482,15 +12511,15 @@ private fun PlayerPanel(
         }
     }
 
-    LaunchedEffect(player, channel.streamUrl) {
-        if (currentTrackedChannel != channel) {
+    LaunchedEffect(player, activeChannel.streamUrl) {
+        if (currentTrackedChannel != activeChannel) {
             previousWatchedChannel = currentTrackedChannel
-            currentTrackedChannel = channel
+            currentTrackedChannel = activeChannel
         }
         playbackError = null
         isFreezeReconnecting = false
         liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
-        player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+        player.setMediaItem(FortressPlayerFactory.mediaItem(activeChannel.streamUrl, PlaybackContentType.LIVE, playbackMode))
         player.prepare()
         player.play()
         if (autoEnterFullscreen) manualFullscreen = true
@@ -12503,7 +12532,7 @@ private fun PlayerPanel(
         }
     }
 
-    LaunchedEffect(player, channel.streamUrl, playbackMode) {
+    LaunchedEffect(player, activeChannel.streamUrl, playbackMode) {
         val intervalMs = when (playbackMode) {
             PlaybackMode.AUTO -> 15_000L
             PlaybackMode.STABLE -> 25_000L
@@ -12521,8 +12550,27 @@ private fun PlayerPanel(
             })
             when (decision) {
                 StallDecision.GIVE_UP -> {
-                    playbackError = strings.playbackError
-                    player.stop()
+                    val candidates = com.fortresstv.player.player.ChannelFailoverResolver.findFailoverCandidates(
+                        failedChannel = activeChannel,
+                        allChannels = channels,
+                        attemptedUrls = attemptedFailoverUrls,
+                        healthRepo = channelHealthRepo
+                    )
+                    val fallback = candidates.firstOrNull()
+                    if (fallback != null) {
+                        Log.i("FortressTV.Failover", "Failing over from stall on ${activeChannel.name} to ${fallback.name} (${fallback.streamUrl})")
+                        attemptedFailoverUrls = attemptedFailoverUrls + fallback.streamUrl
+                        playbackError = null
+                        failoverMessage = if (fallback.sourceId.isNotBlank() && fallback.sourceId != channel.sourceId) {
+                            strings.failoverSourceSwitched(fallback.sourceId)
+                        } else {
+                            strings.failoverBackupSwitched
+                        }
+                        activeChannel = fallback
+                    } else {
+                        playbackError = strings.playbackError
+                        player.stop()
+                    }
                 }
                 StallDecision.RECOVER -> {
                     val backoffMs = 1_000L shl consecutiveStallRecoveries.coerceAtMost(3)
@@ -12532,7 +12580,7 @@ private fun PlayerPanel(
                         consecutiveStallRecoveries++
                         Log.w("FortressTV.Player", "Recovering stalled live playback; attempt=$consecutiveStallRecoveries")
                         player.stop()
-                        player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+                        player.setMediaItem(FortressPlayerFactory.mediaItem(activeChannel.streamUrl, PlaybackContentType.LIVE, playbackMode))
                         player.prepare()
                         player.play()
                     }
@@ -12543,7 +12591,7 @@ private fun PlayerPanel(
         }
     }
 
-    LaunchedEffect(player, channel.streamUrl) {
+    LaunchedEffect(player, activeChannel.streamUrl) {
         var diagnosticTicks = 0
         while (isActive) {
             delay(1_000L)
@@ -12580,9 +12628,28 @@ private fun PlayerPanel(
                 millisSinceLastFrame = millisSinceLastFrame
             )) {
                 if (consecutiveStallRecoveries >= 3) {
-                    playbackError = strings.playbackError
-                    isFreezeReconnecting = false
-                    player.stop()
+                    val candidates = com.fortresstv.player.player.ChannelFailoverResolver.findFailoverCandidates(
+                        failedChannel = activeChannel,
+                        allChannels = channels,
+                        attemptedUrls = attemptedFailoverUrls,
+                        healthRepo = channelHealthRepo
+                    )
+                    val fallback = candidates.firstOrNull()
+                    if (fallback != null) {
+                        Log.i("FortressTV.Failover", "Failing over from freeze on ${activeChannel.name} to ${fallback.name} (${fallback.streamUrl})")
+                        attemptedFailoverUrls = attemptedFailoverUrls + fallback.streamUrl
+                        playbackError = null
+                        failoverMessage = if (fallback.sourceId.isNotBlank() && fallback.sourceId != channel.sourceId) {
+                            strings.failoverSourceSwitched(fallback.sourceId)
+                        } else {
+                            strings.failoverBackupSwitched
+                        }
+                        activeChannel = fallback
+                    } else {
+                        playbackError = strings.playbackError
+                        isFreezeReconnecting = false
+                        player.stop()
+                    }
                 } else {
                     consecutiveStallRecoveries++
                     val backoffMs = 1_000L shl (consecutiveStallRecoveries - 1).coerceAtMost(3)
@@ -12591,7 +12658,7 @@ private fun PlayerPanel(
                     if (!context.isPlaybackNetworkAvailable()) continue
                     liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
                     player.stop()
-                    player.setMediaItem(FortressPlayerFactory.mediaItem(channel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+                    player.setMediaItem(FortressPlayerFactory.mediaItem(activeChannel.streamUrl, PlaybackContentType.LIVE, playbackMode))
                     player.prepare()
                     player.play()
                 }
@@ -12615,6 +12682,7 @@ private fun PlayerPanel(
                     player.play()
                 },
                 isReconnecting = isFreezeReconnecting,
+                failoverMessage = failoverMessage,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -12623,7 +12691,7 @@ private fun PlayerPanel(
                 player = player,
                 playbackState = playbackState,
                 playbackError = playbackError,
-                channel = channel,
+                channel = activeChannel,
                 channels = channels,
                 groups = groups,
                 favoriteChannelIds = favoriteChannelIds,
@@ -12648,6 +12716,7 @@ private fun PlayerPanel(
                     player.play()
                 },
                 isReconnecting = isFreezeReconnecting,
+                failoverMessage = failoverMessage,
                 inPictureInPicture = inPictureInPicture
             )
         }
@@ -12705,6 +12774,7 @@ private fun PlayerPanel(
                             player.play()
                         },
                         isReconnecting = isFreezeReconnecting,
+                        failoverMessage = failoverMessage,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -12713,7 +12783,7 @@ private fun PlayerPanel(
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Text(channel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text(activeChannel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Spacer(Modifier.width(10.dp))
                 com.fortresstv.player.telemetry.ConnectionHealthBadge(
                     snapshot = currentHealth,
@@ -12862,7 +12932,7 @@ private fun PlayerPanel(
             player = player,
             playbackState = playbackState,
             playbackError = playbackError,
-            channel = channel,
+            channel = activeChannel,
             epgGuide = epgGuide,
             epgTimeShiftHours = epgTimeShiftHours,
             channels = channels,
@@ -12887,6 +12957,7 @@ private fun PlayerPanel(
                 player.play()
             },
             isReconnecting = isFreezeReconnecting,
+            failoverMessage = failoverMessage,
             inPictureInPicture = inPictureInPicture
         )
     }
@@ -12902,7 +12973,7 @@ private fun PlayerPanel(
             isLiveTesting = true
         )
         com.fortresstv.player.telemetry.ConnectionHealthDialog(
-            channelName = channel.name,
+            channelName = activeChannel.name,
             snapshot = snap,
             onDismiss = { showHealthDialog = false }
         )
@@ -12923,6 +12994,7 @@ private fun VideoSurface(
     onRetry: () -> Unit,
     showTrackSettings: Boolean = false,
     isReconnecting: Boolean = false,
+    failoverMessage: String? = null,
     onCenterSwipeUp: (() -> Unit)? = null,
     onCenterSwipeDown: (() -> Unit)? = null,
     onEdgeSwipeRight: (() -> Unit)? = null,
@@ -13087,6 +13159,41 @@ private fun VideoSurface(
                 Text(message, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = onRetry) { Text(strings.retry) }
+            }
+        }
+        AnimatedVisibility(
+            visible = failoverMessage != null,
+            enter = fadeIn() + slideInVertically { -it },
+            exit = fadeOut() + slideOutVertically { -it },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = if (fullscreen) 24.dp else 12.dp)
+                .zIndex(10f)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.Black.copy(alpha = 0.85f),
+                contentColor = Color.White,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = failoverMessage.orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White
+                    )
+                }
             }
         }
         AnimatedVisibility(
@@ -13263,6 +13370,7 @@ private fun FullscreenPlayer(
     onExit: () -> Unit,
     onRetry: () -> Unit,
     isReconnecting: Boolean = false,
+    failoverMessage: String? = null,
     inPictureInPicture: Boolean
 ) {
     val context = LocalContext.current
@@ -13537,6 +13645,7 @@ private fun FullscreenPlayer(
                 onToggleControls = { controlsVisible = !controlsVisible },
                 onRetry = onRetry,
                 isReconnecting = isReconnecting,
+                failoverMessage = failoverMessage,
                 onCenterSwipeUp = {
                     if (!showQuickZap && !showChannels && !showGuide && !locked && !inPictureInPicture) {
                         showQuickZap = true
