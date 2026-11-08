@@ -68,6 +68,10 @@ class XtreamClientTest {
             plot = "A test movie synopsis"
         )
         assertEquals("https://example.com:8443/movie/testuser/testpass/42.mkv", client.movieStreamUrl(movie))
+        assertEquals(
+            "https://example.com:8443/timeshift/testuser/testpass/60/2026-11-08:09-00/101.ts",
+            client.timeshiftStreamUrl(101, 60, "2026-11-08:09-00", "ts")
+        )
 
         val episode = XtreamEpisode(
             id = "1001",
@@ -312,7 +316,9 @@ class XtreamClientTest {
                 "stream_id": 555,
                 "stream_icon": "https://img.example/555.png",
                 "epg_channel_id": "sports.1",
-                "category_id": "10"
+                "category_id": "10",
+                "tv_archive": 1,
+                "tv_archive_duration": 7
             },
             {
                 "num": 2,
@@ -320,7 +326,9 @@ class XtreamClientTest {
                 "stream_type": "live",
                 "stream_id": 777,
                 "category_id": "20",
-                "container_extension": "m3u8"
+                "container_extension": "m3u8",
+                "tv_archive": 0,
+                "tv_archive_duration": 0
             }
         ]"""
         val channels = client.parseLiveChannels(liveJson, categories)
@@ -333,9 +341,13 @@ class XtreamClientTest {
         assertEquals("Sports", channels[0].group)
         assertEquals("test-source", channels[0].sourceId)
         assertEquals("555", channels[0].sourceItemId)
+        assertEquals(true, channels[0].hasCatchup)
+        assertEquals(7, channels[0].catchupDays)
 
         assertEquals("News 24", channels[1].name)
         assertEquals("https://example.com/live/user1/pass1/777.m3u8", channels[1].streamUrl)
         assertEquals("News", channels[1].group)
+        assertEquals(false, channels[1].hasCatchup)
+        assertEquals(0, channels[1].catchupDays)
     }
 }

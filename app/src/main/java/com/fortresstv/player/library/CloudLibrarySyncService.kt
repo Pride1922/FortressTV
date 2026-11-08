@@ -533,7 +533,7 @@ class CloudLibrarySyncService internal constructor(
             val entries = progressStore.entries().toMutableList()
             for (prog in remoteProgress) {
                 val key = "${prog.itemKind}:${prog.sourceId}:${prog.itemId}"
-                val kind = if (prog.itemKind == "movie") VodProgressKind.MOVIE else VodProgressKind.EPISODE
+                val kind = VodProgressKind.fromWireValue(prog.itemKind)
                 if (prog.deletedAt != null) {
                     entries.removeAll {
                         it.key == key || (it.sourceId == prog.sourceId && (it.itemId == prog.itemId || CloudIdentityHasher.hashItemId(it.itemId) == prog.itemId))

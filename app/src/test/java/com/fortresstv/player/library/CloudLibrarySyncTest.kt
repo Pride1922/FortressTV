@@ -278,6 +278,37 @@ class CloudLibrarySyncTest {
     }
 
     @Test
+    fun insertProgressCallsRpcWithAllItemKindsMatchingSchemaConstraints() {
+        val transport = FakeSyncTransport()
+        val api = SupabaseSyncApi(transport)
+
+        val kinds = listOf("movie", "episode", "catchup")
+        val items = kinds.mapIndexed { index, kind ->
+            CloudWatchProgressItem(
+                householdId = "house-111",
+                profileId = "prof-222",
+                sourceId = "src-333",
+                itemKind = kind,
+                itemId = "item-$index",
+                positionMs = 10_000L * (index + 1),
+                durationMs = 60_000L * (index + 1),
+                completed = false,
+                clientUpdatedAtMs = 1730920000000L + index
+            )
+        }
+
+        api.upsertProfileWatchProgress(items, "session-token-xyz", "jwt-token")
+
+        assertEquals(3, transport.postRequests.size)
+        kinds.forEachIndexed { index, expectedKind ->
+            val (path, body) = transport.postRequests[index]
+            assertEquals("/rest/v1/rpc/fortress_sync_profile_watch_progress", path)
+            assertNotNull(body)
+            assertEquals(expectedKind, body!!.getString("p_item_kind"))
+        }
+    }
+
+    @Test
     fun progressRpcRequiredAndThrowsWhenUnavailableSoMutationsRemainQueued() {
         val transport = FakeSyncTransport().apply {
             rpcSupported = false
@@ -821,5 +852,73 @@ class CloudLibrarySyncTest {
         assertEquals("src-1", loaded[0].sourceId)
         assertEquals(setOf("Sports", "News"), loaded[0].hiddenCategories)
         assertEquals(listOf("Movies", "Documentaries"), loaded[0].categoryOrder)
+    }
+
+    @Test
+    fun syncWatchProgressPartitionsCatchupAndVodPerProfile() {
+        val transport = FakeSyncTransport()
+        val api = SupabaseSyncApi(transport)
+
+        val fabioCatchup = CloudWatchProgressItem(
+            householdId = "house-1",
+            profileId = "profile-fabio",
+            sourceId = "src-1",
+            itemKind = "catchup",
+            itemId = CloudIdentityHasher.hashItemId("101_1731056400000"),
+            positionMs = 500_000L,
+            durationMs = 3_600_000L,
+            completed = false,
+            clientUpdatedAtMs = 1000L
+        )
+
+        val lisaMovie = CloudWatchProgressItem(
+            householdId = "house-1",
+            profileId = "profile-lisa",
+            sourceId = "src-1",
+            itemKind = "movie",
+            itemId = CloudIdentityHasher.hashItemId("movie-99"),
+            positionMs = 1_200_000L,
+            durationMs = 6_000_000L,
+            completed = false,
+            clientUpdatedAtMs = 2000L
+        )
+
+        api.upsertProfileWatchProgress(listOf(fabioCatchup), "session-fabio", "jwt-token")
+        api.upsertProfileWatchProgress(listOf(lisaMovie), "session-lisa", "jwt-token")
+
+        assertEquals(2, transport.postRequests.size)
+        val fabioReq = transport.postRequests[0].second!!
+        assertEquals("profile-fabio", fabioReq.getString("p_profile_id"))
+        assertEquals("catchup", fabioReq.getString("p_item_kind"))
+        assertEquals(500_000L, fabioReq.getLong("p_position_ms"))
+
+        val lisaReq = transport.postRequests[1].second!!
+        assertEquals("profile-lisa", lisaReq.getString("p_profile_id"))
+        assertEquals("movie", lisaReq.getString("p_item_kind"))
+        assertEquals(1_200_000L, lisaReq.getLong("p_position_ms"))
+
+        transport.getResponses.add(
+            """
+            [
+                {
+                    "household_id": "house-1",
+                    "profile_id": "profile-fabio",
+                    "source_id": "src-1",
+                    "item_kind": "catchup",
+                    "item_id": "${CloudIdentityHasher.hashItemId("101_1731056400000")}",
+                    "position_ms": 500000,
+                    "duration_ms": 3600000,
+                    "completed": false,
+                    "client_updated_at_ms": 1000
+                }
+            ]
+            """.trimIndent()
+        )
+
+        val fabioItems = api.fetchProfileWatchProgress("profile-fabio", "session-fabio", "jwt-token")
+        assertEquals(1, fabioItems.size)
+        assertEquals("profile-fabio", fabioItems[0].profileId)
+        assertEquals("catchup", fabioItems[0].itemKind)
+        assertEquals(500_000L, fabioItems[0].positionMs)
     }
 }

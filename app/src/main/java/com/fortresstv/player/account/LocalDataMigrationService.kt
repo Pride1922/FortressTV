@@ -206,7 +206,7 @@ internal class LocalDataMigrationService(
             librarySyncService.enqueueProgressMutation(
                 profileId = targetAdultProfileId,
                 sourceId = entry.sourceId,
-                itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                itemKind = entry.kind.wireValue,
                 itemId = entry.itemId,
                 positionMs = entry.positionMs,
                 durationMs = entry.durationMs,

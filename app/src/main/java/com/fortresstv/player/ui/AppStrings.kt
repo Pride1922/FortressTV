@@ -200,6 +200,8 @@ interface Strings {
     val restartPlayback: String
     val continueWatching: String
     val removeFromContinueWatching: String
+    val catchup: String
+    val watchCatchup: String
     val nextEpisode: String
     val playNextEpisode: String
     val autoPlayNext: String
@@ -639,6 +641,8 @@ object EnglishStrings : Strings {
     override val restartPlayback = "Restart"
     override val continueWatching = "Continue watching"
     override val removeFromContinueWatching = "Remove from Continue watching"
+    override val catchup = "Catch-up"
+    override val watchCatchup = "Watch Catch-up"
     override val nextEpisode = "Next episode"
     override val playNextEpisode = "Play next"
     override val autoPlayNext = "Auto-Play Next"
@@ -1081,6 +1085,8 @@ object PortugueseStrings : Strings {
     override val restartPlayback = "Recomeçar"
     override val continueWatching = "Continuar a ver"
     override val removeFromContinueWatching = "Remover de Continuar a ver"
+    override val catchup = "Gravações"
+    override val watchCatchup = "Ver gravação"
     override val nextEpisode = "Próximo episódio"
     override val playNextEpisode = "Reproduzir próximo"
     override val autoPlayNext = "Reprodução automática"

@@ -59,7 +59,7 @@ object PlaylistDiskCache {
 
 internal object PlaylistCacheCodec {
     private const val MAGIC = 0x4654504C // FTPL
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val MAX_CHANNELS = 250_000
     private const val MAX_STRING_BYTES = 4 * 1024 * 1024
 
@@ -80,6 +80,8 @@ internal object PlaylistCacheCodec {
                 data.writeString(channel.sourceId)
                 data.writeInt(channel.sourcePosition)
                 data.writeString(channel.sourceItemId)
+                data.writeBoolean(channel.hasCatchup)
+                data.writeInt(channel.catchupDays)
             }
         }
     }
@@ -103,7 +105,9 @@ internal object PlaylistCacheCodec {
                     group = data.readNullableString(),
                     sourceId = data.readString(),
                     sourcePosition = data.readInt(),
-                    sourceItemId = data.readString()
+                    sourceItemId = data.readString(),
+                    hasCatchup = data.readBoolean(),
+                    catchupDays = data.readInt()
                 )
             })
         }

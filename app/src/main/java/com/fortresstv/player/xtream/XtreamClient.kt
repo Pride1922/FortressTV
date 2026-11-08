@@ -88,6 +88,16 @@ class XtreamClient(
     fun episodeStreamUrl(episode: XtreamEpisode): String =
         "$baseUrl/series/${path(source.username)}/${path(source.password)}/${path(episode.id)}.${path(episode.containerExtension)}"
 
+    fun timeshiftStreamUrl(
+        streamId: Int,
+        durationMinutes: Int,
+        startFormatted: String,
+        extension: String? = null
+    ): String {
+        val ext = extension?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) } ?: "ts"
+        return "$baseUrl/timeshift/${path(source.username)}/${path(source.password)}/$durationMinutes/$startFormatted/$streamId.$ext"
+    }
+
     private suspend fun request(
         action: String?,
         extra: Map<String, String> = emptyMap(),
@@ -199,6 +209,8 @@ class XtreamClient(
             val tvgId = item.nullableString("epg_channel_id") ?: item.nullableString("custom_sid")
             val tvgName = item.nullableString("name")
             val streamUrl = liveStreamUrl(streamId, item.nullableString("container_extension"))
+            val tvArchive = item.optInt("tv_archive", 0) == 1 || item.optString("tv_archive") == "1"
+            val archiveDuration = item.optInt("tv_archive_duration", item.optString("tv_archive_duration").toIntOrNull() ?: 0)
             PlaylistChannel(
                 position = index,
                 name = name,
@@ -209,7 +221,9 @@ class XtreamClient(
                 group = group,
                 sourceId = sourceId,
                 sourcePosition = index,
-                sourceItemId = streamId.toString()
+                sourceItemId = streamId.toString(),
+                hasCatchup = tvArchive,
+                catchupDays = archiveDuration
             )
         }
     }

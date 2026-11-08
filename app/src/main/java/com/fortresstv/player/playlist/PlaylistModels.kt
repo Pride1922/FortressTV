@@ -13,7 +13,9 @@ data class PlaylistChannel(
     val group: String? = null,
     val sourceId: String = "",
     val sourcePosition: Int = position,
-    val sourceItemId: String = ""
+    val sourceItemId: String = "",
+    val hasCatchup: Boolean = false,
+    val catchupDays: Int = 0
 )
 
 data class Playlist(

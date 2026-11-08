@@ -2,10 +2,63 @@ package com.fortresstv.player.library
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.time.Instant
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class VodProgressKind { MOVIE, EPISODE }
+enum class VodProgressKind {
+    MOVIE, EPISODE, CATCHUP;
+
+    val wireValue: String
+        get() = when (this) {
+            MOVIE -> "movie"
+            EPISODE -> "episode"
+            CATCHUP -> "catchup"
+        }
+
+    companion object {
+        fun fromWireValue(value: String): VodProgressKind = when (value.trim().lowercase()) {
+            "movie" -> MOVIE
+            "catchup" -> CATCHUP
+            else -> EPISODE
+        }
+    }
+}
+
+data class CatchupProgressKey(
+    val channelId: String,
+    val programStartUtc: Instant
+) {
+    fun toItemId(): String = "catchup:${channelId.trim().lowercase()}:${programStartUtc.toEpochMilli()}"
+
+    companion object {
+        fun fromItemId(itemId: String): CatchupProgressKey? {
+            val parts = itemId.split(":")
+            if (parts.size >= 3 && parts[0] == "catchup") {
+                val chId = parts[1]
+                val epochMilli = parts[2].toLongOrNull() ?: return null
+                return CatchupProgressKey(chId, Instant.ofEpochMilli(epochMilli))
+            }
+            val underscoreParts = itemId.split("_")
+            if (underscoreParts.size == 2) {
+                val streamOrChannel = underscoreParts[0]
+                val epochMilli = underscoreParts[1].toLongOrNull() ?: return null
+                return CatchupProgressKey(streamOrChannel, Instant.ofEpochMilli(epochMilli))
+            }
+            return null
+        }
+    }
+}
+
+fun profileProgressNamespace(householdId: String?, profileId: String): String {
+    return if (profileId.isBlank() || profileId == "restricted_default") {
+        "restricted_default"
+    } else if (!householdId.isNullOrBlank()) {
+        "${householdId}_$profileId"
+    } else {
+        "profile_$profileId"
+    }
+}
 
 data class VodProgressEntry(
     val key: String,
@@ -41,26 +94,36 @@ class VodProgressStore internal constructor(
         initialNamespace = initialNamespace
     )
 
+    private val lock = Any()
+    @Volatile
     private var namespace = sanitize(initialNamespace)
+    @Volatile
     private var preferences: SharedPreferences = prefsProvider(namespace)
 
     private fun sanitize(raw: String): String = raw.replace(Regex("[^a-zA-Z0-9_-]"), "_")
 
-    fun switchNamespace(newNamespace: String) {
-        namespace = sanitize(newNamespace)
-        preferences = prefsProvider(namespace)
+    fun currentNamespace(): String = synchronized(lock) { namespace }
+
+    fun switchNamespace(newNamespace: String) = synchronized(lock) {
+        val sanitized = sanitize(newNamespace)
+        if (namespace != sanitized) {
+            namespace = sanitized
+            preferences = prefsProvider(namespace)
+        }
     }
 
-    fun entries(): List<VodProgressEntry> = decode(preferences.getString(KEY_ENTRIES, null))
+    fun entries(): List<VodProgressEntry> = synchronized(lock) {
+        decode(preferences.getString(KEY_ENTRIES, null))
+    }
 
-    fun findProgress(kind: VodProgressKind, sourceId: String, rawItemId: String): VodProgressEntry? {
+    fun findProgress(kind: VodProgressKind, sourceId: String, rawItemId: String): VodProgressEntry? = synchronized(lock) {
         val hash = CloudIdentityHasher.hashItemId(rawItemId)
-        return entries().firstOrNull {
+        entries().firstOrNull {
             it.kind == kind && it.sourceId == sourceId && (it.itemId == rawItemId || it.itemId == hash)
         }
     }
 
-    fun save(entry: VodProgressEntry): List<VodProgressEntry> {
+    fun save(entry: VodProgressEntry): List<VodProgressEntry> = synchronized(lock) {
         val hash = CloudIdentityHasher.hashItemId(entry.itemId)
         val updated = entries().filterNot {
             it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (it.itemId == entry.itemId || it.itemId == hash))
@@ -72,10 +135,10 @@ class VodProgressStore internal constructor(
         }
         val limited = updated.sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
         preferences.edit().putString(KEY_ENTRIES, encode(limited)).apply()
-        return limited
+        limited
     }
 
-    fun remove(key: String): List<VodProgressEntry> {
+    fun remove(key: String): List<VodProgressEntry> = synchronized(lock) {
         val parts = key.split(":")
         val hashedKey = if (parts.size >= 3) {
             "${parts[0]}:${parts[1]}:${CloudIdentityHasher.hashItemId(parts[2])}"
@@ -84,13 +147,18 @@ class VodProgressStore internal constructor(
             it.key == key || (hashedKey != null && it.key == hashedKey)
         }
         preferences.edit().putString(KEY_ENTRIES, encode(updated)).apply()
-        return updated
+        updated
     }
 
-    fun setAll(entries: List<VodProgressEntry>): List<VodProgressEntry> {
+    fun setAll(entries: List<VodProgressEntry>): List<VodProgressEntry> = synchronized(lock) {
         val limited = entries.distinctBy(VodProgressEntry::key).sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
         preferences.edit().putString(KEY_ENTRIES, encode(limited)).apply()
-        return limited
+        limited
+    }
+
+    fun clear(): List<VodProgressEntry> = synchronized(lock) {
+        preferences.edit().remove(KEY_ENTRIES).apply()
+        emptyList()
     }
 
     companion object {

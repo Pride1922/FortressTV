@@ -22,14 +22,22 @@ class UserLibraryStore internal constructor(
         initialNamespace = initialNamespace
     )
 
+    private val lock = Any()
+    @Volatile
     private var namespace = sanitize(initialNamespace)
+    @Volatile
     private var preferences: SharedPreferences = prefsProvider(namespace)
 
     private fun sanitize(raw: String): String = raw.replace(Regex("[^a-zA-Z0-9_-]"), "_")
 
-    fun switchNamespace(newNamespace: String) {
-        namespace = sanitize(newNamespace)
-        preferences = prefsProvider(namespace)
+    fun currentNamespace(): String = synchronized(lock) { namespace }
+
+    fun switchNamespace(newNamespace: String) = synchronized(lock) {
+        val sanitized = sanitize(newNamespace)
+        if (namespace != sanitized) {
+            namespace = sanitized
+            preferences = prefsProvider(namespace)
+        }
     }
 
     fun clearForRestore() {

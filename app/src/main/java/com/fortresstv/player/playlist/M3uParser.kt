@@ -36,7 +36,9 @@ object M3uParser {
                         tvgId = info.tvgId,
                         tvgName = info.tvgName,
                         logoUrl = info.logoUrl,
-                        group = pendingGroup ?: info.group
+                        group = pendingGroup ?: info.group,
+                        hasCatchup = info.hasCatchup,
+                        catchupDays = info.catchupDays
                     )
                     channels += channel.copy(sourceItemId = channel.stableSourceItemId())
                     pendingInfo = null
@@ -57,12 +59,18 @@ object M3uParser {
             it.groupValues[1].lowercase() to it.groupValues[2].trim()
         }
 
+        val catchupAttr = attributes["catchup"].nullIfBlank()
+        val catchupDaysAttr = attributes["catchup-days"]?.toIntOrNull() ?: 0
+        val hasCatchup = !catchupAttr.isNullOrBlank() || catchupDaysAttr > 0
+
         return ChannelInfo(
             name = name,
             tvgId = attributes["tvg-id"].nullIfBlank(),
             tvgName = attributes["tvg-name"].nullIfBlank(),
             logoUrl = attributes["tvg-logo"].nullIfBlank(),
-            group = attributes["group-title"].nullIfBlank()
+            group = attributes["group-title"].nullIfBlank(),
+            hasCatchup = hasCatchup,
+            catchupDays = catchupDaysAttr
         )
     }
 
@@ -84,6 +92,8 @@ object M3uParser {
         val tvgId: String? = null,
         val tvgName: String? = null,
         val logoUrl: String? = null,
-        val group: String? = null
+        val group: String? = null,
+        val hasCatchup: Boolean = false,
+        val catchupDays: Int = 0
     )
 }

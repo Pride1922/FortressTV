@@ -301,6 +301,8 @@ import com.fortresstv.player.source.StartupDestination
 import com.fortresstv.player.library.VodProgressEntry
 import com.fortresstv.player.library.VodProgressKind
 import com.fortresstv.player.library.VodProgressStore
+import com.fortresstv.player.library.CatchupProgressKey
+import com.fortresstv.player.library.profileProgressNamespace
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.xtream.XtreamCatalog
@@ -605,8 +607,11 @@ private fun FortressTVApp(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { SourceSettingsStore(context.applicationContext) }
-    val userLibrary = remember { UserLibraryStore(context.applicationContext) }
-    val vodProgressStore = remember { VodProgressStore(context.applicationContext) }
+    val initialProfileId: String = remember { ProfileRepository.get(context).activeProfile.value.id }
+    val initialUserId: String? = remember { com.fortresstv.player.account.AccountRepository.get(context).currentUserId() }
+    val initialNs: String = remember(initialUserId, initialProfileId) { profileProgressNamespace(initialUserId, initialProfileId) }
+    val userLibrary = remember { UserLibraryStore(context.applicationContext, initialNs) }
+    val vodProgressStore = remember { VodProgressStore(context.applicationContext, initialNs) }
     val openSubtitlesStore = remember { OpenSubtitlesSettingsStore(context.applicationContext) }
     var openSubtitlesSettings by remember { mutableStateOf(openSubtitlesStore.loadSettings()) }
 
@@ -883,11 +888,7 @@ private fun FortressTVApp(
 
         val targetProfileId = activeHouseholdProfile.id
         val uid = currentUserId
-        val ns = if (uid != null && targetProfileId != "restricted_default") {
-            "${uid}_$targetProfileId"
-        } else {
-            "local"
-        }
+        val ns = profileProgressNamespace(uid, targetProfileId)
         userLibrary.switchNamespace(ns)
         vodProgressStore.switchNamespace(ns)
         favoriteChannelIds = userLibrary.favoriteChannelIds()
@@ -895,6 +896,7 @@ private fun FortressTVApp(
         movieWatchlistIds = userLibrary.movieWatchlistIds()
         followedSeriesIds = userLibrary.followedSeriesIds()
         watchedItemIds = userLibrary.watchedItemIds()
+        progressRefreshTrigger++
 
         preferredAudioLanguage = settings.preferredAudioLanguage(targetProfileId)
         preferredSubtitleLanguage = settings.preferredSubtitleLanguage(targetProfileId)
@@ -908,7 +910,11 @@ private fun FortressTVApp(
             categoryOrder = userLibrary.categoryOrder(activeSourceId)
         }
 
-        if (ns != "local") {
+        val isPrimaryAdult = !activeHouseholdProfile.isChild && (householdProfiles.firstOrNull { !it.isChild }?.id == targetProfileId || householdProfiles.isEmpty())
+        val legacyPrefs = context.getSharedPreferences("fortress_legacy_migration", Context.MODE_PRIVATE)
+        val migrationKey = "legacy_local_migrated_v1_$targetProfileId"
+        val legacyMigrated = legacyPrefs.getBoolean(migrationKey, false)
+        if (!legacyMigrated && isPrimaryAdult && targetProfileId != "restricted_default" && ns != "local") {
             val localLib = UserLibraryStore(context.applicationContext, "local")
             val targetLib = UserLibraryStore(context.applicationContext, ns)
             val targetProg = VodProgressStore(context.applicationContext, ns)
@@ -975,7 +981,7 @@ private fun FortressTVApp(
                     cloudLibrarySyncService.enqueueProgressMutation(
                         profileId = targetProfileId,
                         sourceId = entry.sourceId,
-                        itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                        itemKind = entry.kind.wireValue,
                         itemId = entry.itemId,
                         positionMs = entry.positionMs,
                         durationMs = entry.durationMs,
@@ -983,6 +989,11 @@ private fun FortressTVApp(
                     )
                 }
             }
+            legacyPrefs.edit()
+                .putBoolean(migrationKey, true)
+                .putBoolean("legacy_local_migrated", true)
+                .apply()
+            progressRefreshTrigger++
         }
 
         if (uid != null && targetProfileId != "restricted_default") {
@@ -1022,7 +1033,11 @@ private fun FortressTVApp(
                     cloudLibrarySyncService.enqueueProgressMutation(
                         profileId = targetProfileId,
                         sourceId = entry.sourceId,
-                        itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                        itemKind = when (entry.kind) {
+                            VodProgressKind.MOVIE -> "movie"
+                            VodProgressKind.EPISODE -> "episode"
+                            VodProgressKind.CATCHUP -> "catchup"
+                        },
                         itemId = entry.itemId,
                         positionMs = entry.positionMs,
                         durationMs = entry.durationMs,
@@ -2925,6 +2940,8 @@ private fun ProgrammeGuideScreen(
     initialCategory: String? = null,
     onBack: () -> Unit,
     onWatchChannel: (PlaylistChannel) -> Unit,
+    onWatchCatchup: ((PlaylistChannel, EpgProgramme) -> Unit)? = null,
+    progressEntries: List<VodProgressEntry> = emptyList(),
     dockedPlayer: (@Composable () -> Unit)? = null,
     activeChannel: PlaylistChannel? = null,
     onDismissDockedPlayer: (() -> Unit)? = null
@@ -4053,9 +4070,17 @@ private fun ProgrammeGuideScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            val isPast = adjustedStop <= now.toEpochMilli()
+                            val canCatchup = isPast && channel.hasCatchup && onWatchCatchup != null
                             Spacer(Modifier.width(8.dp))
                             Button(
-                                onClick = { onWatchChannel(channel) },
+                                onClick = {
+                                    if (canCatchup) {
+                                        onWatchCatchup(channel, programme)
+                                    } else {
+                                        onWatchChannel(channel)
+                                    }
+                                },
                                 modifier = Modifier
                                     .height(36.dp)
                                     .focusRequester(watchButtonFocusRequester)
@@ -4068,7 +4093,26 @@ private fun ProgrammeGuideScreen(
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                 if (!isCompact || !isPortrait) {
                                     Spacer(Modifier.width(6.dp))
-                                    Text(if (isLiveNow) strings.watchNow else strings.watchLiveChannel, fontSize = 12.sp)
+                                    val canonicalChannel = channel.tvgId?.trim()?.takeIf { it.isNotEmpty() }
+                                        ?: channel.name.trim().lowercase().takeIf { it.isNotEmpty() }
+                                        ?: channel.sourceItemId
+                                    val catchupItemId = CatchupProgressKey(canonicalChannel, Instant.ofEpochMilli(programme.startEpochMilli)).toItemId()
+                                    val hasCatchupProgress = progressEntries.any {
+                                        it.kind == VodProgressKind.CATCHUP && (
+                                            it.itemId == catchupItemId ||
+                                            it.itemId.contains("${programme.startEpochMilli}") ||
+                                            it.key.contains(canonicalChannel)
+                                        )
+                                    }
+                                    Text(
+                                        when {
+                                            isLiveNow -> strings.watchNow
+                                            canCatchup && hasCatchupProgress -> strings.resume
+                                            canCatchup -> strings.watchCatchup
+                                            else -> strings.watchLiveChannel
+                                        },
+                                        fontSize = 12.sp
+                                    )
                                 }
                             }
                         }
@@ -4266,9 +4310,13 @@ private fun FortressLibrary(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
-    var progressEntries by remember { mutableStateOf(progressStore.entries()) }
+    var progressEntries by remember { mutableStateOf(emptyList<VodProgressEntry>()) }
     LaunchedEffect(activeHouseholdProfile?.id, progressRefreshTrigger) {
-        progressEntries = progressStore.entries()
+        withContext(Dispatchers.IO) {
+            progressStore.entries()
+        }.let {
+            progressEntries = it
+        }
     }
     val libraryConfiguration = LocalConfiguration.current
     val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
@@ -4357,7 +4405,7 @@ private fun FortressLibrary(
                 cloudSync.recordProgressMutation(
                     profileId = activeHouseholdProfile.id,
                     sourceId = entry.sourceId,
-                    itemKind = if (entry.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                    itemKind = entry.kind.wireValue,
                     itemId = entry.itemId,
                     positionMs = 0L,
                     durationMs = entry.durationMs,
@@ -4448,7 +4496,7 @@ private fun FortressLibrary(
                     maximumAge = maximumAge,
                     blockUnrated = blockUnrated,
                     onContinueWatching = { entry ->
-                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
+                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
                     },
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleMovieWatchlist = onToggleMovieWatchlist,
@@ -4567,7 +4615,37 @@ private fun FortressLibrary(
                     onOpenSettings = onOpenSettings,
                     onSaveMapping = onSaveMapping,
                     onResetMapping = onResetMapping,
-                    onRequestAdultAuth = onRequestAdultAuth
+                    onRequestAdultAuth = onRequestAdultAuth,
+                    progressEntries = progressEntries,
+                    onWatchCatchup = { channel, programme ->
+                        val source = enabledSources.firstOrNull { it.id == channel.sourceId }?.source as? ContentSource.Xtream
+                        val streamId = channel.sourceItemId.toIntOrNull() ?: 0
+                        val durationMs = ((programme.stopEpochMilli ?: (programme.startEpochMilli + 3600_000L)) - programme.startEpochMilli).coerceAtLeast(60_000L)
+                        val durationMinutes = (durationMs / 60_000L).toInt().coerceAtLeast(1)
+                        val instant = java.time.Instant.ofEpochMilli(programme.startEpochMilli)
+                        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm").withZone(java.time.ZoneOffset.UTC)
+                        val streamUrl = if (source != null && streamId > 0) {
+                            val client = XtreamClient(context.applicationContext, channel.sourceId, source)
+                            client.timeshiftStreamUrl(streamId, durationMinutes, formatter.format(instant), "ts")
+                        } else {
+                            channel.streamUrl
+                        }
+                        val canonicalChannel = channel.tvgId?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: channel.name.trim().lowercase().takeIf { it.isNotEmpty() }
+                            ?: channel.sourceItemId
+                        val catchupKey = CatchupProgressKey(canonicalChannel, instant)
+                        vodPlayback = VodPlaybackRequest(
+                            key = "catchup:${channel.sourceId}:${canonicalChannel}:${programme.startEpochMilli}",
+                            kind = VodProgressKind.CATCHUP,
+                            sourceId = channel.sourceId,
+                            itemId = catchupKey.toItemId(),
+                            seriesId = streamId,
+                            title = "${channel.name} · ${programme.title}",
+                            posterUrl = channel.logoUrl,
+                            containerExtension = "ts",
+                            streamUrl = streamUrl
+                        )
+                    }
                 )
                 LibraryDestination.MOVIES -> XtreamMoviesScreen(
                     catalogs = xtreamCatalogs,
@@ -4577,7 +4655,7 @@ private fun FortressLibrary(
                     progressEntries = progressEntries,
                     watchedItemIds = watchedItemIds,
                     onContinueWatching = { entry ->
-                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
+                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
                     },
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     hideAdultContent = hideAdultContent,
@@ -4621,7 +4699,7 @@ private fun FortressLibrary(
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.EPISODE },
                     progressEntries = progressEntries,
                     onContinueWatching = { entry ->
-                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context)
+                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
                     },
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleFollow = onToggleSeriesFollow,
@@ -4744,7 +4822,7 @@ private fun FortressLibrary(
                         cloudSync.recordProgressMutation(
                             profileId = activeHouseholdProfile.id,
                             sourceId = request.sourceId,
-                            itemKind = if (request.kind == VodProgressKind.MOVIE) "movie" else "episode",
+                            itemKind = request.kind.wireValue,
                             itemId = request.itemId,
                             positionMs = positionMs,
                             durationMs = durationMs,
@@ -5040,7 +5118,8 @@ private fun resolveVodPlayback(
     entry: VodProgressEntry,
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
-    context: Context
+    context: Context,
+    channels: List<PlaylistChannel> = emptyList()
 ): VodPlaybackRequest? {
     val source = profiles.firstOrNull { it.id == entry.sourceId }?.source as? ContentSource.Xtream ?: return null
     val client = XtreamClient(context.applicationContext, entry.sourceId, source)
@@ -5061,6 +5140,30 @@ private fun resolveVodPlayback(
                 plot = null
             )
         )
+        VodProgressKind.CATCHUP -> {
+            val catchupKey = CatchupProgressKey.fromItemId(entry.itemId)
+            val matchedChannel = if (catchupKey != null) {
+                channels.firstOrNull { ch ->
+                    ch.sourceId == entry.sourceId && (
+                        ch.tvgId?.equals(catchupKey.channelId, ignoreCase = true) == true ||
+                        ch.name.trim().equals(catchupKey.channelId, ignoreCase = true) ||
+                        ch.sourceItemId == catchupKey.channelId
+                    )
+                }
+            } else null
+            val rawStreamId = matchedChannel?.sourceItemId?.toIntOrNull()
+                ?: entry.seriesId
+                ?: catchupKey?.channelId?.toIntOrNull()
+                ?: 0
+            if (rawStreamId > 0) {
+                val durationMins = if (entry.durationMs > 0) (entry.durationMs / 60_000L).toInt().coerceAtLeast(1) else 60
+                val startInstant = catchupKey?.programStartUtc ?: java.time.Instant.ofEpochMilli(entry.updatedAtMs)
+                val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm").withZone(java.time.ZoneOffset.UTC)
+                client.timeshiftStreamUrl(rawStreamId, durationMins, formatter.format(startInstant), entry.containerExtension)
+            } else {
+                matchedChannel?.streamUrl ?: client.liveStreamUrl(rawStreamId, entry.containerExtension)
+            }
+        }
     }
     val seriesName = if (entry.kind == VodProgressKind.EPISODE && entry.seriesId != null) {
         catalogs.firstOrNull { it.sourceId == entry.sourceId }?.series?.firstOrNull { it.id == entry.seriesId }?.name
@@ -5212,7 +5315,11 @@ private fun ContinueWatchingRow(
                                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    if (featured.kind == VodProgressKind.MOVIE) strings.navMovies else strings.navSeries,
+                                    when (featured.kind) {
+                                        VodProgressKind.MOVIE -> strings.navMovies
+                                        VodProgressKind.EPISODE -> strings.navSeries
+                                        VodProgressKind.CATCHUP -> strings.catchup
+                                    },
                                     color = MaterialTheme.colorScheme.primary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
@@ -7866,6 +7973,11 @@ private fun VodPlayerDialog(
             fullscreenPlaying = true
         )
         val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) {
+                    onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+                }
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_ENDED) {
@@ -8046,8 +8158,13 @@ private fun VodPlayerDialog(
             onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
         }
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    val dismissAndSaveProgress = {
+        onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
+        onDismiss()
+    }
+    Dialog(onDismissRequest = dismissAndSaveProgress, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ImmersiveSystemBars()
+        BackHandler { dismissAndSaveProgress() }
         Box(
             Modifier
                 .fillMaxSize()
@@ -8119,7 +8236,7 @@ private fun VodPlayerDialog(
                             }
                             TvPlayerAction.STOP -> {
                                 player.stop()
-                                onDismiss()
+                                dismissAndSaveProgress()
                                 true
                             }
                             else -> false
@@ -8213,7 +8330,7 @@ private fun VodPlayerDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         FilledIconButton(
-                            onClick = onDismiss,
+                            onClick = dismissAndSaveProgress,
                             colors = IconButtonDefaults.filledIconButtonColors(
                                 containerColor = Color.Black.copy(alpha = 0.7f),
                                 contentColor = Color.White
@@ -10675,6 +10792,8 @@ private fun ChannelBrowser(
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
     onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
     onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
+    progressEntries: List<VodProgressEntry> = emptyList(),
+    onWatchCatchup: ((PlaylistChannel, EpgProgramme) -> Unit)? = null,
     contentFocusRequester: FocusRequester? = null,
     sidebarFocusRequester: FocusRequester? = null
 ) {
@@ -10915,6 +11034,11 @@ private fun ChannelBrowser(
                 selectChannel(channel)
                 showProgrammeGuide = false
             },
+            onWatchCatchup = { channel, programme ->
+                showProgrammeGuide = false
+                onWatchCatchup?.invoke(channel, programme)
+            },
+            progressEntries = progressEntries,
             activeChannel = selectedChannel,
             dockedPlayer = if (selectedChannel != null) {
                 {

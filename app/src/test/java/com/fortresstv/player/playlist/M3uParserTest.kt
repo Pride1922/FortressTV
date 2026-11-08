@@ -24,6 +24,25 @@ class M3uParserTest {
     }
 
     @Test
+    fun parsesCatchupAttributes() {
+        val playlist = M3uParser.parse(
+            """
+                #EXTM3U
+                #EXTINF:-1 catchup="default" catchup-days="7",Catchup Channel
+                https://example.test/catchup.m3u8
+                #EXTINF:-1,Regular Channel
+                https://example.test/regular.m3u8
+            """.trimIndent()
+        )
+
+        assertEquals(true, playlist.channels[0].hasCatchup)
+        assertEquals(7, playlist.channels[0].catchupDays)
+
+        assertEquals(false, playlist.channels[1].hasCatchup)
+        assertEquals(0, playlist.channels[1].catchupDays)
+    }
+
+    @Test
     fun supportsExtGrp() {
         val playlist = M3uParser.parse("#EXTINF:-1,Radio\n#EXTGRP:Audio\nhttps://example.test/radio")
 
