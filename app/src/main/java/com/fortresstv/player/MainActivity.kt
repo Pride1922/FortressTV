@@ -12282,11 +12282,6 @@ private fun PlayerPanel(
     val playbackMode = LocalPlaybackMode.current
     val liveTransferProgress = remember { PlaybackTransferProgress() }
     val liveFrameProgress = remember { PlaybackFrameProgress(android.os.SystemClock.elapsedRealtime()) }
-    val player = remember(playbackMode) {
-        FortressPlayerFactory.create(context, PlaybackContentType.LIVE, playbackMode, liveTransferProgress, liveFrameProgress).apply {
-            playWhenReady = true
-        }
-    }
     val telemetryStore = remember { com.fortresstv.player.telemetry.TelemetryStore.get(context.applicationContext) }
     val channelHealthRepo = remember { com.fortresstv.player.telemetry.ChannelHealthRepository.get(context.applicationContext) }
     val healthSnapshots by channelHealthRepo.snapshots.collectAsState()
@@ -12295,6 +12290,26 @@ private fun PlayerPanel(
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
     val liveChannelId = remember(channel) { channel.tvgId?.takeIf { it.isNotBlank() } ?: channel.name }
     val currentHealth = healthSnapshots[liveChannelId]
+    val adaptiveLoadControl = remember {
+        com.fortresstv.player.player.AdaptiveLoadControl(
+            initialHealthState = currentHealth?.state ?: com.fortresstv.player.telemetry.ConnectionHealthState.UNKNOWN
+        )
+    }
+    val player = remember(playbackMode) {
+        FortressPlayerFactory.create(
+            context = context,
+            type = PlaybackContentType.LIVE,
+            mode = playbackMode,
+            transferProgress = liveTransferProgress,
+            frameProgress = liveFrameProgress,
+            customLoadControl = adaptiveLoadControl
+        ).apply {
+            playWhenReady = true
+        }
+    }
+    LaunchedEffect(liveChannelId, currentHealth?.state) {
+        adaptiveLoadControl.updateHealthState(currentHealth?.state ?: com.fortresstv.player.telemetry.ConnectionHealthState.UNKNOWN)
+    }
     val tracker = remember(channel.streamUrl, player) {
         com.fortresstv.player.telemetry.PlaybackHealthTracker(
             householdId = currentHouseholdId,

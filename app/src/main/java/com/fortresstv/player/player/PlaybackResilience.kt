@@ -305,7 +305,8 @@ object FortressPlayerFactory {
         type: PlaybackContentType,
         mode: PlaybackMode,
         transferProgress: PlaybackTransferProgress? = null,
-        frameProgress: PlaybackFrameProgress? = null
+        frameProgress: PlaybackFrameProgress? = null,
+        customLoadControl: LoadControl? = null
     ): ExoPlayer {
         val profile = PlaybackProfiles.forContent(type, mode)
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -317,7 +318,7 @@ object FortressPlayerFactory {
             else -> "other"
         }
         Log.d("FortressTV.QoE", "create type=$type mode=$mode network=$networkType metered=${manager?.isActiveNetworkMetered}")
-        val loadControl: LoadControl = DefaultLoadControl.Builder()
+        val loadControl: LoadControl = customLoadControl ?: DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 profile.minBufferMs,
                 profile.maxBufferMs,

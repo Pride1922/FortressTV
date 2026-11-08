@@ -10,6 +10,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
+ * Buffer tuning configuration tied directly to channel health stability.
+ */
+data class HealthBufferPolicy(
+    val minBufferMs: Int,
+    val maxBufferMs: Int,
+    val bufferForPlaybackMs: Int,
+    val bufferForPlaybackAfterRebufferMs: Int,
+    val label: String
+)
+
+/**
  * Categorizes the observed connection health of a stream.
  */
 enum class ConnectionHealthState(val color: Color) {
@@ -17,7 +28,39 @@ enum class ConnectionHealthState(val color: Color) {
     MODERATE(Color(0xFFFFC107)),  // Amber
     POOR(Color(0xFFFF5252)),      // Red
     MEASURING(Color(0xFF90CAF9)), // Light Blue / Pulsing
-    UNKNOWN(Color(0xFF888888))    // Gray
+    UNKNOWN(Color(0xFF888888));   // Gray
+
+    val bufferPolicy: HealthBufferPolicy
+        get() = when (this) {
+            EXCELLENT -> HealthBufferPolicy(
+                minBufferMs = 8_000,
+                maxBufferMs = 25_000,
+                bufferForPlaybackMs = 600,
+                bufferForPlaybackAfterRebufferMs = 1_500,
+                label = "Fast-Start (600ms)"
+            )
+            MODERATE -> HealthBufferPolicy(
+                minBufferMs = 15_000,
+                maxBufferMs = 40_000,
+                bufferForPlaybackMs = 1_800,
+                bufferForPlaybackAfterRebufferMs = 3_000,
+                label = "Balanced (1.8s)"
+            )
+            POOR -> HealthBufferPolicy(
+                minBufferMs = 25_000,
+                maxBufferMs = 60_000,
+                bufferForPlaybackMs = 4_000,
+                bufferForPlaybackAfterRebufferMs = 6_000,
+                label = "Anti-Freeze (4.0s)"
+            )
+            MEASURING, UNKNOWN -> HealthBufferPolicy(
+                minBufferMs = 12_000,
+                maxBufferMs = 35_000,
+                bufferForPlaybackMs = 1_500,
+                bufferForPlaybackAfterRebufferMs = 2_500,
+                label = "Default (1.5s)"
+            )
+        }
 }
 
 /**
@@ -118,14 +161,21 @@ class ChannelHealthRepository internal constructor(
     }
 
     private val preferences by lazy { prefsProvider() }
-    private val _snapshots = MutableStateFlow<Map<String, ChannelHealthSnapshot>>(emptyMap())
-    val snapshots: StateFlow<Map<String, ChannelHealthSnapshot>> = _snapshots.asStateFlow()
+    private val _localSnapshots = MutableStateFlow<Map<String, ChannelHealthSnapshot>>(emptyMap())
+    private val _aggregateSnapshots = MutableStateFlow<Map<String, ChannelHealthSnapshot>>(emptyMap())
+    private val _effectiveSnapshots = MutableStateFlow<Map<String, ChannelHealthSnapshot>>(emptyMap())
+
+    /**
+     * Effective stream health snapshots, prioritizing local observations on this device
+     * with aggregate cloud community scores as a fallback for unwatched channels.
+     */
+    val snapshots: StateFlow<Map<String, ChannelHealthSnapshot>> = _effectiveSnapshots.asStateFlow()
 
     init {
         loadPersisted()
     }
 
-    fun getHealth(channelId: String): ChannelHealthSnapshot? = _snapshots.value[channelId]
+    fun getHealth(channelId: String): ChannelHealthSnapshot? = _effectiveSnapshots.value[channelId]
 
     /**
      * Updates health in real time while a session is actively playing.
@@ -150,9 +200,10 @@ class ChannelHealthRepository internal constructor(
             isLiveTesting = isLiveTesting
         )
         synchronized(this) {
-            val updated = _snapshots.value.toMutableMap()
+            val updated = _localSnapshots.value.toMutableMap()
             updated[channelId] = snapshot
-            _snapshots.value = updated
+            _localSnapshots.value = updated
+            refreshEffective()
             persistAsync(updated)
         }
     }
@@ -164,11 +215,27 @@ class ChannelHealthRepository internal constructor(
         if (summary.channelId.isBlank()) return
         val snapshot = ChannelHealthSnapshot.fromSummary(summary)
         synchronized(this) {
-            val updated = _snapshots.value.toMutableMap()
+            val updated = _localSnapshots.value.toMutableMap()
             updated[summary.channelId] = snapshot
-            _snapshots.value = updated
+            _localSnapshots.value = updated
+            refreshEffective()
             persistAsync(updated)
         }
+    }
+
+    /**
+     * Sets crowdsourced community aggregates fetched from Supabase.
+     */
+    fun setAggregateSnapshots(aggregates: Map<String, ChannelHealthSnapshot>) {
+        synchronized(this) {
+            _aggregateSnapshots.value = aggregates
+            refreshEffective()
+        }
+    }
+
+    private fun refreshEffective() {
+        // Local observations on this device always take precedence over global aggregates
+        _effectiveSnapshots.value = _aggregateSnapshots.value + _localSnapshots.value
     }
 
     private fun loadPersisted() {
@@ -181,7 +248,8 @@ class ChannelHealthRepository internal constructor(
                 val snapshot = ChannelHealthSnapshot.fromJson(obj)
                 map[snapshot.channelId] = snapshot
             }
-            _snapshots.value = map
+            _localSnapshots.value = map
+            refreshEffective()
         }
     }
 
