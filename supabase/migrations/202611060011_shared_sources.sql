@@ -160,7 +160,8 @@ grant execute on function public.fortress_delete_household_source(uuid, uuid) to
 alter table public.household_profiles
     add column if not exists avatar_url text;
 
-drop function if exists public.fortress_create_profile;
+drop function if exists public.fortress_create_profile(text, text, text, boolean, int, boolean, uuid, text);
+drop function if exists public.fortress_create_profile(text, text, text, boolean, int, boolean, uuid);
 
 create or replace function public.fortress_create_profile(
     p_name text,
@@ -206,7 +207,8 @@ end;
 $$;
 grant execute on function public.fortress_create_profile(text, text, text, boolean, int, boolean, uuid, text) to authenticated;
 
-drop function if exists public.fortress_update_profile;
+drop function if exists public.fortress_update_profile(uuid, text, text, text, boolean, int, boolean, uuid, text);
+drop function if exists public.fortress_update_profile(uuid, text, text, text, boolean, int, boolean, uuid);
 
 create or replace function public.fortress_update_profile(
     p_profile_id uuid,

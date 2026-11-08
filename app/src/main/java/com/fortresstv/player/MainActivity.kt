@@ -1065,6 +1065,7 @@ private fun FortressTVApp(
                                 movieWatchlistIds = userLibrary.movieWatchlistIds()
                                 followedSeriesIds = userLibrary.followedSeriesIds()
                                 watchedItemIds = userLibrary.watchedItemIds()
+                                progressRefreshTrigger++
                             }
                         }
                         preferredAudioLanguage = settings.preferredAudioLanguage(targetProfileId)

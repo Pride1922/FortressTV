@@ -1,8 +1,10 @@
 -- Migration 15: Fix hide_adult_content persistence and dedicated atomic RPC
 begin;
 
-drop function if exists public.fortress_create_profile;
-drop function if exists public.fortress_update_profile;
+drop function if exists public.fortress_create_profile(text, text, text, boolean, int, boolean, uuid, text);
+drop function if exists public.fortress_create_profile(text, text, text, boolean, int, boolean, uuid);
+drop function if exists public.fortress_update_profile(uuid, text, text, text, boolean, int, boolean, uuid, text);
+drop function if exists public.fortress_update_profile(uuid, text, text, text, boolean, int, boolean, uuid);
 
 -- 1. fortress_create_profile: ensure hide_adult_content is properly persisted on creation
 create or replace function public.fortress_create_profile(
