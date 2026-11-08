@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC11",
-    "versionCode":  45,
-    "notes":  "FortressTV 2.0.0-RC11\n\n- Added Connection Health Telemetry Pipeline and Supabase sync.\n- Added live connection health badges and detailed diagnostics dialog.\n- Added connection health dots to channel list and Quick Zap drawer.\n- Fixed stall detection to exclude initial startup buffering.\n- Supported JWT household claim in telemetry RLS policies.\n- Full pt-PT and English language parity.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC11/fortresstv.apk",
-    "sha256":  "AC703E6E9B4575906C41C921F7DF218F80893529406EEF67E7A50ED5D4F57981"
+    "version":  "2.0.0-RC12",
+    "versionCode":  46,
+    "notes":  "FortressTV 2.0.0-RC12:\n- Match details sheet: interactive card popup displaying live score, minute, stadium venue, and chronological goalscorers, penalties, and red cards with 1-tap playback.\n- Dynamic multi-channel sports distribution: automatically resolves simultaneous kickoff matches across separate network channels (DAZN 1..6, Sport TV 1..6) and strictly prioritizes Portuguese feeds (PT:).\n- Auto-refreshing sports ticker: live scores and minutes periodically update every 60 seconds on the Home screen.\n- Movie poster fallback resolver: queries Cinemeta metadata for newly added VOD releases lacking stream artwork, ensuring full HD poster coverage.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC12/fortresstv.apk",
+    "sha256":  "C6783C815C443B5E271B23FF8D33ED585A16D9EF1DCC662C3201572BB14F23B7"
 }
