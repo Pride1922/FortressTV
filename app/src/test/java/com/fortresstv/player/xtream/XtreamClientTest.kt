@@ -299,6 +299,53 @@ class XtreamClientTest {
     }
 
     @Test
+    fun parsesSeasonsOverviewAndFallsBackForEpisodesWhenInfoIsEmpty() {
+        val client = XtreamClient(
+            sourceId = "test-source",
+            source = ContentSource.Xtream("https://example.com", "Test", "user", "pass")
+        )
+        val json = """{
+            "seasons": [
+                {
+                    "season_number": 1,
+                    "name": "Season 1",
+                    "overview": "Season 1 synopsis describing the journey"
+                }
+            ],
+            "info": {
+                "name": "Sample Series",
+                "plot": "Series plot"
+            },
+            "episodes": {
+                "1": [
+                    {
+                        "id": "801",
+                        "episode_num": 1,
+                        "title": "Episode 1",
+                        "container_extension": "mkv",
+                        "info": []
+                    },
+                    {
+                        "id": "802",
+                        "episode_num": 2,
+                        "title": "Episode 2",
+                        "container_extension": "mkv",
+                        "info": {
+                            "overview": "Episode 2 specific overview"
+                        }
+                    }
+                ]
+            }
+        }"""
+        val details = client.parseSeriesDetails(json)
+        assertEquals(1, details.seasonOverviews.size)
+        assertEquals("Season 1 synopsis describing the journey", details.seasonOverviews[1])
+        assertEquals(2, details.episodes.size)
+        assertEquals("Season 1 synopsis describing the journey", details.episodes[0].plot)
+        assertEquals("Episode 2 specific overview", details.episodes[1].plot)
+    }
+
+    @Test
     fun parsesLiveChannelsCorrectly() {
         val client = XtreamClient(
             sourceId = "test-source",

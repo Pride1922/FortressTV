@@ -288,6 +288,20 @@ class XtreamClient(
                 paths.optString(index).trim().takeIf(String::isNotEmpty)
             }
         } ?: value("backdrop_path")
+        val seasonsArr = root.optJSONArray("seasons")
+        val seasonOverviews = mutableMapOf<Int, String>()
+        if (seasonsArr != null) {
+            for (i in 0 until seasonsArr.length()) {
+                val sObj = seasonsArr.optJSONObject(i) ?: continue
+                val sNum = sObj.optInt("season_number", -1)
+                val sOverview = sObj.nullableString("overview")
+                    ?: sObj.nullableString("plot")
+                    ?: sObj.nullableString("description")
+                if (sNum >= 0 && !sOverview.isNullOrBlank()) {
+                    seasonOverviews[sNum] = sOverview
+                }
+            }
+        }
         return XtreamSeriesDetails(
             plot = value("plot", "description"),
             genre = value("genre"),
@@ -301,13 +315,14 @@ class XtreamClient(
             coverUrl = value("cover", "cover_big", "movie_image"),
             backdropUrl = backdrop,
             trailerUrl = value("youtube_trailer", "trailer"),
-            episodes = parseEpisodes(json),
+            episodes = parseEpisodes(json, seasonOverviews),
             tmdbId = value("tmdb_id", "tmdb"),
-            imdbId = value("imdb_id", "imdb")
+            imdbId = value("imdb_id", "imdb"),
+            seasonOverviews = seasonOverviews
         )
     }
 
-    internal fun parseEpisodes(json: String): List<XtreamEpisode> {
+    internal fun parseEpisodes(json: String, seasonOverviews: Map<Int, String> = emptyMap()): List<XtreamEpisode> {
         val root = JSONObject(json)
         val episodes = root.optJSONObject("episodes") ?: return emptyList()
         return episodes.keys().asSequence().flatMap { seasonKey ->
@@ -325,8 +340,14 @@ class XtreamClient(
                     ?: item.nullableString("movie_image")
                     ?: item.nullableString("cover")
                 val epPlot = info?.nullableString("plot")
+                    ?: info?.nullableString("overview")
                     ?: info?.nullableString("description")
+                    ?: info?.nullableString("synopsis")
                     ?: item.nullableString("plot")
+                    ?: item.nullableString("overview")
+                    ?: item.nullableString("description")
+                    ?: item.nullableString("synopsis")
+                    ?: seasonOverviews[season]
                 val epDuration = info?.optInt("duration_secs", 0)?.takeIf { it > 0 }
                     ?: info?.optInt("duration", 0)?.takeIf { it > 0 }
                     ?: item.optInt("duration_secs", 0)?.takeIf { it > 0 }

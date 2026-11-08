@@ -12,11 +12,13 @@ import java.util.concurrent.ConcurrentHashMap
 object TmdbMetadataResolver {
 
     private val memoryCache = ConcurrentHashMap<String, TmdbMetadata?>()
+    private val seasonMemoryCache = ConcurrentHashMap<String, TmdbSeasonMetadata?>()
     private const val CACHE_DIR_NAME = "tmdb_cache"
     private const val CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000L // 14 days
 
     fun clearMemoryCache() {
         memoryCache.clear()
+        seasonMemoryCache.clear()
     }
 
     suspend fun resolveMovie(
@@ -115,6 +117,36 @@ object TmdbMetadataResolver {
         result
     }
 
+    suspend fun resolveSeason(
+        context: Context,
+        settings: TmdbSettings,
+        tmdbSeriesId: Int,
+        seasonNumber: Int
+    ): TmdbSeasonMetadata? = withContext(Dispatchers.IO) {
+        if (!settings.enabled || settings.apiKey.isBlank() || tmdbSeriesId <= 0) return@withContext null
+
+        val language = settings.language.ifBlank { "pt-PT" }
+        val cacheKey = "season_${tmdbSeriesId}_${seasonNumber}_${language.lowercase()}"
+        if (seasonMemoryCache.containsKey(cacheKey)) {
+            return@withContext seasonMemoryCache[cacheKey]
+        }
+
+        val cachedDisk = readSeasonDiskCache(context, cacheKey)
+        if (cachedDisk != null) {
+            seasonMemoryCache[cacheKey] = cachedDisk
+            return@withContext cachedDisk
+        }
+
+        val client = TmdbClient(settings.apiKey)
+        val result = client.getSeasonDetails(tmdbSeriesId, seasonNumber, language)
+        seasonMemoryCache[cacheKey] = result
+        if (result != null) {
+            writeSeasonDiskCache(context, cacheKey, result)
+        }
+
+        result
+    }
+
     private fun buildCacheKey(
         type: String,
         rawTitle: String,
@@ -185,6 +217,64 @@ object TmdbMetadataResolver {
             put("director", metadata.director.orEmpty())
             put("cast", JSONArray(metadata.cast))
             put("trailer_url", metadata.trailerUrl.orEmpty())
+            put("cached_at", System.currentTimeMillis())
+        }
+
+        temp.writeText(json.toString())
+        if (file.exists()) file.delete()
+        temp.renameTo(file)
+    }
+
+    private fun readSeasonDiskCache(context: Context, cacheKey: String): TmdbSeasonMetadata? = runCatching {
+        val dir = File(context.filesDir, CACHE_DIR_NAME)
+        val file = File(dir, "$cacheKey.json")
+        if (!file.exists()) return null
+        if (System.currentTimeMillis() - file.lastModified() > CACHE_TTL_MS) {
+            file.delete()
+            return null
+        }
+        val json = JSONObject(file.readText())
+        val seasonNumber = json.optInt("season_number")
+        val seasonName = json.optString("name").takeIf(String::isNotEmpty)
+        val overview = json.optString("overview").takeIf(String::isNotEmpty)
+        val episodesArr = json.optJSONArray("episodes") ?: JSONArray()
+        val epMap = mutableMapOf<Int, TmdbEpisodeMetadata>()
+        for (i in 0 until episodesArr.length()) {
+            val obj = episodesArr.optJSONObject(i) ?: continue
+            val num = obj.optInt("episode_number")
+            epMap[num] = TmdbEpisodeMetadata(
+                episodeNumber = num,
+                name = obj.optString("name").takeIf(String::isNotEmpty),
+                overview = obj.optString("overview").takeIf(String::isNotEmpty),
+                stillUrl = obj.optString("still_url").takeIf(String::isNotEmpty),
+                rating = obj.optString("rating").takeIf(String::isNotEmpty)
+            )
+        }
+        TmdbSeasonMetadata(seasonNumber, seasonName, overview, epMap)
+    }.getOrNull()
+
+    private fun writeSeasonDiskCache(context: Context, cacheKey: String, metadata: TmdbSeasonMetadata) = runCatching {
+        val dir = File(context.filesDir, CACHE_DIR_NAME)
+        if (!dir.exists()) dir.mkdirs()
+        val temp = File(dir, "$cacheKey.tmp")
+        val file = File(dir, "$cacheKey.json")
+
+        val json = JSONObject().apply {
+            put("season_number", metadata.seasonNumber)
+            put("name", metadata.name.orEmpty())
+            put("overview", metadata.overview.orEmpty())
+            val arr = JSONArray()
+            metadata.episodes.values.forEach { ep ->
+                val epObj = JSONObject().apply {
+                    put("episode_number", ep.episodeNumber)
+                    put("name", ep.name.orEmpty())
+                    put("overview", ep.overview.orEmpty())
+                    put("still_url", ep.stillUrl.orEmpty())
+                    put("rating", ep.rating.orEmpty())
+                }
+                arr.put(epObj)
+            }
+            put("episodes", arr)
             put("cached_at", System.currentTimeMillis())
         }
 

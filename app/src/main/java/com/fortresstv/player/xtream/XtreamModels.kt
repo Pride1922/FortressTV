@@ -66,7 +66,8 @@ data class XtreamSeriesDetails(
     val trailerUrl: String?,
     val episodes: List<XtreamEpisode>,
     val tmdbId: String? = null,
-    val imdbId: String? = null
+    val imdbId: String? = null,
+    val seasonOverviews: Map<Int, String> = emptyMap()
 )
 
 data class XtreamEpisode(

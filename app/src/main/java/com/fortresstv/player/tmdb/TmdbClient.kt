@@ -42,8 +42,11 @@ class TmdbClient(
             val raw = executeRequest(endpoint, queryParams)
             val json = JSONObject(raw)
             var overview = json.optString("overview").trim().takeIf(String::isNotEmpty)
+            if (overview == null && language.equals("pt-PT", ignoreCase = true)) {
+                overview = fetchFallbackOverview(endpoint, "pt-BR")
+            }
             if (overview == null && !language.equals("en-US", ignoreCase = true)) {
-                overview = fetchFallbackOverview(endpoint)
+                overview = fetchFallbackOverview(endpoint, "en-US")
             }
             parseMovieMetadata(json, overview)
         }.getOrNull()
@@ -59,10 +62,33 @@ class TmdbClient(
             val raw = executeRequest(endpoint, queryParams)
             val json = JSONObject(raw)
             var overview = json.optString("overview").trim().takeIf(String::isNotEmpty)
+            if (overview == null && language.equals("pt-PT", ignoreCase = true)) {
+                overview = fetchFallbackOverview(endpoint, "pt-BR")
+            }
             if (overview == null && !language.equals("en-US", ignoreCase = true)) {
-                overview = fetchFallbackOverview(endpoint)
+                overview = fetchFallbackOverview(endpoint, "en-US")
             }
             parseSeriesMetadata(json, overview)
+        }.getOrNull()
+    }
+
+    suspend fun getSeasonDetails(
+        tmdbSeriesId: Int,
+        seasonNumber: Int,
+        language: String = "pt-PT"
+    ): TmdbSeasonMetadata? = withContext(Dispatchers.IO) {
+        runCatching {
+            val endpoint = "/3/tv/$tmdbSeriesId/season/$seasonNumber"
+            val raw = executeRequest(endpoint, mapOf("language" to language))
+            val json = JSONObject(raw)
+            var seasonOverview = json.optString("overview").trim().takeIf(String::isNotEmpty)
+            if (seasonOverview == null && language.equals("pt-PT", ignoreCase = true)) {
+                seasonOverview = fetchFallbackOverview(endpoint, "pt-BR")
+            }
+            if (seasonOverview == null && !language.equals("en-US", ignoreCase = true)) {
+                seasonOverview = fetchFallbackOverview(endpoint, "en-US")
+            }
+            parseSeasonMetadata(tmdbSeriesId, json, seasonOverview, language)
         }.getOrNull()
     }
 
@@ -168,8 +194,8 @@ class TmdbClient(
         } else null
     }.getOrNull()
 
-    private suspend fun fetchFallbackOverview(endpoint: String): String? = runCatching {
-        val raw = executeRequest(endpoint, mapOf("language" to "en-US"))
+    private suspend fun fetchFallbackOverview(endpoint: String, language: String = "en-US"): String? = runCatching {
+        val raw = executeRequest(endpoint, mapOf("language" to language))
         val json = JSONObject(raw)
         json.optString("overview").trim().takeIf(String::isNotEmpty)
     }.getOrNull()
@@ -234,6 +260,73 @@ class TmdbClient(
             trailerUrl = trailerUrl
         )
     }
+
+    internal suspend fun parseSeasonMetadata(
+        showId: Int,
+        json: JSONObject,
+        seasonOverview: String?,
+        language: String
+    ): TmdbSeasonMetadata {
+        val seasonNumber = json.optInt("season_number", 0)
+        val seasonName = json.optString("name").trim().takeIf(String::isNotEmpty)
+        val episodesJson = json.optJSONArray("episodes") ?: JSONArray()
+        var ptBrFallbackEpisodes: Map<Int, JSONObject>? = null
+        var enFallbackEpisodes: Map<Int, JSONObject>? = null
+        val episodesMap = mutableMapOf<Int, TmdbEpisodeMetadata>()
+
+        for (i in 0 until episodesJson.length()) {
+            val epObj = episodesJson.optJSONObject(i) ?: continue
+            val epNum = epObj.optInt("episode_number", i + 1)
+            var epOverview = epObj.optString("overview").trim().takeIf(String::isNotEmpty)
+            val epName = epObj.optString("name").trim().takeIf(String::isNotEmpty)
+            val stillPath = epObj.optString("still_path").trim().takeIf(String::isNotEmpty)
+            val stillUrl = stillPath?.let { "$imageBaseUrl/w500$it" }
+            val voteAvg = epObj.optDouble("vote_average", 0.0)
+            val epRating = if (voteAvg > 0.0) String.format(Locale.US, "%.1f", voteAvg) else null
+
+            if (epOverview == null && language.equals("pt-PT", ignoreCase = true) && showId > 0) {
+                if (ptBrFallbackEpisodes == null) {
+                    ptBrFallbackEpisodes = fetchFallbackSeasonEpisodes(showId, seasonNumber, "pt-BR")
+                }
+                epOverview = ptBrFallbackEpisodes[epNum]?.optString("overview")?.trim()?.takeIf(String::isNotEmpty)
+            }
+
+            if (epOverview == null && !language.equals("en-US", ignoreCase = true) && showId > 0) {
+                if (enFallbackEpisodes == null) {
+                    enFallbackEpisodes = fetchFallbackSeasonEpisodes(showId, seasonNumber, "en-US")
+                }
+                epOverview = enFallbackEpisodes[epNum]?.optString("overview")?.trim()?.takeIf(String::isNotEmpty)
+            }
+
+            episodesMap[epNum] = TmdbEpisodeMetadata(
+                episodeNumber = epNum,
+                name = epName,
+                overview = epOverview,
+                stillUrl = stillUrl,
+                rating = epRating
+            )
+        }
+
+        return TmdbSeasonMetadata(
+            seasonNumber = seasonNumber,
+            name = seasonName,
+            overview = seasonOverview,
+            episodes = episodesMap
+        )
+    }
+
+    private suspend fun fetchFallbackSeasonEpisodes(showId: Int, seasonNumber: Int, lang: String = "en-US"): Map<Int, JSONObject> = runCatching {
+        if (showId <= 0) return emptyMap()
+        val endpoint = "/3/tv/$showId/season/$seasonNumber"
+        val raw = executeRequest(endpoint, mapOf("language" to lang))
+        val arr = JSONObject(raw).optJSONArray("episodes") ?: return emptyMap()
+        val result = mutableMapOf<Int, JSONObject>()
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            result[item.optInt("episode_number", i + 1)] = item
+        }
+        result
+    }.getOrDefault(emptyMap())
 
     private fun parseGenres(array: JSONArray?): List<String> {
         if (array == null) return emptyList()

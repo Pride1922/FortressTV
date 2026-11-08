@@ -337,6 +337,7 @@ interface Strings {
     val tmdbApiKeyHint: String
     val tmdbLanguage: String
     val tmdbLanguageDesc: String
+    val tmdbLanguageAuto: String
     val tmdbTestConnection: String
     val tmdbConnectionSuccess: String
     val tmdbConnectionFailed: String
@@ -837,6 +838,7 @@ object EnglishStrings : Strings {
     override val tmdbApiKeyHint = "Supports API v3 Key or API v4 Read Access Token"
     override val tmdbLanguage = "Metadata Language"
     override val tmdbLanguageDesc = "Preferred language for synopsis, titles and media descriptions"
+    override val tmdbLanguageAuto = "Auto (Match Profile)"
     override val tmdbTestConnection = "Test Connection"
     override val tmdbConnectionSuccess = "Connection successful"
     override val tmdbConnectionFailed = "Connection failed"
@@ -1340,6 +1342,7 @@ object PortugueseStrings : Strings {
     override val tmdbApiKeyHint = "Suporta chave v3 ou Token de Leitura v4"
     override val tmdbLanguage = "Idioma dos Metadados"
     override val tmdbLanguageDesc = "Idioma preferencial para sinopses, títulos e descrições"
+    override val tmdbLanguageAuto = "Automático (Seguir Perfil)"
     override val tmdbTestConnection = "Testar Ligação"
     override val tmdbConnectionSuccess = "Ligação com sucesso"
     override val tmdbConnectionFailed = "Falha na ligação"

@@ -5,7 +5,7 @@ import androidx.compose.runtime.compositionLocalOf
 data class TmdbSettings(
     val enabled: Boolean = false,
     val apiKey: String = "",
-    val language: String = "pt-PT"
+    val language: String = TmdbLanguages.AUTO
 )
 
 val LocalTmdbSettings = compositionLocalOf { TmdbSettings() }
@@ -24,11 +24,29 @@ data class TmdbMetadata(
     val trailerUrl: String? = null
 )
 
+data class TmdbEpisodeMetadata(
+    val episodeNumber: Int,
+    val name: String? = null,
+    val overview: String? = null,
+    val stillUrl: String? = null,
+    val rating: String? = null
+)
+
+data class TmdbSeasonMetadata(
+    val seasonNumber: Int,
+    val name: String? = null,
+    val overview: String? = null,
+    val episodes: Map<Int, TmdbEpisodeMetadata> = emptyMap()
+)
+
 object TmdbLanguages {
+    const val AUTO = "auto"
+
     val supported = listOf(
+        AUTO to "Auto (Match Profile)",
         "pt-PT" to "Português (Portugal)",
-        "pt-BR" to "Português (Brasil)",
         "en-US" to "English (US)",
+        "pt-BR" to "Português (Brasil)",
         "es-ES" to "Español",
         "fr-FR" to "Français",
         "de-DE" to "Deutsch",

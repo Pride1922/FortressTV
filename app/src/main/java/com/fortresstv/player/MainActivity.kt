@@ -328,6 +328,7 @@ import com.fortresstv.player.tmdb.TmdbClient
 import com.fortresstv.player.tmdb.TmdbLanguages
 import com.fortresstv.player.tmdb.TmdbMetadata
 import com.fortresstv.player.tmdb.TmdbMetadataResolver
+import com.fortresstv.player.tmdb.TmdbSeasonMetadata
 import com.fortresstv.player.tmdb.TmdbSettings
 import com.fortresstv.player.introdb.EpisodeSegments
 import com.fortresstv.player.introdb.LocalTheIntroDbSettings
@@ -1816,11 +1817,28 @@ private fun FortressTVApp(
         onTransferDeepLinkConsumed()
     }
 
+    val effectiveTmdbSettings = remember(tmdbSettings, activeHouseholdProfile.language) {
+        if (tmdbSettings.language == TmdbLanguages.AUTO || tmdbSettings.language.isBlank()) {
+            val resolvedLang = when {
+                activeHouseholdProfile.language.startsWith("pt-BR", ignoreCase = true) -> "pt-BR"
+                activeHouseholdProfile.language.startsWith("pt", ignoreCase = true) -> "pt-PT"
+                activeHouseholdProfile.language.startsWith("es", ignoreCase = true) -> "es-ES"
+                activeHouseholdProfile.language.startsWith("fr", ignoreCase = true) -> "fr-FR"
+                activeHouseholdProfile.language.startsWith("de", ignoreCase = true) -> "de-DE"
+                activeHouseholdProfile.language.startsWith("it", ignoreCase = true) -> "it-IT"
+                else -> "en-US"
+            }
+            tmdbSettings.copy(language = resolvedLang)
+        } else {
+            tmdbSettings
+        }
+    }
+
     CompositionLocalProvider(
         LocalAppStrings provides strings,
         LocalFormFactor provides formFactor,
         LocalPlaybackMode provides playbackMode,
-        LocalTmdbSettings provides tmdbSettings,
+        LocalTmdbSettings provides effectiveTmdbSettings,
         LocalTheIntroDbSettings provides introDbSettings
     ) {
         Box(Modifier.fillMaxSize()) {
@@ -7283,6 +7301,51 @@ private fun SeriesEpisodesDialog(
             list
         }
     }
+
+    val effectiveTmdbId = tmdbMetadata?.tmdbId ?: series.tmdbId?.toIntOrNull() ?: details?.tmdbId?.toIntOrNull()
+    var seasonMetadata by remember(series.id, selectedSeason, effectiveTmdbId) {
+        mutableStateOf<TmdbSeasonMetadata?>(null)
+    }
+
+    LaunchedEffect(effectiveTmdbId, selectedSeason, tmdbSettings) {
+        val tmdbId = effectiveTmdbId
+        val season = selectedSeason ?: seasons.firstOrNull() ?: 1
+        if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank() && tmdbId != null && tmdbId > 0) {
+            val resolved = TmdbMetadataResolver.resolveSeason(
+                context = context,
+                settings = tmdbSettings,
+                tmdbSeriesId = tmdbId,
+                seasonNumber = season
+            )
+            if (resolved != null) {
+                seasonMetadata = resolved
+            }
+        }
+    }
+
+    var nextUpSeasonMetadata by remember(series.id, nextUnwatchedEpisode?.season, effectiveTmdbId) {
+        mutableStateOf<TmdbSeasonMetadata?>(null)
+    }
+
+    LaunchedEffect(effectiveTmdbId, nextUnwatchedEpisode?.season, tmdbSettings) {
+        val tmdbId = effectiveTmdbId
+        val nextSeason = nextUnwatchedEpisode?.season
+        if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank() && tmdbId != null && tmdbId > 0 && nextSeason != null) {
+            if (nextSeason == (selectedSeason ?: seasons.firstOrNull())) {
+                nextUpSeasonMetadata = seasonMetadata
+            } else {
+                val resolved = TmdbMetadataResolver.resolveSeason(
+                    context = context,
+                    settings = tmdbSettings,
+                    tmdbSeriesId = tmdbId,
+                    seasonNumber = nextSeason
+                )
+                if (resolved != null) {
+                    nextUpSeasonMetadata = resolved
+                }
+            }
+        }
+    }
     LaunchedEffect(selectedSeason, focusEpisodeAfterSeasonChange) {
         if (isTv && focusEpisodeAfterSeasonChange) {
             focusEpisodeAfterSeasonChange = false
@@ -7546,14 +7609,34 @@ private fun SeriesEpisodesDialog(
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                     }
+                                    val nextEpTmdb = (if (nextUnwatchedEpisode.season == selectedSeason) seasonMetadata else nextUpSeasonMetadata)
+                                        ?.episodes?.get(nextUnwatchedEpisode.episodeNumber)
+                                    val nextEpPlot = nextEpTmdb?.overview?.takeIf(String::isNotBlank)
+                                        ?: nextUnwatchedEpisode.plot?.takeIf(String::isNotBlank)
+                                        ?: details?.seasonOverviews?.get(nextUnwatchedEpisode.season)
+                                        ?: details?.plot
+                                        ?: series.plot
+                                    val nextEpTitle = nextEpTmdb?.name?.takeIf { it.isNotBlank() && (nextUnwatchedEpisode.title.startsWith("Episode", ignoreCase = true) || nextUnwatchedEpisode.title.isBlank()) }
+                                        ?: nextUnwatchedEpisode.title
+
                                     Spacer(Modifier.height(2.dp))
                                     Text(
-                                        nextUnwatchedEpisode.title,
+                                        nextEpTitle,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (!nextEpPlot.isNullOrBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            nextEpPlot,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 11.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                                 val totalUnwatched = sortedEpisodes.count { it.libraryId(sourceId) !in watchedItemIds }
                                 if (totalUnwatched > 0) {
@@ -7677,9 +7760,18 @@ private fun SeriesEpisodesDialog(
                                 val epLibraryId = episode.libraryId(sourceId)
                                 val isEpisodeWatched = epLibraryId in watchedItemIds
                                 val epProgress = progressEntries.firstOrNull { it.key == epLibraryId }?.progressFraction
-                                val previewUrl = episode.posterUrl?.takeIf(String::isNotBlank)
+                                val tmdbEp = seasonMetadata?.episodes?.get(episode.episodeNumber)
+                                val epPlot = tmdbEp?.overview?.takeIf(String::isNotBlank)
+                                    ?: episode.plot?.takeIf(String::isNotBlank)
+                                    ?: details?.seasonOverviews?.get(episode.season)
+                                    ?: details?.plot
+                                    ?: series.plot
+                                val previewUrl = tmdbEp?.stillUrl?.takeIf(String::isNotBlank)
+                                    ?: episode.posterUrl?.takeIf(String::isNotBlank)
                                     ?: details?.backdropUrl?.takeIf(String::isNotBlank)
                                     ?: details?.coverUrl
+                                val epTitle = tmdbEp?.name?.takeIf { it.isNotBlank() && (episode.title.startsWith("Episode", ignoreCase = true) || episode.title.isBlank()) }
+                                    ?: episode.title
 
                                 Surface(
                                     onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
@@ -7721,7 +7813,7 @@ private fun SeriesEpisodesDialog(
                                                 if (!previewUrl.isNullOrBlank()) {
                                                     AsyncImage(
                                                         model = previewUrl,
-                                                        contentDescription = episode.title,
+                                                        contentDescription = epTitle,
                                                         contentScale = ContentScale.Crop,
                                                         modifier = Modifier.fillMaxSize()
                                                     )
@@ -7762,16 +7854,16 @@ private fun SeriesEpisodesDialog(
                                             }
                                             Spacer(Modifier.height(2.dp))
                                             Text(
-                                                text = episode.title,
+                                                text = epTitle,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
                                                 maxLines = 2,
                                                 overflow = TextOverflow.Ellipsis
                                             )
-                                            if (!episode.plot.isNullOrBlank()) {
+                                            if (!epPlot.isNullOrBlank()) {
                                                 Spacer(Modifier.height(3.dp))
                                                 Text(
-                                                    text = episode.plot,
+                                                    text = epPlot,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     fontSize = 11.sp,
                                                     maxLines = 2,
@@ -16907,7 +16999,9 @@ private fun ApiKeysTab(
                         subtitle = strings.tmdbLanguageDesc,
                         icon = Icons.Default.Translate,
                         selectedValue = tmdbSettings.language,
-                        options = TmdbLanguages.supported.map { it.first to it.second },
+                        options = TmdbLanguages.supported.map { (code, label) ->
+                            code to if (code == TmdbLanguages.AUTO) strings.tmdbLanguageAuto else label
+                        },
                         onValueSelected = { newLang ->
                             onTmdbSettingsChanged(tmdbSettings.copy(language = newLang))
                         }

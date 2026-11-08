@@ -67,7 +67,7 @@ class TmdbSettingsStore(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_LANGUAGE = "pt-PT"
+        const val DEFAULT_LANGUAGE = TmdbLanguages.AUTO
         private const val PREFS_NAME = "fortress_tmdb_settings"
         private const val KEY_ALIAS = "fortress_tmdb_key"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
