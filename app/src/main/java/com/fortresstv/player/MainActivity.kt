@@ -620,6 +620,7 @@ private fun FortressTVApp(
     var startupDestination by remember { mutableStateOf(settings.startupDestination()) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
+    var telemetryEnabled by remember { mutableStateOf(settings.telemetryEnabled()) }
     var playbackMode by remember { mutableStateOf(PlaybackMode.AUTO) }
     var preferredAudioLanguage by remember { mutableStateOf("default") }
     var preferredSubtitleLanguage by remember { mutableStateOf("off") }
@@ -1471,6 +1472,7 @@ private fun FortressTVApp(
         val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
         val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
         val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
+        val savedTelemetryPreference = withContext(Dispatchers.IO) { settings.telemetryEnabled() }
         val savedPlaybackMode = withContext(Dispatchers.IO) { settings.playbackMode() }
         val savedAudioLang = withContext(Dispatchers.IO) { settings.preferredAudioLanguage() }
         val savedSubLang = withContext(Dispatchers.IO) { settings.preferredSubtitleLanguage() }
@@ -1482,6 +1484,7 @@ private fun FortressTVApp(
         epgLastUpdate = epgUpdate
         playChannelsFullscreen = savedFullscreenPreference
         autoPictureInPicture = savedPictureInPicturePreference
+        telemetryEnabled = savedTelemetryPreference
         playbackMode = savedPlaybackMode
         preferredAudioLanguage = savedAudioLang
         preferredSubtitleLanguage = savedSubLang
@@ -2128,6 +2131,11 @@ private fun FortressTVApp(
                 onAutoPictureInPictureChanged = { enabled ->
                     autoPictureInPicture = enabled
                     scope.launch(Dispatchers.IO) { settings.setAutoPictureInPicture(enabled) }
+                },
+                telemetryEnabled = telemetryEnabled,
+                onTelemetryEnabledChanged = { enabled ->
+                    telemetryEnabled = enabled
+                    scope.launch(Dispatchers.IO) { settings.setTelemetryEnabled(enabled) }
                 },
                 playbackMode = playbackMode,
                 onPlaybackModeChanged = { mode ->
@@ -7727,6 +7735,27 @@ private fun VodPlayerDialog(
     val player = remember(request.streamUrl, playbackMode) {
         FortressPlayerFactory.create(context, PlaybackContentType.VOD, playbackMode)
     }
+    val telemetryStore = remember { com.fortresstv.player.telemetry.TelemetryStore.get(context.applicationContext) }
+    val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
+    val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
+    val streamKind = if (request.kind == VodProgressKind.CATCHUP) {
+        com.fortresstv.player.telemetry.StreamKindWire.CATCHUP
+    } else {
+        com.fortresstv.player.telemetry.StreamKindWire.VOD
+    }
+    val telemetryChannelId = if (request.kind == VodProgressKind.CATCHUP) request.itemId else ""
+    val tracker = remember(request.key, player) {
+        com.fortresstv.player.telemetry.PlaybackHealthTracker(
+            householdId = currentHouseholdId,
+            profileId = currentProfileId,
+            channelId = telemetryChannelId,
+            streamKind = streamKind,
+            providerId = request.sourceId,
+            onFinalized = { summary ->
+                telemetryStore.enqueue(summary)
+            }
+        )
+    }
     val vodNetworkGeneration = rememberPlaybackNetworkGeneration()
     var resumePositionMs by remember(request.key) { mutableLongStateOf(initialPositionMs) }
     var resumeDecisionMade by remember(request.key) { mutableStateOf(initialPositionMs < 10_000L) }
@@ -8027,7 +8056,10 @@ private fun VodPlayerDialog(
             override fun onPlayerError(error: PlaybackException) { playbackError = error.message ?: strings.playbackError }
         }
         player.addListener(listener)
+        player.addAnalyticsListener(tracker)
         onDispose {
+            tracker.finalizeSession()
+            player.removeAnalyticsListener(tracker)
             mainActivity?.updatePictureInPictureState(enabled = false, fullscreenPlaying = false)
             mainActivity?.setOnPictureInPictureDismissedListener(null)
             onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
@@ -8160,6 +8192,7 @@ private fun VodPlayerDialog(
         }
     }
     val dismissAndSaveProgress = {
+        tracker.finalizeSession()
         onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
         onDismiss()
     }
@@ -12226,6 +12259,29 @@ private fun PlayerPanel(
             playWhenReady = true
         }
     }
+    val telemetryStore = remember { com.fortresstv.player.telemetry.TelemetryStore.get(context.applicationContext) }
+    val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
+    val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
+    val liveChannelId = remember(channel) { channel.tvgId?.takeIf { it.isNotBlank() } ?: channel.name }
+    val tracker = remember(channel.streamUrl, player) {
+        com.fortresstv.player.telemetry.PlaybackHealthTracker(
+            householdId = currentHouseholdId,
+            profileId = currentProfileId,
+            channelId = liveChannelId,
+            streamKind = com.fortresstv.player.telemetry.StreamKindWire.LIVE,
+            providerId = channel.sourceId,
+            onFinalized = { summary ->
+                telemetryStore.enqueue(summary)
+            }
+        )
+    }
+    DisposableEffect(channel.streamUrl, player) {
+        player.addAnalyticsListener(tracker)
+        onDispose {
+            tracker.finalizeSession()
+            player.removeAnalyticsListener(tracker)
+        }
+    }
     val liveNetworkGeneration = rememberPlaybackNetworkGeneration()
     val configuration = LocalConfiguration.current
     val isTv = LocalFormFactor.current.isTelevision
@@ -12337,6 +12393,7 @@ private fun PlayerPanel(
         }
         val lifecycleObserver = object : DefaultLifecycleObserver {
             override fun onStop(owner: LifecycleOwner) {
+                tracker.finalizeSession()
                 if ((activity as? MainActivity)?.isInPictureInPictureMode == true) return
                 resumePlaybackOnStart = player.playWhenReady
                 player.pause()
@@ -15385,6 +15442,8 @@ private fun SettingsDialog(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    telemetryEnabled: Boolean = true,
+    onTelemetryEnabledChanged: (Boolean) -> Unit = {},
     playbackMode: PlaybackMode,
     onPlaybackModeChanged: (PlaybackMode) -> Unit,
     preferredAudioLanguage: String = "default",
@@ -15612,6 +15671,8 @@ private fun SettingsDialog(
                                     onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                     autoPictureInPicture = autoPictureInPicture,
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    telemetryEnabled = telemetryEnabled,
+                                    onTelemetryEnabledChanged = onTelemetryEnabledChanged,
                                     playbackMode = playbackMode,
                                     onPlaybackModeChanged = onPlaybackModeChanged,
                                     preferredAudioLanguage = preferredAudioLanguage,
@@ -15671,6 +15732,8 @@ private fun SettingsDialog(
                                     onPlayChannelsFullscreenChanged = onPlayChannelsFullscreenChanged,
                                     autoPictureInPicture = autoPictureInPicture,
                                     onAutoPictureInPictureChanged = onAutoPictureInPictureChanged,
+                                    telemetryEnabled = telemetryEnabled,
+                                    onTelemetryEnabledChanged = onTelemetryEnabledChanged,
                                     playbackMode = playbackMode,
                                     onPlaybackModeChanged = onPlaybackModeChanged,
                                     preferredAudioLanguage = preferredAudioLanguage,
@@ -16046,6 +16109,8 @@ private fun GeneralTab(
     onPlayChannelsFullscreenChanged: (Boolean) -> Unit,
     autoPictureInPicture: Boolean,
     onAutoPictureInPictureChanged: (Boolean) -> Unit,
+    telemetryEnabled: Boolean = true,
+    onTelemetryEnabledChanged: (Boolean) -> Unit = {},
     playbackMode: PlaybackMode = PlaybackMode.AUTO,
     onPlaybackModeChanged: (PlaybackMode) -> Unit = {},
     preferredAudioLanguage: String = "default",
@@ -16154,6 +16219,14 @@ private fun GeneralTab(
                 icon = Icons.Default.AspectRatio,
                 checked = autoPictureInPicture,
                 onCheckedChange = onAutoPictureInPictureChanged
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            SettingsToggleRow(
+                title = strings.anonymousTelemetry,
+                subtitle = strings.anonymousTelemetryDesc,
+                icon = Icons.Default.Speed,
+                checked = telemetryEnabled,
+                onCheckedChange = onTelemetryEnabledChanged
             )
         }
 

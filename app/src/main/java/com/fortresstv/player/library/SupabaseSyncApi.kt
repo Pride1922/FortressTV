@@ -1,5 +1,6 @@
 package com.fortresstv.player.library
 
+import com.fortresstv.player.telemetry.PlaybackHealthSummary
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -380,5 +381,33 @@ internal class SupabaseSyncApi(
             }
             list
         }.getOrDefault(emptyList())
+    }
+
+    fun uploadPlaybackHealthSummaries(
+        summaries: List<PlaybackHealthSummary>,
+        accessToken: String
+    ): List<String> {
+        if (summaries.isEmpty()) return emptyList()
+        val headers = mapOf(
+            "Prefer" to "resolution=ignore-duplicates,return=minimal"
+        )
+        val acknowledgedSessionIds = mutableListOf<String>()
+        for (summary in summaries) {
+            val success = runCatching {
+                val body = summary.toPostgrestPayload()
+                transport.request(
+                    "POST",
+                    "/rest/v1/playback_health_summaries?on_conflict=session_id",
+                    body,
+                    accessToken,
+                    headers
+                )
+                true
+            }.getOrDefault(false)
+            if (success) {
+                acknowledgedSessionIds.add(summary.sessionId)
+            }
+        }
+        return acknowledgedSessionIds
     }
 }

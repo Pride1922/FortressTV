@@ -258,6 +258,13 @@ class SourceSettingsStore internal constructor(
         preferences.edit().putBoolean("play_channels_fullscreen", enabled).apply()
     }
 
+    fun telemetryEnabled(): Boolean =
+        preferences.getBoolean("telemetry_enabled", true)
+
+    fun setTelemetryEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean("telemetry_enabled", enabled).apply()
+    }
+
     fun startupDestination(profileId: String? = null): StartupDestination {
         if (!profileId.isNullOrBlank()) {
             val v = preferences.getString("startup_destination_$profileId", null)

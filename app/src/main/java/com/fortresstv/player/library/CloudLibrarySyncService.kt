@@ -8,6 +8,7 @@ import com.fortresstv.player.account.AccountRepository
 import com.fortresstv.player.account.AccountState
 import com.fortresstv.player.profile.ProfileRepository
 import com.fortresstv.player.profile.ServerClockTracker
+import com.fortresstv.player.telemetry.TelemetryStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,7 +24,8 @@ class CloudLibrarySyncService internal constructor(
     private val accountRepository: AccountRepository,
     private val profileRepository: ProfileRepository,
     private val syncApi: SupabaseSyncApi = SupabaseSyncApi(),
-    private var outbox: SyncOutboxStore = SyncOutboxStore(context, accountRepository.currentUserId() ?: "local")
+    private var outbox: SyncOutboxStore = SyncOutboxStore(context, accountRepository.currentUserId() ?: "local"),
+    private val telemetryStore: TelemetryStore = TelemetryStore.get(context)
 ) {
     companion object {
         @Volatile
@@ -284,6 +286,9 @@ class CloudLibrarySyncService internal constructor(
         mutex.withLock {
             val accountState = accountRepository.resolveAccountState()
             if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
+
+            flushTelemetryInternal(accountState.accessToken)
+
             val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withLock false
 
             val pending = outbox.loadPending()
@@ -373,7 +378,24 @@ class CloudLibrarySyncService internal constructor(
                     return@withLock false
                 }
             }
+            flushTelemetryInternal(accountState.accessToken)
             true
+        }
+    }
+
+    private fun flushTelemetryInternal(accessToken: String) {
+        val batch = telemetryStore.pendingBatch(50)
+        if (batch.isEmpty()) return
+        val acknowledged = syncApi.uploadPlaybackHealthSummaries(batch, accessToken)
+        if (acknowledged.isNotEmpty()) {
+            telemetryStore.acknowledge(acknowledged)
+        }
+    }
+
+    suspend fun flushTelemetry(): Unit = withContext(Dispatchers.IO) {
+        val accountState = accountRepository.resolveAccountState()
+        if (accountState is AccountState.AuthenticatedOnline) {
+            flushTelemetryInternal(accountState.accessToken)
         }
     }
 

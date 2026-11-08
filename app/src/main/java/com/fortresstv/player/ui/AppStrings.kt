@@ -318,6 +318,8 @@ interface Strings {
     val playChannelsFullscreenDesc: String
     val autoPictureInPicture: String
     val autoPictureInPictureDesc: String
+    val anonymousTelemetry: String
+    val anonymousTelemetryDesc: String
     val addNewPlaylist: String
     val addPlaylist: String
     val playlistName: String
@@ -759,6 +761,8 @@ object EnglishStrings : Strings {
     override val playChannelsFullscreenDesc = "Enter fullscreen immediately when you select a channel."
     override val autoPictureInPicture = "Picture-in-Picture"
     override val autoPictureInPictureDesc = "Keep fullscreen video in a floating window when you press Home."
+    override val anonymousTelemetry = "Anonymous playback quality data"
+    override val anonymousTelemetryDesc = "Helps diagnose stream connection issues and tune playback stability."
     override val addNewPlaylist = "Add New Playlist"
     override val addPlaylist = "Add Playlist"
     override val playlistName = "Playlist Name"
@@ -1203,6 +1207,8 @@ object PortugueseStrings : Strings {
     override val playChannelsFullscreenDesc = "Entrar imediatamente em ecrã inteiro ao selecionar um canal."
     override val autoPictureInPicture = "Imagem em imagem"
     override val autoPictureInPictureDesc = "Manter o vídeo em ecrã inteiro numa janela flutuante ao premir o botão Início."
+    override val anonymousTelemetry = "Dados anónimos de qualidade de reprodução"
+    override val anonymousTelemetryDesc = "Ajuda a diagnosticar problemas de ligação e a ajustar a estabilidade de transmissão."
     override val addNewPlaylist = "Adicionar Nova Lista"
     override val addPlaylist = "Adicionar Lista"
     override val playlistName = "Nome da Lista"
