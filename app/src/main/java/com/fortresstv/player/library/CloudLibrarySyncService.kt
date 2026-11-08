@@ -385,10 +385,15 @@ class CloudLibrarySyncService internal constructor(
 
     private fun flushTelemetryInternal(accessToken: String) {
         val batch = telemetryStore.pendingBatch(50)
-        if (batch.isEmpty()) return
-        val acknowledged = syncApi.uploadPlaybackHealthSummaries(batch, accessToken)
-        if (acknowledged.isNotEmpty()) {
-            telemetryStore.acknowledge(acknowledged)
+        if (batch.isNotEmpty()) {
+            val acknowledged = syncApi.uploadPlaybackHealthSummaries(batch, accessToken)
+            if (acknowledged.isNotEmpty()) {
+                telemetryStore.acknowledge(acknowledged)
+            }
+        }
+        val aggregates = syncApi.fetchChannelHealthAggregates(accessToken)
+        if (aggregates.isNotEmpty()) {
+            com.fortresstv.player.telemetry.ChannelHealthRepository.get(context).setAggregateSnapshots(aggregates)
         }
     }
 

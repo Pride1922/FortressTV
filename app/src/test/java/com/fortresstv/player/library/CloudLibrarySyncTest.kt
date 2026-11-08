@@ -921,4 +921,57 @@ class CloudLibrarySyncTest {
         assertEquals("catchup", fabioItems[0].itemKind)
         assertEquals(500_000L, fabioItems[0].positionMs)
     }
+
+    @Test
+    fun fetchChannelHealthAggregates_groupsByChannelAndComputesSnapshot() {
+        val transport = FakeSyncTransport()
+        val api = SupabaseSyncApi(transport)
+
+        transport.getResponses.add(
+            """
+            [
+                {
+                    "channel_id": "rtp1.pt",
+                    "startup_ms": 1200,
+                    "stall_count": 0,
+                    "total_stall_ms": 0,
+                    "player_error_code": null,
+                    "region": "PT",
+                    "ended_at_epoch_ms": 1731060000000
+                },
+                {
+                    "channel_id": "rtp1.pt",
+                    "startup_ms": 1400,
+                    "stall_count": 0,
+                    "total_stall_ms": 0,
+                    "player_error_code": null,
+                    "region": "PT",
+                    "ended_at_epoch_ms": 1731061000000
+                },
+                {
+                    "channel_id": "sporttv1.pt",
+                    "startup_ms": 5000,
+                    "stall_count": 4,
+                    "total_stall_ms": 8000,
+                    "player_error_code": "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
+                    "region": "PT",
+                    "ended_at_epoch_ms": 1731062000000
+                }
+            ]
+            """.trimIndent()
+        )
+
+        val aggregates = api.fetchChannelHealthAggregates("jwt-token")
+        assertEquals(2, aggregates.size)
+
+        val rtp1 = aggregates["rtp1.pt"]
+        assertNotNull(rtp1)
+        assertEquals(1300L, rtp1!!.startupMs)
+        assertEquals(0, rtp1.stallCount)
+        assertEquals(com.fortresstv.player.telemetry.ConnectionHealthState.EXCELLENT, rtp1.state)
+
+        val sporttv = aggregates["sporttv1.pt"]
+        assertNotNull(sporttv)
+        assertEquals(com.fortresstv.player.telemetry.ConnectionHealthState.POOR, sporttv!!.state)
+    }
 }

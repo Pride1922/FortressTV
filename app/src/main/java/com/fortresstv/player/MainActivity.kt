@@ -12007,8 +12007,10 @@ private fun GuideChannelRow(
 ) {
     val context = LocalContext.current
     val healthSnapshots by remember { com.fortresstv.player.telemetry.ChannelHealthRepository.get(context.applicationContext).snapshots }.collectAsState()
-    val channelKey = remember(channel) { channel.tvgId?.takeIf { it.isNotBlank() } ?: channel.name }
-    val effectiveHealth = healthSnapshot ?: healthSnapshots[channelKey]
+    val effectiveHealth = healthSnapshot
+        ?: channel.sourceItemId.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
+        ?: channel.tvgId?.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
+        ?: healthSnapshots[channel.name]
     val strings = LocalAppStrings.current
     val presentation = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId, strings) {
         val current = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)?.current
@@ -14767,8 +14769,9 @@ private fun QuickZapTray(
                                     modifier = Modifier.weight(1f),
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    val zapKey = remember(itemChannel) { itemChannel.tvgId?.takeIf { it.isNotBlank() } ?: itemChannel.name }
-                                    val zapHealth = healthSnapshots[zapKey]
+                                    val zapHealth = itemChannel.sourceItemId.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
+                                        ?: itemChannel.tvgId?.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
+                                        ?: healthSnapshots[itemChannel.name]
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         if (zapHealth != null) {
                                             com.fortresstv.player.telemetry.ConnectionHealthDot(snapshot = zapHealth)

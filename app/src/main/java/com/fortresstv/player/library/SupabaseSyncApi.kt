@@ -410,4 +410,47 @@ internal class SupabaseSyncApi(
         }
         return acknowledgedSessionIds
     }
+
+    fun fetchChannelHealthAggregates(
+        accessToken: String
+    ): Map<String, com.fortresstv.player.telemetry.ChannelHealthSnapshot> {
+        return runCatching {
+            val text = transport.request(
+                "GET",
+                "/rest/v1/playback_health_summaries?select=channel_id,startup_ms,stall_count,total_stall_ms,player_error_code,region,ended_at_epoch_ms&order=inserted_at.desc&limit=300",
+                null,
+                accessToken,
+                null
+            )
+            val arr = JSONArray(text)
+            val grouped = mutableMapOf<String, MutableList<JSONObject>>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val channelId = obj.optString("channel_id").trim()
+                if (channelId.isBlank()) continue
+                grouped.getOrPut(channelId) { mutableListOf() }.add(obj)
+            }
+            val result = mutableMapOf<String, com.fortresstv.player.telemetry.ChannelHealthSnapshot>()
+            for ((channelId, rows) in grouped) {
+                val avgStartup = rows.map { it.optLong("startup_ms", 0L) }.average().toLong()
+                val totalStalls = rows.sumOf { it.optInt("stall_count", 0) }
+                val totalStallMs = rows.sumOf { it.optLong("total_stall_ms", 0L) }
+                val latestErrorCode = rows.firstNotNullOfOrNull { it.optString("player_error_code").takeIf { c -> c.isNotBlank() } }
+                val latestEpoch = rows.maxOfOrNull { it.optLong("ended_at_epoch_ms", 0L) } ?: 0L
+                val region = rows.firstOrNull()?.optString("region") ?: "unknown"
+                val snapshot = com.fortresstv.player.telemetry.ChannelHealthSnapshot.fromMetrics(
+                    channelId = channelId,
+                    startupMs = avgStartup,
+                    stallCount = totalStalls,
+                    totalStallMs = totalStallMs,
+                    errorCode = latestErrorCode,
+                    region = region,
+                    isLiveTesting = false,
+                    clockMs = latestEpoch
+                )
+                result[channelId] = snapshot
+            }
+            result
+        }.getOrDefault(emptyMap())
+    }
 }
