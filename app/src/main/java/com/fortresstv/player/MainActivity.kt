@@ -323,6 +323,13 @@ import com.fortresstv.player.subtitles.OpenSubtitlesSettingsStore
 import com.fortresstv.player.subtitles.SubtitleDiskCache
 import com.fortresstv.player.subtitles.openSubtitlesLanguageQuery
 import com.fortresstv.player.subtitles.shouldAutoSearchOpenSubtitles
+import com.fortresstv.player.tmdb.LocalTmdbSettings
+import com.fortresstv.player.tmdb.TmdbClient
+import com.fortresstv.player.tmdb.TmdbLanguages
+import com.fortresstv.player.tmdb.TmdbMetadata
+import com.fortresstv.player.tmdb.TmdbMetadataResolver
+import com.fortresstv.player.tmdb.TmdbSettings
+import com.fortresstv.player.tmdb.TmdbSettingsStore
 import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import com.fortresstv.player.ui.theme.FortressBackgroundBrush
@@ -619,6 +626,8 @@ private fun FortressTVApp(
     val vodProgressStore = remember { VodProgressStore(context.applicationContext, initialNs) }
     val openSubtitlesStore = remember { OpenSubtitlesSettingsStore(context.applicationContext) }
     var openSubtitlesSettings by remember { mutableStateOf(openSubtitlesStore.loadSettings()) }
+    val tmdbStore = remember { TmdbSettingsStore(context.applicationContext) }
+    var tmdbSettings by remember { mutableStateOf(tmdbStore.loadSettings()) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -1738,6 +1747,15 @@ private fun FortressTVApp(
                 } else if (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank()) {
                     cloudSourceService.syncOpenSubtitlesToCloud(openSubtitlesSettings, profileRepository.currentUnlockToken())
                 }
+                val restoredTmdb = cloudSourceService.restoreTmdbFromCloud(profileRepository.currentUnlockToken())
+                if (restoredTmdb != null && restoredTmdb.apiKey.isNotBlank()) {
+                    tmdbStore.saveSettings(restoredTmdb)
+                    withContext(Dispatchers.Main) {
+                        tmdbSettings = restoredTmdb
+                    }
+                } else if (tmdbSettings.apiKey.isNotBlank()) {
+                    cloudSourceService.syncTmdbToCloud(tmdbSettings, profileRepository.currentUnlockToken())
+                }
             }
         }
 
@@ -1792,7 +1810,8 @@ private fun FortressTVApp(
     CompositionLocalProvider(
         LocalAppStrings provides strings,
         LocalFormFactor provides formFactor,
-        LocalPlaybackMode provides playbackMode
+        LocalPlaybackMode provides playbackMode,
+        LocalTmdbSettings provides tmdbSettings
     ) {
         Box(Modifier.fillMaxSize()) {
             if (showOnboardingDialog) {
@@ -2112,6 +2131,15 @@ private fun FortressTVApp(
                         } else if (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank()) {
                             cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings, token)
                         }
+                        val restoredTmdb = cloudSourceSyncService.restoreTmdbFromCloud(token)
+                        if (restoredTmdb != null && restoredTmdb.apiKey.isNotBlank()) {
+                            tmdbStore.saveSettings(restoredTmdb)
+                            withContext(Dispatchers.Main) {
+                                tmdbSettings = restoredTmdb
+                            }
+                        } else if (tmdbSettings.apiKey.isNotBlank()) {
+                            cloudSourceSyncService.syncTmdbToCloud(tmdbSettings, token)
+                        }
                     }
                 },
                 playlists = playlists,
@@ -2208,6 +2236,16 @@ private fun FortressTVApp(
                         }
                     }
                 },
+                tmdbSettings = tmdbSettings,
+                onTmdbSettingsChanged = { newTmdb ->
+                    tmdbSettings = newTmdb
+                    scope.launch(Dispatchers.IO) {
+                        tmdbStore.saveSettings(newTmdb)
+                        if (currentUserId != null && newTmdb.apiKey.isNotBlank()) {
+                            cloudSourceSyncService.syncTmdbToCloud(newTmdb)
+                        }
+                    }
+                },
                 hideAdultContent = hideAdultContent,
                 isChildProfile = activeHouseholdProfile.isChild,
                 onHideAdultContentChanged = handleHideAdultContentChanged,
@@ -2244,6 +2282,11 @@ private fun FortressTVApp(
                     if (currentUserId != null && (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank())) {
                         scope.launch(Dispatchers.IO) {
                             cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings)
+                        }
+                    }
+                    if (currentUserId != null && tmdbSettings.apiKey.isNotBlank()) {
+                        scope.launch(Dispatchers.IO) {
+                            cloudSourceSyncService.syncTmdbToCloud(tmdbSettings)
                         }
                     }
                 },
@@ -6508,6 +6551,7 @@ private fun VodPosterCard(
 ) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
+    val tmdbSettings = LocalTmdbSettings.current
     var dynamicPosterUrl by remember(posterUrl) { mutableStateOf(posterUrl) }
 
     LaunchedEffect(posterUrl, loadPosterFallback, title) {
@@ -6516,7 +6560,11 @@ private fun VodPosterCard(
             if (!fromFallback.isNullOrBlank()) {
                 dynamicPosterUrl = fromFallback
             } else {
-                val resolved = com.fortresstv.player.library.VodPosterResolver.resolveMoviePoster(title)
+                val resolved = com.fortresstv.player.library.VodPosterResolver.resolveMoviePoster(
+                    rawTitle = title,
+                    context = context,
+                    tmdbSettings = tmdbSettings
+                )
                 if (!resolved.isNullOrBlank()) {
                     dynamicPosterUrl = resolved
                 }
@@ -6622,9 +6670,28 @@ private fun MovieDetailsDialog(
 ) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
+    val tmdbSettings = LocalTmdbSettings.current
     var details by remember(movie.id, client) { mutableStateOf<XtreamMovieDetails?>(null) }
     var detailsError by remember(movie.id, client) { mutableStateOf(false) }
     var retryKey by remember(movie.id, client) { mutableIntStateOf(0) }
+    var tmdbMetadata by remember(movie.id, tmdbSettings) { mutableStateOf<TmdbMetadata?>(null) }
+
+    LaunchedEffect(movie.id, tmdbSettings) {
+        if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()) {
+            val resolved = TmdbMetadataResolver.resolveMovie(
+                context = context,
+                settings = tmdbSettings,
+                rawTitle = movie.name,
+                year = movie.year,
+                tmdbId = movie.tmdbId,
+                imdbId = movie.imdbId
+            )
+            if (resolved != null) {
+                tmdbMetadata = resolved
+            }
+        }
+    }
+
     LaunchedEffect(movie.id, client, retryKey) {
         if (client == null) return@LaunchedEffect
         detailsError = false
@@ -6632,7 +6699,14 @@ private fun MovieDetailsDialog(
             .onSuccess { details = it }
             .onFailure { detailsError = true }
     }
-    val effectivePoster = details?.posterUrl ?: movie.posterUrl
+    val effectivePoster = tmdbMetadata?.posterUrl ?: details?.posterUrl ?: movie.posterUrl
+    val effectivePlot = tmdbMetadata?.overview ?: details?.plot ?: movie.plot
+    val effectiveGenres = if (!tmdbMetadata?.genres.isNullOrEmpty()) tmdbMetadata?.genres?.joinToString(", ") else details?.genre
+    val effectiveDirector = tmdbMetadata?.director ?: details?.director
+    val effectiveCast = if (!tmdbMetadata?.cast.isNullOrEmpty()) tmdbMetadata?.cast?.joinToString(", ") else details?.cast
+    val effectiveRating = tmdbMetadata?.rating ?: details?.rating ?: movie.rating
+    val effectiveReleaseDate = tmdbMetadata?.releaseDate ?: details?.releaseDate ?: movie.year
+    val effectiveTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
     val posterRequest = remember(effectivePoster) {
         effectivePoster?.takeIf(String::isNotBlank)?.let { url ->
             ImageRequest.Builder(context)
@@ -6672,7 +6746,7 @@ private fun MovieDetailsDialog(
                 .fillMaxHeight(if (isCompact) 0.90f else 0.82f)
         ) {
             Box(Modifier.fillMaxSize()) {
-                val effectiveBackdrop = details?.backdropUrl?.takeIf(String::isNotBlank)
+                val effectiveBackdrop = (tmdbMetadata?.backdropUrl ?: details?.backdropUrl)?.takeIf(String::isNotBlank)
                 if (effectiveBackdrop != null) {
                     AsyncImage(
                         model = effectiveBackdrop,
@@ -6744,8 +6818,8 @@ private fun MovieDetailsDialog(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 val metadata = formatVodMetadata(
-                                    details?.releaseDate?.take(4) ?: movie.year,
-                                    details?.rating ?: movie.rating
+                                    effectiveReleaseDate?.take(4) ?: movie.year,
+                                    effectiveRating ?: movie.rating
                                 )
                                 if (metadata.isNotBlank()) {
                                     Spacer(Modifier.height(4.dp))
@@ -6786,7 +6860,7 @@ private fun MovieDetailsDialog(
                                     TextButton(onClick = { retryKey++ }) { Text(strings.retry, fontSize = 12.sp) }
                                 }
                             }
-                            val plot = details?.plot ?: movie.plot
+                            val plot = effectivePlot
                             if (!plot.isNullOrBlank()) {
                                 Text(
                                     plot,
@@ -6840,6 +6914,21 @@ private fun MovieDetailsDialog(
                                         overflow = TextOverflow.Ellipsis,
                                         fontSize = 12.sp
                                     )
+                                }
+                                if (!effectiveTrailer.isNullOrBlank()) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            runCatching {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveTrailer)))
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).height(44.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(strings.watchTrailer, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp)
+                                    }
                                 }
                                 OutlinedButton(
                                     onClick = onToggleWatched,
@@ -6902,8 +6991,8 @@ private fun MovieDetailsDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                                 val metadata = formatVodMetadata(
-                                    details?.releaseDate?.take(4) ?: movie.year,
-                                    details?.rating ?: movie.rating
+                                    effectiveReleaseDate?.take(4) ?: movie.year,
+                                    effectiveRating ?: movie.rating
                                 )
                                 if (metadata.isNotBlank()) {
                                     Spacer(Modifier.height(10.dp))
@@ -6934,7 +7023,7 @@ private fun MovieDetailsDialog(
                                         TextButton(onClick = { retryKey++ }) { Text(strings.retry) }
                                     }
                                 }
-                                val plot = details?.plot ?: movie.plot
+                                val plot = effectivePlot
                                 if (!plot.isNullOrBlank()) {
                                     Spacer(Modifier.height(22.dp))
                                     Text(
@@ -6960,6 +7049,21 @@ private fun MovieDetailsDialog(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
+                                if (!effectiveTrailer.isNullOrBlank()) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            runCatching {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveTrailer)))
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).height(54.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(strings.watchTrailer, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                    }
+                                }
                                 OutlinedButton(
                                     onClick = onToggleWatchlist,
                                     modifier = Modifier
@@ -7080,9 +7184,29 @@ private fun SeriesEpisodesDialog(
     val firstEpisodeFocusRequester = remember { FocusRequester() }
     val seriesRetryFocusRequester = remember { FocusRequester() }
     var focusEpisodeAfterSeasonChange by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val tmdbSettings = LocalTmdbSettings.current
     var details by remember(series.id) { mutableStateOf<XtreamSeriesDetails?>(null) }
     var loadError by remember(series.id) { mutableStateOf(false) }
     var retryKey by remember(series.id) { mutableIntStateOf(0) }
+    var tmdbMetadata by remember(series.id, tmdbSettings) { mutableStateOf<TmdbMetadata?>(null) }
+
+    LaunchedEffect(series.id, tmdbSettings) {
+        if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()) {
+            val resolved = TmdbMetadataResolver.resolveSeries(
+                context = context,
+                settings = tmdbSettings,
+                rawTitle = series.name,
+                year = series.year,
+                tmdbId = series.tmdbId,
+                imdbId = series.imdbId
+            )
+            if (resolved != null) {
+                tmdbMetadata = resolved
+            }
+        }
+    }
+
     LaunchedEffect(series.id, retryKey) {
         loadError = false
         runCatching { client.loadSeriesDetails(series.id) }
@@ -7153,7 +7277,7 @@ private fun SeriesEpisodesDialog(
         ) {
             Box(Modifier.fillMaxSize()) {
                 // Background Backdrop Fanart with cinematic gradient overlay
-                val effectiveBackdrop = details?.backdropUrl?.takeIf(String::isNotBlank)
+                val effectiveBackdrop = (tmdbMetadata?.backdropUrl ?: details?.backdropUrl)?.takeIf(String::isNotBlank)
                 if (effectiveBackdrop != null) {
                     AsyncImage(
                         model = effectiveBackdrop,
@@ -7190,7 +7314,7 @@ private fun SeriesEpisodesDialog(
                         modifier = Modifier.fillMaxWidth().padding(end = 40.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val effectiveCover = details?.coverUrl ?: series.coverUrl
+                        val effectiveCover = tmdbMetadata?.posterUrl ?: details?.coverUrl ?: series.coverUrl
                         if (!effectiveCover.isNullOrBlank()) {
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
@@ -7228,7 +7352,7 @@ private fun SeriesEpisodesDialog(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
-                            val plot = details?.plot ?: series.plot
+                            val plot = tmdbMetadata?.overview ?: details?.plot ?: series.plot
                             if (!plot.isNullOrBlank()) {
                                 Spacer(Modifier.height(3.dp))
                                 Text(
@@ -7277,6 +7401,21 @@ private fun SeriesEpisodesDialog(
                                     }
                                 }
                             }
+                        }
+
+                        val seriesTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
+                        if (!seriesTrailer.isNullOrBlank()) {
+                            IconButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(seriesTrailer)))
+                                    }
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = strings.watchTrailer, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(Modifier.width(8.dp))
                         }
 
                         // Follow Toggle Button
@@ -15816,6 +15955,8 @@ private fun SettingsDialog(
     onSubtitleFallbackEnglishChanged: (Boolean) -> Unit = {},
     openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     onOpenSubtitlesSettingsChanged: (OpenSubtitlesSettings) -> Unit = {},
+    tmdbSettings: TmdbSettings = TmdbSettings(),
+    onTmdbSettingsChanged: (TmdbSettings) -> Unit = {},
     hideAdultContent: Boolean,
     isChildProfile: Boolean = false,
     onHideAdultContentChanged: (Boolean) -> Unit,
@@ -15868,6 +16009,7 @@ private fun SettingsDialog(
         Pair(strings.tabPlaylists, Icons.Default.FolderOpen),
         Pair(strings.tabEpg, Icons.Default.DateRange),
         Pair(strings.tabSubtitles, Icons.Default.Subtitles),
+        Pair(strings.tabApiKeys, Icons.Default.Key),
         Pair(strings.tabAccount, Icons.Default.AccountCircle),
         Pair(strings.tabAbout, Icons.Default.Info)
     )
@@ -16118,12 +16260,16 @@ private fun SettingsDialog(
                                     onRemoveParentalPin = onRemoveParentalPin,
                                     subtitlesOnly = true
                                 )
-                                4 -> AccountTab(
+                                4 -> ApiKeysTab(
+                                    tmdbSettings = tmdbSettings,
+                                    onTmdbSettingsChanged = onTmdbSettingsChanged
+                                )
+                                5 -> AccountTab(
                                     showHeader = false,
                                     onSignedOut = onAccountSignedOut,
                                     onSignedIn = onAccountSignedIn
                                 )
-                                5 -> AboutTab()
+                                6 -> AboutTab()
                             }
                         }
                     }
@@ -16244,12 +16390,16 @@ private fun SettingsDialog(
                                 onRemoveParentalPin = onRemoveParentalPin,
                                 subtitlesOnly = true
                             )
-                            4 -> AccountTab(
+                            4 -> ApiKeysTab(
+                                tmdbSettings = tmdbSettings,
+                                onTmdbSettingsChanged = onTmdbSettingsChanged
+                            )
+                            5 -> AccountTab(
                                 showHeader = false,
                                 onSignedOut = onAccountSignedOut,
                                 onSignedIn = onAccountSignedIn
                             )
-                            5 -> AboutTab()
+                            6 -> AboutTab()
                         }
                     }
                 }
@@ -16508,6 +16658,188 @@ private fun SettingsDropdownPickerRow(
                             { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
                         } else null
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiKeysTab(
+    tmdbSettings: TmdbSettings,
+    onTmdbSettingsChanged: (TmdbSettings) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isTestingConnection by remember { mutableStateOf(false) }
+    var connectionTestResult by remember { mutableStateOf<Result<Boolean>?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        SettingsGroup(title = strings.tmdbHeader) {
+            SettingsToggleRow(
+                title = strings.tmdbEnabled,
+                subtitle = "",
+                icon = Icons.Default.Movie,
+                checked = tmdbSettings.enabled,
+                onCheckedChange = { checked ->
+                    onTmdbSettingsChanged(tmdbSettings.copy(enabled = checked))
+                }
+            )
+
+            if (tmdbSettings.enabled) {
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    var apiKeyText by remember(tmdbSettings.apiKey) { mutableStateOf(tmdbSettings.apiKey) }
+                    var apiKeyVisible by remember { mutableStateOf(false) }
+
+                    OutlinedTextField(
+                        value = apiKeyText,
+                        onValueChange = {
+                            apiKeyText = it
+                            connectionTestResult = null
+                            onTmdbSettingsChanged(tmdbSettings.copy(apiKey = it))
+                        },
+                        label = { Text(strings.tmdbApiKey) },
+                        supportingText = { Text(strings.tmdbApiKeyHint, fontSize = 11.sp) },
+                        visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                                Icon(
+                                    if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (apiKeyVisible) strings.hidePassword else strings.showPassword
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    SettingsDropdownPickerRow(
+                        title = strings.tmdbLanguage,
+                        subtitle = strings.tmdbLanguageDesc,
+                        icon = Icons.Default.Translate,
+                        selectedValue = tmdbSettings.language,
+                        options = TmdbLanguages.supported.map { it.first to it.second },
+                        onValueSelected = { newLang ->
+                            onTmdbSettingsChanged(tmdbSettings.copy(language = newLang))
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (apiKeyText.isNotBlank()) {
+                                    isTestingConnection = true
+                                    connectionTestResult = null
+                                    coroutineScope.launch {
+                                        val res = TmdbClient(apiKeyText.trim()).validateApiKey()
+                                        connectionTestResult = res
+                                        isTestingConnection = false
+                                    }
+                                }
+                            },
+                            enabled = apiKeyText.isNotBlank() && !isTestingConnection
+                        ) {
+                            if (isTestingConnection) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(strings.tmdbTestConnection, fontSize = 13.sp)
+                        }
+
+                        connectionTestResult?.let { result ->
+                            if (result.isSuccess) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.tmdbConnectionSuccess,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        result.exceptionOrNull()?.message?.takeIf(String::isNotBlank) ?: strings.tmdbConnectionFailed,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    strings.tmdbInfoHelp,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    strings.tmdbInfoLink,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.clickable {
+                                        runCatching {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(strings.tmdbInfoLink))
+                                            context.startActivity(intent)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -112,6 +112,16 @@ internal class LocalDataMigrationService(
             }
         }
 
+        // 1c. Sync local TMDB credentials to cloud if configured
+        val tmdbStore = com.fortresstv.player.tmdb.TmdbSettingsStore(context)
+        val localTmdb = tmdbStore.loadSettings()
+        if (localTmdb.apiKey.isNotBlank()) {
+            try {
+                sourceApi.saveTmdb(localTmdb, token, accountState.accessToken)
+            } catch (_: Exception) {
+            }
+        }
+
         // 2. Import local library and progress into target adult profile
         val localLibrary = UserLibraryStore(context, "local")
         val localProgress = VodProgressStore(context, "local")

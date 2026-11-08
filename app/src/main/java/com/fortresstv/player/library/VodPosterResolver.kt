@@ -1,5 +1,8 @@
 package com.fortresstv.player.library
 
+import android.content.Context
+import com.fortresstv.player.tmdb.TmdbMetadataResolver
+import com.fortresstv.player.tmdb.TmdbSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -11,12 +14,31 @@ import java.util.concurrent.ConcurrentHashMap
 object VodPosterResolver {
     private val memoryCache = ConcurrentHashMap<String, String>()
 
-    suspend fun resolveMoviePoster(rawTitle: String): String? = withContext(Dispatchers.IO) {
+    suspend fun resolveMoviePoster(
+        rawTitle: String,
+        context: Context? = null,
+        tmdbSettings: TmdbSettings? = null,
+        year: String? = null,
+        tmdbId: String? = null,
+        imdbId: String? = null
+    ): String? = withContext(Dispatchers.IO) {
         val cleanTitle = cleanMovieTitle(rawTitle)
         if (cleanTitle.isBlank()) return@withContext null
 
         memoryCache[cleanTitle]?.let { return@withContext it }
 
+        // 1. Try TMDB if configured
+        if (context != null && tmdbSettings != null && tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()) {
+            val tmdbPoster = runCatching {
+                TmdbMetadataResolver.resolveMovie(context, tmdbSettings, rawTitle, year, tmdbId, imdbId)?.posterUrl
+            }.getOrNull()
+            if (!tmdbPoster.isNullOrBlank()) {
+                memoryCache[cleanTitle] = tmdbPoster
+                return@withContext tmdbPoster
+            }
+        }
+
+        // 2. Fallback to Cinemeta
         runCatching {
             val encoded = URLEncoder.encode(cleanTitle, "UTF-8")
             val urlString = "https://v3-cinemeta.strem.io/catalog/movie/top/search=$encoded.json"

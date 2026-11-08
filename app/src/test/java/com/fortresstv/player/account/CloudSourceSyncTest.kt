@@ -191,4 +191,52 @@ class CloudSourceSyncTest {
         assertTrue(restored.preferPtPt)
         assertFalse(restored.autoSearch)
     }
+
+    @Test
+    fun saveAndGetTmdbSettingsPreservesProperties() {
+        var savedBody: JSONObject? = null
+        val transport = object : com.fortresstv.player.profile.ProfileTransport {
+            override fun request(
+                method: String,
+                path: String,
+                body: JSONObject?,
+                accessToken: String?,
+                headers: Map<String, String>?
+            ): String {
+                if (path.contains("fortress_save_tmdb")) {
+                    savedBody = body
+                    return "{\"success\":true}"
+                }
+                if (path.contains("fortress_get_tmdb")) {
+                    return """
+                        {
+                            "configured": true,
+                            "enabled": true,
+                            "language": "pt-PT",
+                            "api_key": "tmdb-test-key"
+                        }
+                    """.trimIndent()
+                }
+                return "{}"
+            }
+        }
+        val api = SupabaseSourceApi(transport)
+        val testSettings = com.fortresstv.player.tmdb.TmdbSettings(
+            enabled = true,
+            apiKey = "tmdb-test-key",
+            language = "pt-PT"
+        )
+        val saveResult = api.saveTmdb(testSettings, "unlock-tok", "access-tok")
+        assertTrue(saveResult)
+        assertNotNull(savedBody)
+        assertEquals("tmdb-test-key", savedBody!!.getString("p_api_key"))
+        assertEquals("pt-PT", savedBody!!.getString("p_language"))
+        assertTrue(savedBody!!.getBoolean("p_enabled"))
+
+        val restored = api.getTmdb(null, "access-tok")
+        assertNotNull(restored)
+        assertEquals("tmdb-test-key", restored!!.apiKey)
+        assertEquals("pt-PT", restored.language)
+        assertTrue(restored.enabled)
+    }
 }

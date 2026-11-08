@@ -79,6 +79,50 @@ internal class SupabaseSourceApi(
         return text.trim() == "true"
     }
 
+    fun saveTmdb(
+        settings: com.fortresstv.player.tmdb.TmdbSettings,
+        unlockToken: String?,
+        accessToken: String
+    ): Boolean {
+        val body = JSONObject().apply {
+            put("p_enabled", settings.enabled)
+            put("p_api_key", settings.apiKey.trim())
+            put("p_language", settings.language.ifBlank { "pt-PT" })
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_save_tmdb", body, accessToken, null)
+        val json = JSONObject(text.ifBlank { "{}" })
+        return json.optBoolean("success", false)
+    }
+
+    fun getTmdb(
+        unlockToken: String?,
+        accessToken: String
+    ): com.fortresstv.player.tmdb.TmdbSettings? {
+        val body = JSONObject().apply {
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_get_tmdb", body, accessToken, null)
+        val json = JSONObject(text.ifBlank { "{}" })
+        if (!json.optBoolean("configured", false)) return null
+        return com.fortresstv.player.tmdb.TmdbSettings(
+            enabled = json.optBoolean("enabled", false),
+            apiKey = json.optString("api_key", ""),
+            language = json.optString("language", "pt-PT")
+        )
+    }
+
+    fun deleteTmdb(
+        unlockToken: String?,
+        accessToken: String
+    ): Boolean {
+        val body = JSONObject().apply {
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_delete_tmdb", body, accessToken, null)
+        return text.trim() == "true"
+    }
+
     fun saveOpenSubtitles(
         settings: com.fortresstv.player.subtitles.OpenSubtitlesSettings,
         unlockToken: String?,

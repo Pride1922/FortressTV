@@ -193,7 +193,9 @@ class XtreamClient(
             rating = item.nullableString("rating"),
             year = item.nullableString("year"),
             plot = item.nullableString("plot"),
-            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating")
+            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
+            tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
+            imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
         )
     }
 
@@ -241,7 +243,9 @@ class XtreamClient(
             rating = item.nullableString("rating"),
             year = item.nullableString("releaseDate") ?: item.nullableString("year"),
             plot = item.nullableString("plot"),
-            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating")
+            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
+            tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
+            imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
         )
     }
 
@@ -269,7 +273,9 @@ class XtreamClient(
             ageRating = value("age", "mpaa_rating"),
             posterUrl = value("movie_image", "cover_big", "stream_icon"),
             backdropUrl = backdrop,
-            trailerUrl = value("youtube_trailer", "trailer")
+            trailerUrl = value("youtube_trailer", "trailer"),
+            tmdbId = value("tmdb_id", "tmdb"),
+            imdbId = value("imdb_id", "imdb")
         )
     }
 
@@ -295,7 +301,9 @@ class XtreamClient(
             coverUrl = value("cover", "cover_big", "movie_image"),
             backdropUrl = backdrop,
             trailerUrl = value("youtube_trailer", "trailer"),
-            episodes = parseEpisodes(json)
+            episodes = parseEpisodes(json),
+            tmdbId = value("tmdb_id", "tmdb"),
+            imdbId = value("imdb_id", "imdb")
         )
     }
 

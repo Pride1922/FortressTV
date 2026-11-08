@@ -330,6 +330,20 @@ interface Strings {
     val tabEpg: String
     val tabGeneral: String
     val tabSubtitles: String
+    val tabApiKeys: String
+    val tmdbHeader: String
+    val tmdbEnabled: String
+    val tmdbApiKey: String
+    val tmdbApiKeyHint: String
+    val tmdbLanguage: String
+    val tmdbLanguageDesc: String
+    val tmdbTestConnection: String
+    val tmdbConnectionSuccess: String
+    val tmdbConnectionFailed: String
+    val tmdbInfoHelp: String
+    val tmdbInfoLink: String
+    val watchTrailer: String
+    val genres: String
     val tabAbout: String
     val language: String
     val playback: String
@@ -805,6 +819,20 @@ object EnglishStrings : Strings {
     override val tabEpg = "EPG Guide"
     override val tabGeneral = "General"
     override val tabSubtitles = "Audio & Subtitles"
+    override val tabApiKeys = "API Keys"
+    override val tmdbHeader = "The Movie Database (TMDB)"
+    override val tmdbEnabled = "Enable TMDB Metadata"
+    override val tmdbApiKey = "TMDB API Key / Access Token"
+    override val tmdbApiKeyHint = "Supports API v3 Key or API v4 Read Access Token"
+    override val tmdbLanguage = "Metadata Language"
+    override val tmdbLanguageDesc = "Preferred language for synopsis, titles and media descriptions"
+    override val tmdbTestConnection = "Test Connection"
+    override val tmdbConnectionSuccess = "Connection successful"
+    override val tmdbConnectionFailed = "Connection failed"
+    override val tmdbInfoHelp = "Obtain a free TMDB API key or Read Access Token at themoviedb.org"
+    override val tmdbInfoLink = "https://www.themoviedb.org/settings/api"
+    override val watchTrailer = "Watch Trailer"
+    override val genres = "Genres"
     override val tabAbout = "About"
     override val language = "Language"
     override val playback = "Playback"
@@ -1283,6 +1311,20 @@ object PortugueseStrings : Strings {
     override val tabEpg = "Guia EPG"
     override val tabGeneral = "Geral"
     override val tabSubtitles = "Áudio e legendas"
+    override val tabApiKeys = "Chaves de API"
+    override val tmdbHeader = "The Movie Database (TMDB)"
+    override val tmdbEnabled = "Ativar Metadados TMDB"
+    override val tmdbApiKey = "Chave de API / Token TMDB"
+    override val tmdbApiKeyHint = "Suporta chave v3 ou Token de Leitura v4"
+    override val tmdbLanguage = "Idioma dos Metadados"
+    override val tmdbLanguageDesc = "Idioma preferencial para sinopses, títulos e descrições"
+    override val tmdbTestConnection = "Testar Ligação"
+    override val tmdbConnectionSuccess = "Ligação com sucesso"
+    override val tmdbConnectionFailed = "Falha na ligação"
+    override val tmdbInfoHelp = "Obtenha uma chave gratuita da API TMDB ou Token de Leitura em themoviedb.org"
+    override val tmdbInfoLink = "https://www.themoviedb.org/settings/api"
+    override val watchTrailer = "Ver Trailer"
+    override val genres = "Géneros"
     override val tabAbout = "Sobre"
     override val language = "Idioma"
     override val playback = "Reprodução"
