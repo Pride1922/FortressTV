@@ -9,7 +9,7 @@
 - Phase 4: complete — Xtream Series catalogues, lazy episode loading/playback, followed series, watched episodes, and Next Unwatched Episode detection
 - Phase 5: complete — Adult (XXX) content filtering, EPG smart normalized auto-matching (fuzzy fallback for channels missing tvg-id), unmatched channels exporter, source credential/role editor with password visibility toggles, unified Favorites across Live TV, Movies, and Series
 - Phase 6: complete — Optional cloud account (Supabase), household profiles with parental controls, encrypted cloud source backup/restore, cross-device favorites and watchlist synchronization, and OpenSubtitles cloud sync with password-masked API key
-- Phase 7: planned — External Metadata & Media Enrichment (BYOK - Bring Your Own Keys: TMDB, OMDb, TheIntroDB)
+- Phase 7: planned — External Metadata & Media Enrichment (BYOK - Bring Your Own Keys: TMDB, OMDb, TheIntroDB, Trakt.tv)
 
 ## Product direction
 
@@ -189,11 +189,13 @@ The app ships without any API keys. You can enter your own free keys in the app 
 | **TMDB** | posters, descriptions in your language, cast, trailers, automatic genres, episode info, similar titles | free, see below |
 | **OMDb** | IMDb and Rotten Tomatoes ratings | free, see below |
 | **TheIntroDB** | intro/recap/credits times | no key needed |
+| **Trakt.tv** | personalized recommendations & suggestions based on watch history, trending/popular discovery, and 2-way watch progress scrobbling | free, see below |
 
 #### How to obtain free user keys:
 - **TMDB (The Movie Database)**: Create a free account at [themoviedb.org](https://www.themoviedb.org/), navigate to *Settings > API*, and generate a personal API Read Access Token. Enables localized Portuguese (Portugal) synopses, HD backdrops, cast & crew, genres, and trailers.
 - **OMDb (Open Movie Database)**: Request a free personal API key at [omdbapi.com](https://www.omdbapi.com/apikey.aspx) (provides 1,000 daily requests for IMDb and Rotten Tomatoes scores).
 - **TheIntroDB**: Open-source community timestamps database; requires no key or registration. Powers automatic "Skip Intro", "Skip Recap", and "Skip Credits" action pills during series playback.
+- **Trakt.tv**: Create a free account at [trakt.tv](https://trakt.tv/). Connects via a TV-friendly Device Code flow (`trakt.tv/activate` with an 8-character PIN on screen) or a personal API Client ID. Powers personalized "Recommended for You" suggestions on Home, trending/popular carousels, and 2-way watch history scrobbling.
 
 #### Privacy and Storage Rules:
 - All external API keys are stored in encrypted private preferences (`AndroidKeyStore`-backed AES-GCM) and synced to the user's private cloud profile if cloud sync is enabled.
