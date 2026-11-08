@@ -24,6 +24,7 @@ create table if not exists public.household_sources (
 create index if not exists household_sources_sync_idx
     on public.household_sources(household_id, updated_at);
 
+drop trigger if exists fortress_sources_updated on public.household_sources;
 create trigger fortress_sources_updated before insert or update on public.household_sources
     for each row execute function public.fortress_stamp_updated_at();
 

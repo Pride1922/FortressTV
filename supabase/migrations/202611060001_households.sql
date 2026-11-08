@@ -1,12 +1,12 @@
 -- One Supabase Auth account owns one household. Profiles are not Auth users.
 begin;
 
-create table public.households (
+create table if not exists public.households (
     id uuid primary key references auth.users(id) on delete cascade,
     created_at timestamptz not null default now()
 );
 
-create table public.household_profiles (
+create table if not exists public.household_profiles (
     id uuid primary key default gen_random_uuid(),
     household_id uuid not null references public.households(id) on delete cascade,
     name text not null check (length(btrim(name)) between 1 and 60),
@@ -24,7 +24,7 @@ create table public.household_profiles (
 
 -- Only opaque identity and user state belong here. Never upload stream URLs,
 -- source configuration, provider credentials, titles, artwork URLs or EPG data.
-create table public.profile_library (
+create table if not exists public.profile_library (
     household_id uuid not null,
     profile_id uuid not null,
     source_id uuid not null,
@@ -40,7 +40,7 @@ create table public.profile_library (
         references public.household_profiles(household_id, id) on delete cascade
 );
 
-create table public.profile_watch_progress (
+create table if not exists public.profile_watch_progress (
     household_id uuid not null,
     profile_id uuid not null,
     source_id uuid not null,
@@ -57,12 +57,12 @@ create table public.profile_watch_progress (
     check (duration_ms = 0 or position_ms <= duration_ms)
 );
 
-create index profile_library_sync on public.profile_library(household_id, profile_id, updated_at);
-create index profile_progress_sync on public.profile_watch_progress(household_id, profile_id, updated_at);
-create index household_profiles_owner on public.household_profiles(household_id);
+create index if not exists profile_library_sync on public.profile_library(household_id, profile_id, updated_at);
+create index if not exists profile_progress_sync on public.profile_watch_progress(household_id, profile_id, updated_at);
+create index if not exists household_profiles_owner on public.household_profiles(household_id);
 
 -- Invoker trigger: no RLS bypass or RPC privileges are needed.
-create function public.fortress_stamp_updated_at() returns trigger
+create or replace function public.fortress_stamp_updated_at() returns trigger
 language plpgsql set search_path = '' as $$
 begin
     new.updated_at := clock_timestamp();
@@ -71,10 +71,15 @@ end;
 $$;
 revoke all on function public.fortress_stamp_updated_at() from public, anon, authenticated;
 
+drop trigger if exists fortress_profiles_updated on public.household_profiles;
 create trigger fortress_profiles_updated before insert or update on public.household_profiles
     for each row execute function public.fortress_stamp_updated_at();
+
+drop trigger if exists fortress_library_updated on public.profile_library;
 create trigger fortress_library_updated before insert or update on public.profile_library
     for each row execute function public.fortress_stamp_updated_at();
+
+drop trigger if exists fortress_progress_updated on public.profile_watch_progress;
 create trigger fortress_progress_updated before insert or update on public.profile_watch_progress
     for each row execute function public.fortress_stamp_updated_at();
 
@@ -96,17 +101,25 @@ grant update (is_favourite, is_watchlisted, is_watched, deleted_at)
 grant update (position_ms, duration_ms, completed, deleted_at)
     on public.profile_watch_progress to authenticated;
 
+drop policy if exists household_read on public.households;
 create policy household_read on public.households for select to authenticated
     using (id = (select auth.uid()));
+
+drop policy if exists household_create on public.households;
 create policy household_create on public.households for insert to authenticated
     with check (id = (select auth.uid()));
 
+drop policy if exists profiles_owner on public.household_profiles;
 create policy profiles_owner on public.household_profiles for all to authenticated
     using (household_id = (select auth.uid()))
     with check (household_id = (select auth.uid()));
+
+drop policy if exists library_owner on public.profile_library;
 create policy library_owner on public.profile_library for all to authenticated
     using (household_id = (select auth.uid()))
     with check (household_id = (select auth.uid()));
+
+drop policy if exists progress_owner on public.profile_watch_progress;
 create policy progress_owner on public.profile_watch_progress for all to authenticated
     using (household_id = (select auth.uid()))
     with check (household_id = (select auth.uid()));

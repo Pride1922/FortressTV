@@ -8,7 +8,7 @@ begin;
 revoke insert, update, delete on public.household_profiles from authenticated;
 
 -- Private PIN-verifier store. NEVER readable or writable directly by clients.
-create table public.household_parental_controls (
+create table if not exists public.household_parental_controls (
     household_id uuid primary key references public.households(id) on delete cascade,
     pin_salt text not null,
     pin_hash text not null,
@@ -21,21 +21,21 @@ alter table public.household_parental_controls enable row level security;
 revoke all on public.household_parental_controls from public, anon, authenticated;
 
 -- Short-lived adult unlocks issued upon valid PIN verification.
-create table public.household_adult_sessions (
+create table if not exists public.household_adult_sessions (
     id uuid primary key default gen_random_uuid(),
     household_id uuid not null references public.households(id) on delete cascade,
     created_at timestamptz not null default now(),
     expires_at timestamptz not null default (now() + interval '15 minutes')
 );
 
-create index household_adult_sessions_lookup
+create index if not exists household_adult_sessions_lookup
     on public.household_adult_sessions(household_id, id, expires_at);
 
 alter table public.household_adult_sessions enable row level security;
 revoke all on public.household_adult_sessions from public, anon, authenticated;
 
 -- Scoped profile sessions foundation.
-create table public.household_active_sessions (
+create table if not exists public.household_active_sessions (
     id uuid primary key default gen_random_uuid(),
     household_id uuid not null references public.households(id) on delete cascade,
     profile_id uuid not null,
@@ -46,7 +46,7 @@ create table public.household_active_sessions (
         references public.household_profiles(household_id, id) on delete cascade
 );
 
-create index household_active_sessions_lookup
+create index if not exists household_active_sessions_lookup
     on public.household_active_sessions(household_id, id, profile_id, expires_at);
 
 alter table public.household_active_sessions enable row level security;
