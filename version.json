@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC12",
-    "versionCode":  46,
-    "notes":  "FortressTV 2.0.0-RC12:\n- Match details sheet: interactive card popup displaying live score, minute, stadium venue, and chronological goalscorers, penalties, and red cards with 1-tap playback.\n- Dynamic multi-channel sports distribution: automatically resolves simultaneous kickoff matches across separate network channels (DAZN 1..6, Sport TV 1..6) and strictly prioritizes Portuguese feeds (PT:).\n- Auto-refreshing sports ticker: live scores and minutes periodically update every 60 seconds on the Home screen.\n- Movie poster fallback resolver: queries Cinemeta metadata for newly added VOD releases lacking stream artwork, ensuring full HD poster coverage.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC12/fortresstv.apk",
-    "sha256":  "C6783C815C443B5E271B23FF8D33ED585A16D9EF1DCC662C3201572BB14F23B7"
+    "version":  "2.0.0-RC14",
+    "versionCode":  48,
+    "notes":  "FortressTV 2.0.0-RC14:\n- TV Series episode metadata enrichment: fetches per-episode overviews, episode titles, and high-resolution 16:9 stills from TMDB.\n- Xtream season synopsis fallback: parses season-level overviews from get_series_info when provider episode info is empty.\n- Next Up banner synopsis: shows episode description on the Next Up hero card in the series dialog.\n- Auto (Match Profile) language: metadata and episode descriptions automatically follow the active household profile (pt-PT -\u003e pt-BR -\u003e en-US cascade for Portuguese profiles; English for English profiles).",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC14/fortresstv.apk",
+    "sha256":  "15AB280FEA1CA259D80192ECAAD828A7F3F97A09C2613BA7EF9B027CA4904C20"
 }
