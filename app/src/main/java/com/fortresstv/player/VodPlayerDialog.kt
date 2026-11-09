@@ -768,7 +768,7 @@ internal fun VodPlayerDialog(
     val mainActivity = context as? MainActivity
     val inPictureInPicture = mainActivity?.pictureInPictureMode == true
     DisposableEffect(player) {
-        val unregisterSleepTimerPlayer = sleepTimerActivity?.registerSleepTimerPlayer(player, onDismiss)
+        val unregisterSleepTimerPlayer = PlaybackOrchestrationWorkflow.registerSleepTimer(context, player, onDismiss)
         val pictureInPictureDismissedListener = {
             player.stop()
             onDismiss()
@@ -836,7 +836,7 @@ internal fun VodPlayerDialog(
         onDispose {
             tracker.finalizeSession()
             player.removeAnalyticsListener(tracker)
-            mainActivity?.updatePictureInPictureState(enabled = false, fullscreenPlaying = false)
+            PlaybackOrchestrationWorkflow.updatePiPState(context = context, autoPiPEnabled = false, isFullscreen = false, isPlaying = false)
             mainActivity?.setOnPictureInPictureDismissedListener(null)
             val pos = maxOf(player.currentPosition.coerceAtLeast(0L), currentPositionMs)
             val dur = maxOf(player.duration.coerceAtLeast(0L), totalDurationMs)

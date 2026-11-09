@@ -547,7 +547,7 @@ internal fun PlayerPanel(
 
     DisposableEffect(player) {
         var resumePlaybackOnStart = false
-        val unregisterSleepTimerPlayer = (activity as? MainActivity)?.registerSleepTimerPlayer(player) {
+        val unregisterSleepTimerPlayer = PlaybackOrchestrationWorkflow.registerSleepTimer(context, player) {
             manualFullscreen = false
             landscapeFullscreenDismissed = true
             player.clearMediaItems()
