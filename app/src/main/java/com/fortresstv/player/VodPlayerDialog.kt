@@ -323,6 +323,7 @@ import com.fortresstv.player.subtitles.OpenSubtitlesSettingsStore
 import com.fortresstv.player.subtitles.SubtitleDiskCache
 import com.fortresstv.player.subtitles.openSubtitlesLanguageQuery
 import com.fortresstv.player.subtitles.shouldAutoSearchOpenSubtitles
+import com.fortresstv.player.trakt.TraktScrobbleService
 import com.fortresstv.player.tmdb.LocalTmdbSettings
 import com.fortresstv.player.tmdb.TmdbClient
 import com.fortresstv.player.tmdb.TmdbLanguages
@@ -457,6 +458,13 @@ internal fun VodPlayerDialog(
     val telemetryStore = remember { com.fortresstv.player.telemetry.TelemetryStore.get(context.applicationContext) }
     val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
+    val playbackNamespace = remember(request.key) { profileProgressNamespace(currentHouseholdId, currentProfileId) }
+    val traktScrobbler = remember(playbackNamespace, request.key) {
+        TraktScrobbleService(
+            context = context.applicationContext,
+            profileNamespace = playbackNamespace
+        )
+    }
     val streamKind = if (request.kind == VodProgressKind.CATCHUP) {
         com.fortresstv.player.telemetry.StreamKindWire.CATCHUP
     } else {
@@ -780,13 +788,31 @@ internal fun VodPlayerDialog(
         )
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) {
+                if (isPlaying) {
+                    traktScrobbler.onPlaybackStarted(
+                        positionMs = player.currentPosition.coerceAtLeast(0L),
+                        durationMs = player.duration.coerceAtLeast(0L),
+                        request = request
+                    )
+                } else {
+                    val isBuffering = player.playbackState == Player.STATE_BUFFERING
+                    traktScrobbler.onPlaybackPaused(
+                        positionMs = player.currentPosition.coerceAtLeast(0L),
+                        durationMs = player.duration.coerceAtLeast(0L),
+                        request = request,
+                        isBuffering = isBuffering
+                    )
                     onSaveProgress(player.currentPosition.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
                 }
             }
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_ENDED) {
+                    traktScrobbler.onPlaybackStopped(
+                        positionMs = player.duration.coerceAtLeast(0L),
+                        durationMs = player.duration.coerceAtLeast(0L),
+                        request = request
+                    )
                     onSaveProgress(player.duration.coerceAtLeast(0L), player.duration.coerceAtLeast(0L))
                     sleepTimerActivity?.playbackSleepTimer?.mediaEnded()
                     if (sleepTimerActivity?.playbackSleepTimer?.expired == true) return
@@ -840,6 +866,7 @@ internal fun VodPlayerDialog(
             mainActivity?.setOnPictureInPictureDismissedListener(null)
             val pos = maxOf(player.currentPosition.coerceAtLeast(0L), currentPositionMs)
             val dur = maxOf(player.duration.coerceAtLeast(0L), totalDurationMs)
+            traktScrobbler.onPlaybackStopped(pos, dur, request)
             if (pos >= 10_000L) {
                 onSaveProgress(pos, dur)
             }

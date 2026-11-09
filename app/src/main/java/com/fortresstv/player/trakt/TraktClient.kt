@@ -210,6 +210,29 @@ open class TraktClient(
         }
     }
 
+    /**
+     * Sends a scrobble action (start, pause, or stop) to Trakt.
+     */
+    open fun scrobble(
+        action: String,
+        payload: JSONObject,
+        accessToken: String,
+        clientId: String
+    ): TraktAuthResult<JSONObject> {
+        val url = "${apiHost.trimEnd('/')}/scrobble/${action.lowercase()}"
+        return try {
+            val response = executePost(url, payload.toString(), accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val json = if (response.body.isNotBlank()) JSONObject(response.body) else JSONObject()
+                TraktAuthResult.Success(json)
+            } else {
+                TraktAuthResult.Failure("Scrobble $action returned HTTP ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Scrobble $action error: ${e.message}", cause = e)
+        }
+    }
+
     // --- HTTP Helpers using HttpURLConnection ---
 
     open fun executePost(
