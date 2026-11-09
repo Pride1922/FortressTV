@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC15",
-    "versionCode":  49,
-    "notes":  "FortressTV 2.0.0-RC15: Automatically suggests the next unwatched episode in Continue Watching upon series episode completion, and improves sports channel binding to accurately prioritize live match broadcasts over news/commentary channels (such as Sport TV +).",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC15/fortresstv.apk",
-    "sha256":  "1B8FD78DE5C91FEA9A4B838EAB53C43CFD83A19FF995C8E32781FF810E711C86"
+    "version":  "2.0.0-RC16",
+    "versionCode":  50,
+    "notes":  "FortressTV 2.0.0-RC16\n\nTrakt.tv Integration:\n- Trakt OAuth with RFC 7636 PKCE browser flow (one-tap authorization via fortresstv://trakt/callback).\n- Device code pairing with QR code and Android TV D-pad focus highlight.\n- Secure AndroidKeyStore AES-256 GCM token storage scoped to household profiles.\n- Real-time VOD scrobbler for movies and series with TMDB/IMDB verification, pause debounce, and buffering exclusion.\n- Full English and Portuguese (pt-PT) localization.\n\nArchitecture \u0026 Refactoring:\n- Complete modular split of MainActivity into dedicated feature screens.\n- Extracted lifecycle-owned workflows (SourceSync, EpgSync, SecurityLock, PlaybackOrchestration).",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC16/fortresstv.apk",
+    "sha256":  "04766FF8CFB078A678430C3C013C73E36FD4ADC6997A346D4C8127DF9C9769E2"
 }
