@@ -378,6 +378,11 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import coil.size.Precision
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Sync
+import coil.compose.AsyncImage
+import com.fortresstv.player.trakt.TraktDeviceCodeDialog
+import com.fortresstv.player.trakt.TraktSettingsStore
 
 @Composable
 internal fun ApiKeysTab(
@@ -386,7 +391,8 @@ internal fun ApiKeysTab(
     introDbSettings: TheIntroDbSettings,
     onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit,
     omdbSettings: OmdbSettings = OmdbSettings(),
-    onOmdbSettingsChanged: (OmdbSettings) -> Unit = {}
+    onOmdbSettingsChanged: (OmdbSettings) -> Unit = {},
+    traktNamespace: String = "local"
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -395,6 +401,14 @@ internal fun ApiKeysTab(
     var connectionTestResult by remember { mutableStateOf<Result<Boolean>?>(null) }
     var isTestingOmdbConnection by remember { mutableStateOf(false) }
     var omdbConnectionTestResult by remember { mutableStateOf<Result<Boolean>?>(null) }
+    val traktStore = remember(context, traktNamespace) {
+        TraktSettingsStore(context.applicationContext, traktNamespace)
+    }
+    var traktConnected by remember(traktStore) { mutableStateOf(traktStore.isConnected()) }
+    var traktProfile by remember(traktStore) { mutableStateOf(traktStore.loadProfile()) }
+    var traktClientId by remember(traktStore) { mutableStateOf(traktStore.loadClientId()) }
+    var traktScrobbleEnabled by remember(traktStore) { mutableStateOf(traktStore.isScrobbleEnabled()) }
+    var showTraktPairingDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -755,7 +769,196 @@ internal fun ApiKeysTab(
                 )
             }
         }
+        SettingsGroup(title = strings.traktHeader) {
+            if (traktConnected && traktProfile != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (!traktProfile?.avatarUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(traktProfile?.avatarUrl)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                            )
+                        } else {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.AccountCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "@" + (traktProfile?.username ?: ""),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (traktProfile?.isVip == true) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = strings.traktVipBadge,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = traktProfile?.name.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            traktStore.clearConnection()
+                            traktConnected = false
+                            traktProfile = null
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text(strings.traktDisconnect)
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                SettingsToggleRow(
+                    title = strings.traktScrobble,
+                    subtitle = strings.traktScrobbleDesc,
+                    icon = Icons.Default.Sync,
+                    checked = traktScrobbleEnabled,
+                    onCheckedChange = { checked ->
+                        traktScrobbleEnabled = checked
+                        traktStore.setScrobbleEnabled(checked)
+                    }
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = strings.traktDesc,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    var clientIdText by remember(traktClientId) { mutableStateOf(traktClientId) }
+
+                    OutlinedTextField(
+                        value = clientIdText,
+                        onValueChange = {
+                            clientIdText = it
+                            traktClientId = it
+                            traktStore.saveClientId(it)
+                        },
+                        label = { Text(strings.traktClientId) },
+                        supportingText = { Text(strings.traktClientIdHint, fontSize = 11.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = { showTraktPairingDialog = true },
+                        enabled = clientIdText.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Link, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.traktConnect)
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                strings.traktHelp,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                strings.traktHelpLink,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.clickable {
+                                    runCatching {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(strings.traktHelpLink))
+                                        context.startActivity(intent)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    if (showTraktPairingDialog && traktClientId.isNotBlank()) {
+        TraktDeviceCodeDialog(
+            clientId = traktClientId,
+            onSuccess = { token, profile ->
+                traktStore.saveConnection(token, profile)
+                traktConnected = true
+                traktProfile = profile
+                showTraktPairingDialog = false
+            },
+            onDismiss = {
+                showTraktPairingDialog = false
+            }
+        )
+    }
+
 }
 
 

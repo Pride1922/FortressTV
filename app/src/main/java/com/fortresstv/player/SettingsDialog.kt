@@ -452,7 +452,8 @@ internal fun SettingsDialog(
     onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
     onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
     onEpgLoadedDaysChanged: (Int) -> Unit,
-    onOpenCustomizeHome: (() -> Unit)? = null
+    onOpenCustomizeHome: (() -> Unit)? = null,
+    traktNamespace: String = "local"
 ) {
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
@@ -721,7 +722,8 @@ internal fun SettingsDialog(
                                     introDbSettings = introDbSettings,
                                     onIntroDbSettingsChanged = onIntroDbSettingsChanged,
                                     omdbSettings = omdbSettings,
-                                    onOmdbSettingsChanged = onOmdbSettingsChanged
+                                    onOmdbSettingsChanged = onOmdbSettingsChanged,
+                                    traktNamespace = traktNamespace
                                 )
                                 5 -> AccountTab(
                                     showHeader = false,
@@ -855,7 +857,8 @@ internal fun SettingsDialog(
                                 introDbSettings = introDbSettings,
                                 onIntroDbSettingsChanged = onIntroDbSettingsChanged,
                                 omdbSettings = omdbSettings,
-                                onOmdbSettingsChanged = onOmdbSettingsChanged
+                                onOmdbSettingsChanged = onOmdbSettingsChanged,
+                                traktNamespace = traktNamespace
                             )
                             5 -> AccountTab(
                                 showHeader = false,

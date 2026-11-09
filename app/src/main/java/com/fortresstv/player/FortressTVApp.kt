@@ -2082,7 +2082,8 @@ internal fun FortressTVApp(
                     val currentEpg = epgSource ?: settings.epgSource()
                     currentEpg?.let { loadEpg(it, save = false, forceRefresh = false) }
                 },
-                onOpenCustomizeHome = { showCustomizeHomeDialog = true }
+                onOpenCustomizeHome = { showCustomizeHomeDialog = true },
+                traktNamespace = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
             )
         }
 

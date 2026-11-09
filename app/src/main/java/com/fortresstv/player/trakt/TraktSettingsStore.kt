@@ -30,6 +30,18 @@ class TraktSettingsStore(
         return token != null && token.accessToken.isNotBlank() && token.refreshToken.isNotBlank()
     }
 
+    fun loadClientId(): String {
+        return preferences.getString(KEY_CLIENT_ID, null)?.let(::decrypt).orEmpty()
+    }
+
+    fun saveClientId(clientId: String) {
+        if (clientId.isBlank()) {
+            preferences.edit().remove(KEY_CLIENT_ID).apply()
+        } else {
+            preferences.edit().putString(KEY_CLIENT_ID, encrypt(clientId.trim())).apply()
+        }
+    }
+
     fun isScrobbleEnabled(): Boolean {
         return preferences.getBoolean(KEY_SCROBBLE_ENABLED, true)
     }
@@ -213,6 +225,7 @@ class TraktSettingsStore(
         private const val IV_SIZE = 12
         private const val KEY_ALIAS = "fortress_trakt_encryption_key"
 
+        private const val KEY_CLIENT_ID = "client_id"
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_CREATED_AT = "created_at"

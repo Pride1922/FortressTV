@@ -369,6 +369,28 @@ interface Strings {
     val introDbAutoSkipIntroDesc: String
     val introDbAutoSkipRecap: String
     val introDbAutoSkipRecapDesc: String
+    val traktHeader: String
+    val traktDesc: String
+    val traktClientId: String
+    val traktClientIdHint: String
+    val traktConnect: String
+    val traktDisconnect: String
+    val traktConnectedAs: String
+    val traktVipBadge: String
+    val traktScrobble: String
+    val traktScrobbleDesc: String
+    val traktPairingTitle: String
+    val traktPairingInstructions: String
+    val traktPairingLink: String
+    val traktPairingGenerating: String
+    val traktPairingWaiting: String
+    val traktPairingExpiresIn: String
+    val traktPairingExpired: String
+    val traktPairingDenied: String
+    val traktPairingSuccess: String
+    val traktPairingRetry: String
+    val traktHelp: String
+    val traktHelpLink: String
     val watchTrailer: String
     val genres: String
     val tabAbout: String
@@ -885,6 +907,28 @@ object EnglishStrings : Strings {
     override val introDbAutoSkipIntroDesc = "Automatically skips opening intros without asking"
     override val introDbAutoSkipRecap = "Auto-skip Recap"
     override val introDbAutoSkipRecapDesc = "Automatically skips previous episode recaps"
+    override val traktHeader = "Trakt.tv"
+    override val traktDesc = "Sync watch history, playback progress and scrobble VOD automatically."
+    override val traktClientId = "Trakt Client ID"
+    override val traktClientIdHint = "Enter your Trakt application Client ID"
+    override val traktConnect = "Connect with Trakt"
+    override val traktDisconnect = "Disconnect"
+    override val traktConnectedAs = "Connected as"
+    override val traktVipBadge = "VIP"
+    override val traktScrobble = "Scrobble VOD Playback"
+    override val traktScrobbleDesc = "Automatically update your Trakt watch status when watching movies and series"
+    override val traktPairingTitle = "Connect to Trakt"
+    override val traktPairingInstructions = "Scan the QR code with your phone or visit the link below and enter this code:"
+    override val traktPairingLink = "https://trakt.tv/activate"
+    override val traktPairingGenerating = "Generating pairing code..."
+    override val traktPairingWaiting = "Waiting for authorization on Trakt..."
+    override val traktPairingExpiresIn = "Code expires in %s"
+    override val traktPairingExpired = "Pairing code expired"
+    override val traktPairingDenied = "Authorization was denied on Trakt"
+    override val traktPairingSuccess = "Successfully connected to Trakt!"
+    override val traktPairingRetry = "Try Again"
+    override val traktHelp = "Obtain a free Trakt Client ID at trakt.tv/oauth/applications"
+    override val traktHelpLink = "https://trakt.tv/oauth/applications"
     override val watchTrailer = "Watch Trailer"
     override val genres = "Genres"
     override val tabAbout = "About"
@@ -1404,6 +1448,28 @@ object PortugueseStrings : Strings {
     override val introDbAutoSkipIntroDesc = "Avança as introduções automaticamente sem confirmação"
     override val introDbAutoSkipRecap = "Saltar Resumo Automaticamente"
     override val introDbAutoSkipRecapDesc = "Avança os resumos de episódios anteriores automaticamente"
+    override val traktHeader = "Trakt.tv"
+    override val traktDesc = "Sincronize o histórico, progresso de reprodução e scrobble VOD automaticamente."
+    override val traktClientId = "ID de Cliente Trakt"
+    override val traktClientIdHint = "Introduza o ID de Cliente da sua aplicação Trakt"
+    override val traktConnect = "Ligar ao Trakt"
+    override val traktDisconnect = "Desligar"
+    override val traktConnectedAs = "Ligado como"
+    override val traktVipBadge = "VIP"
+    override val traktScrobble = "Scrobble de Reprodução VOD"
+    override val traktScrobbleDesc = "Atualiza automaticamente o estado de visualização no Trakt ao ver filmes e séries"
+    override val traktPairingTitle = "Ligar ao Trakt"
+    override val traktPairingInstructions = "Digitalize o código QR com o telemóvel ou aceda à ligação abaixo e introduza o código:"
+    override val traktPairingLink = "https://trakt.tv/activate"
+    override val traktPairingGenerating = "A gerar código de emparelhamento..."
+    override val traktPairingWaiting = "A aguardar autorização no Trakt..."
+    override val traktPairingExpiresIn = "O código expira em %s"
+    override val traktPairingExpired = "O código de emparelhamento expirou"
+    override val traktPairingDenied = "A autorização foi recusada no Trakt"
+    override val traktPairingSuccess = "Ligado ao Trakt com sucesso!"
+    override val traktPairingRetry = "Tentar Novamente"
+    override val traktHelp = "Obtenha um ID de Cliente Trakt gratuito em trakt.tv/oauth/applications"
+    override val traktHelpLink = "https://trakt.tv/oauth/applications"
     override val watchTrailer = "Ver Trailer"
     override val genres = "Géneros"
     override val tabAbout = "Sobre"
