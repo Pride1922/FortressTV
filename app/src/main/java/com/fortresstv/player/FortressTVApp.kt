@@ -477,6 +477,8 @@ internal fun FortressTVApp(
     var isAdultContentUnlockedByPin by remember { mutableStateOf(false) }
 
     val profileRepository = remember { ProfileRepository.get(context) }
+
+    val securityLockWorkflow = remember(profileRepository) { SecurityLockWorkflow(profileRepository) }
     val activeHouseholdProfile by profileRepository.activeProfile.collectAsState()
     val householdProfiles by profileRepository.profiles.collectAsState()
     var showProfileSelectionDialog by remember { mutableStateOf(false) }
@@ -494,12 +496,7 @@ internal fun FortressTVApp(
     }
 
     fun requestAdultAction(action: (String?) -> Unit) {
-        val status = profileRepository.getPinStatus()
-        if (!activeHouseholdProfile.isChild && !status.hasPin) {
-            action(null)
-        } else if (profileRepository.isAdultUnlocked()) {
-            action(profileRepository.currentUnlockToken())
-        } else {
+        securityLockWorkflow.requestAdultAction(activeHouseholdProfile, action) {
             pendingAdultTokenAction = action
         }
     }
@@ -522,8 +519,7 @@ internal fun FortressTVApp(
     val shouldGateWithProfilePicker = requireProfileSelection
 
     LaunchedEffect(inactivityLockTriggered) {
-        if (inactivityLockTriggered) {
-            profileRepository.revokeAdultUnlock()
+        securityLockWorkflow.handleInactivityLock(inactivityLockTriggered) {
             onInactivityLockConsumed()
         }
     }
