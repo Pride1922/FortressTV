@@ -16,6 +16,7 @@ object TraktEndpoints {
     const val API_HOST = "https://api.trakt.tv"
 
     const val API_VERSION = "2"
+    const val REDIRECT_URI = "fortresstv://trakt/callback"
 }
 
 data class TraktDeviceCode(

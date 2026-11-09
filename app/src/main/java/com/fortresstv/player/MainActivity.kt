@@ -557,6 +557,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        intent?.data?.let { uri ->
+            com.fortresstv.player.trakt.TraktAuthBridge.handleDeepLink(this, uri)
+        }
         transferDeepLink = intent?.dataString
         enableEdgeToEdge()
         FormFactorDetector.detect(this)
@@ -609,6 +612,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        intent.data?.let { uri ->
+            com.fortresstv.player.trakt.TraktAuthBridge.handleDeepLink(this, uri)
+        }
         transferDeepLink = intent.dataString
     }
 

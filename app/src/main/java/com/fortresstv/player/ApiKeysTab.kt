@@ -409,6 +409,23 @@ internal fun ApiKeysTab(
     var traktClientId by remember(traktStore) { mutableStateOf(traktStore.loadClientId()) }
     var traktScrobbleEnabled by remember(traktStore) { mutableStateOf(traktStore.isScrobbleEnabled()) }
     var showTraktPairingDialog by remember { mutableStateOf(false) }
+    var traktAuthErrorMessage by remember { mutableStateOf<String?>(null) }
+    val isTelevision = LocalFormFactor.current.isTelevision
+
+    LaunchedEffect(traktNamespace) {
+        com.fortresstv.player.trakt.TraktAuthBridge.authEvents.collect { result ->
+            when (result) {
+                is com.fortresstv.player.trakt.TraktAuthResult.Success -> {
+                    traktConnected = true
+                    traktProfile = result.data
+                    traktAuthErrorMessage = null
+                }
+                is com.fortresstv.player.trakt.TraktAuthResult.Failure -> {
+                    traktAuthErrorMessage = result.message
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -882,7 +899,7 @@ internal fun ApiKeysTab(
 
                     var clientIdText by remember(traktClientId) { mutableStateOf(traktClientId) }
                     val cleanClientId = clientIdText.trim().trim('"', '\'')
-                    val isInvalidLength = cleanClientId.isNotEmpty() && cleanClientId.length != 64
+                    val isInvalidLength = cleanClientId.isNotEmpty() && cleanClientId.length < 20
 
                     OutlinedTextField(
                         value = clientIdText,
@@ -910,13 +927,33 @@ internal fun ApiKeysTab(
                     )
 
                     Button(
-                        onClick = { showTraktPairingDialog = true },
-                        enabled = cleanClientId.isNotBlank(),
+                        onClick = {
+                            traktAuthErrorMessage = null
+                            if (!isTelevision) {
+                                com.fortresstv.player.trakt.TraktAuthBridge.startAuthorization(
+                                    context = context,
+                                    clientId = cleanClientId,
+                                    profileNamespace = traktNamespace
+                                )
+                            } else {
+                                showTraktPairingDialog = true
+                            }
+                        },
+                        enabled = cleanClientId.isNotBlank() && !isInvalidLength,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Link, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(strings.traktConnect)
+                    }
+
+                    if (traktAuthErrorMessage != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = traktAuthErrorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp
+                        )
                     }
 
                     Row(
