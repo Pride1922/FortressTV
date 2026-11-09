@@ -22,6 +22,7 @@ object ChannelFailoverResolver {
      */
     fun normalizeChannelName(rawName: String): String {
         return rawName
+            .replace("+", "plus")
             .replace(PREFIX_REGEX, "")
             .replace(TAG_REGEX, "")
             .replace(HD_REGEX, "")

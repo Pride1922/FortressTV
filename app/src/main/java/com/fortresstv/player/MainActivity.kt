@@ -895,6 +895,66 @@ private fun FortressTVApp(
                 }
             }
         }
+
+        val seriesWithProgress = currentEntries
+            .filter { it.kind == com.fortresstv.player.library.VodProgressKind.EPISODE && it.sourceId == sourceId }
+            .mapNotNull { it.seriesId }
+            .toSet()
+
+        val filesDir = context.applicationContext.filesDir
+        val xtreamSource = playlists.firstOrNull { it.id == sourceId }?.source as? ContentSource.Xtream
+        val client = XtreamClient(context.applicationContext, sourceId, xtreamSource ?: ContentSource.Xtream("", "", "", ""))
+
+        for (series in catalog.series) {
+            if (series.id in seriesWithProgress) continue
+            if (vodProgressStore.isDismissed("episode:$sourceId:${series.id}", series.id.toString())) continue
+
+            val cacheFile = java.io.File(filesDir, "xtream_${sourceId}_get_series_info_series_id_${series.id}.json")
+            if (!cacheFile.exists() || cacheFile.length() <= 0) continue
+
+            val details = runCatching { client.parseSeriesDetails(cacheFile.readText()) }.getOrNull() ?: continue
+            val episodes = details.episodes
+            if (episodes.isEmpty()) continue
+
+            val watchedIndices = episodes.indices.filter { idx ->
+                val ep = episodes[idx]
+                val epKey = ep.libraryId(sourceId)
+                epKey in watched || userLibrary.isItemWatched(epKey, watched)
+            }
+            if (watchedIndices.isEmpty()) continue
+
+            val lastWatchedIndex = watchedIndices.maxOrNull() ?: continue
+            val nextEpisode = episodes.getOrNull(lastWatchedIndex + 1) ?: continue
+
+            val nextKey = nextEpisode.libraryId(sourceId)
+            if (nextKey in watched || userLibrary.isItemWatched(nextKey, watched)) continue
+            if (vodProgressStore.isDismissed(nextKey, series.id.toString())) continue
+
+            val strings = if (java.util.Locale.getDefault().language.lowercase().startsWith("pt")) {
+                com.fortresstv.player.ui.PortugueseStrings
+            } else {
+                com.fortresstv.player.ui.EnglishStrings
+            }
+
+            val nextEntry = VodProgressEntry(
+                key = nextKey,
+                kind = com.fortresstv.player.library.VodProgressKind.EPISODE,
+                sourceId = sourceId,
+                itemId = nextEpisode.id,
+                seriesId = series.id,
+                title = "${series.name} · ${strings.episodeLabel(nextEpisode.season, nextEpisode.episodeNumber)} · ${nextEpisode.title}",
+                posterUrl = nextEpisode.posterUrl ?: series.coverUrl,
+                containerExtension = nextEpisode.containerExtension.ifBlank { "mp4" },
+                season = nextEpisode.season,
+                episode = nextEpisode.episodeNumber,
+                positionMs = 0L,
+                durationMs = (nextEpisode.durationSecs ?: 0) * 1000L,
+                updatedAtMs = cacheFile.lastModified().coerceAtLeast(System.currentTimeMillis() - 24 * 3600 * 1000L)
+            )
+            currentEntries.add(0, nextEntry)
+            progressChanged = true
+        }
+
         if (progressChanged) {
             vodProgressStore.setAll(currentEntries)
         }
@@ -4429,6 +4489,7 @@ private fun FortressLibrary(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var progressEntries by remember { mutableStateOf(progressStore.entries()) }
     LaunchedEffect(activeHouseholdProfile?.id, progressRefreshTrigger) {
         withContext(Dispatchers.IO) {
@@ -4518,7 +4579,7 @@ private fun FortressLibrary(
             contentFocusRequester = contentFocusRequester
         )
         val onRemoveContinueWatchingEntry: (VodProgressEntry) -> Unit = { entry ->
-            progressEntries = progressStore.remove(entry.key)
+            progressEntries = progressStore.remove(entry.key, entry.seriesId)
             if (activeHouseholdProfile != null && activeHouseholdProfile.id != "restricted_default") {
                 val cloudSync = com.fortresstv.player.library.CloudLibrarySyncService.get(context)
                 cloudSync.recordProgressMutation(
@@ -4954,6 +5015,47 @@ private fun FortressLibrary(
                             completed = isCompleted
                         )
                     }
+                    if (isCompleted && request.kind == VodProgressKind.EPISODE && request.seriesId != null) {
+                        scope.launch(Dispatchers.IO) {
+                            val nextRequest = resolveNextEpisodePlayback(request, xtreamProfiles, context)
+                            if (nextRequest != null) {
+                                val seriesName = request.seriesName
+                                val formattedTitle = if (!seriesName.isNullOrBlank() && !nextRequest.title.startsWith(seriesName)) {
+                                    "$seriesName · ${nextRequest.title}"
+                                } else nextRequest.title
+                                val nextEntry = VodProgressEntry(
+                                    key = nextRequest.key,
+                                    kind = VodProgressKind.EPISODE,
+                                    sourceId = nextRequest.sourceId,
+                                    itemId = nextRequest.itemId,
+                                    seriesId = nextRequest.seriesId,
+                                    title = formattedTitle,
+                                    posterUrl = nextRequest.posterUrl ?: request.posterUrl,
+                                    containerExtension = nextRequest.containerExtension.ifBlank { "mp4" },
+                                    season = nextRequest.season,
+                                    episode = nextRequest.episode,
+                                    positionMs = 0L,
+                                    durationMs = 0L,
+                                    updatedAtMs = System.currentTimeMillis()
+                                )
+                                withContext(Dispatchers.Main) {
+                                    progressEntries = progressStore.saveNextEpisode(nextEntry)
+                                }
+                                if (activeHouseholdProfile != null && activeHouseholdProfile.id != "restricted_default") {
+                                    val cloudSync = com.fortresstv.player.library.CloudLibrarySyncService.get(context)
+                                    cloudSync.recordProgressMutation(
+                                        profileId = activeHouseholdProfile.id,
+                                        sourceId = nextRequest.sourceId,
+                                        itemKind = nextRequest.kind.wireValue,
+                                        itemId = nextRequest.itemId,
+                                        positionMs = 0L,
+                                        durationMs = 0L,
+                                        completed = false
+                                    )
+                                }
+                            }
+                        }
+                    }
                 },
                 onDismiss = { vodPlayback = null }
             )
@@ -5312,8 +5414,20 @@ private suspend fun resolveNextEpisodePlayback(
     val client = XtreamClient(context.applicationContext, current.sourceId, source)
     val details = client.loadSeriesDetails(seriesId)
     val episodes = details.episodes
-    val currentIndex = episodes.indexOfFirst { it.id == current.itemId }
+    var currentIndex = episodes.indexOfFirst {
+        it.id == current.itemId || com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id) == current.itemId
+    }
+    if (currentIndex == -1 && current.season != null && current.episode != null) {
+        currentIndex = episodes.indexOfFirst { it.season == current.season && it.episodeNumber == current.episode }
+    }
+    if (currentIndex == -1) return null
     val next = episodes.getOrNull(currentIndex + 1) ?: return null
+    val strings = if (java.util.Locale.getDefault().language.lowercase().startsWith("pt")) {
+        com.fortresstv.player.ui.PortugueseStrings
+    } else {
+        com.fortresstv.player.ui.EnglishStrings
+    }
+    val episodeTitle = "${strings.episodeLabel(next.season, next.episodeNumber)} · ${next.title}"
     return VodPlaybackRequest(
         key = "episode:${current.sourceId}:${next.id}",
         kind = VodProgressKind.EPISODE,
@@ -5321,7 +5435,7 @@ private suspend fun resolveNextEpisodePlayback(
         itemId = next.id,
         seriesId = seriesId,
         seriesName = current.seriesName,
-        title = next.title,
+        title = episodeTitle,
         posterUrl = next.posterUrl ?: current.posterUrl,
         containerExtension = next.containerExtension,
         season = next.season,
@@ -5342,6 +5456,11 @@ private suspend fun resolveAllSeriesEpisodesPlayback(
     val client = XtreamClient(context.applicationContext, current.sourceId, source)
     val details = client.loadSeriesDetails(seriesId)
     val episodes = details.episodes
+    val strings = if (java.util.Locale.getDefault().language.lowercase().startsWith("pt")) {
+        com.fortresstv.player.ui.PortugueseStrings
+    } else {
+        com.fortresstv.player.ui.EnglishStrings
+    }
     return episodes.map { episode ->
         VodPlaybackRequest(
             key = "episode:${current.sourceId}:${episode.id}",
@@ -5350,7 +5469,7 @@ private suspend fun resolveAllSeriesEpisodesPlayback(
             itemId = episode.id,
             seriesId = seriesId,
             seriesName = current.seriesName,
-            title = episode.title,
+            title = "${strings.episodeLabel(episode.season, episode.episodeNumber)} · ${episode.title}",
             posterUrl = episode.posterUrl ?: current.posterUrl,
             containerExtension = episode.containerExtension,
             season = episode.season,
@@ -5458,13 +5577,18 @@ private fun ContinueWatchingRow(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
-                            Spacer(Modifier.width(8.dp))
+                            val isUnstartedEpisode = featured.progressFraction == 0f && featured.kind == VodProgressKind.EPISODE
                             val pct = (featured.progressFraction * 100).toInt()
+                            Spacer(Modifier.width(8.dp))
                             Text(
-                                "$pct% ${strings.watchedProgress.lowercase()}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                if (isUnstartedEpisode) {
+                                    strings.nextEpisode
+                                } else {
+                                    "$pct% ${strings.watchedProgress.lowercase()}"
+                                },
+                                color = if (isUnstartedEpisode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = if (isUnstartedEpisode) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                         Spacer(Modifier.height(6.dp))
@@ -5495,7 +5619,10 @@ private fun ContinueWatchingRow(
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(strings.resume, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (featured.progressFraction == 0f && featured.kind == VodProgressKind.EPISODE) strings.playNow else strings.resume,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                 IconButton(
                     onClick = { onRemove(featured) },
@@ -5543,17 +5670,28 @@ private fun ContinueWatchingRow(
                                 )
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    entry.title,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                Column(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clickable { onClick(entry) }
-                                        .padding(start = 12.dp, top = 10.dp, bottom = 10.dp)
-                                )
+                                        .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp)
+                                ) {
+                                    if (entry.progressFraction == 0f && entry.kind == VodProgressKind.EPISODE) {
+                                        Text(
+                                            strings.nextEpisode,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Text(
+                                        entry.title,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 IconButton(
                                     onClick = { onRemove(entry) },
                                     modifier = Modifier

@@ -123,18 +123,81 @@ class VodProgressStore internal constructor(
         }
     }
 
+    fun isDismissed(key: String, seriesId: String? = null): Boolean = synchronized(lock) {
+        val dismissed = preferences.getStringSet(KEY_DISMISSED, emptySet()).orEmpty()
+        if (dismissed.contains(key)) return true
+        if (seriesId != null && dismissed.contains("series:$seriesId")) return true
+        val parts = key.split(":")
+        if (parts.size >= 3) {
+            val hash = CloudIdentityHasher.hashItemId(parts[2])
+            if (dismissed.contains("${parts[0]}:${parts[1]}:$hash")) return true
+        }
+        return false
+    }
+
+    fun dismiss(key: String, seriesId: String? = null) = synchronized(lock) {
+        val dismissed = preferences.getStringSet(KEY_DISMISSED, emptySet()).orEmpty().toMutableSet()
+        dismissed.add(key)
+        if (seriesId != null) {
+            dismissed.add("series:$seriesId")
+        }
+        preferences.edit().putStringSet(KEY_DISMISSED, dismissed).apply()
+    }
+
+    fun undismiss(key: String, seriesId: String? = null) = synchronized(lock) {
+        val dismissed = preferences.getStringSet(KEY_DISMISSED, emptySet()).orEmpty().toMutableSet()
+        var changed = dismissed.remove(key)
+        if (seriesId != null) {
+            changed = dismissed.remove("series:$seriesId") || changed
+        }
+        val parts = key.split(":")
+        if (parts.size >= 3) {
+            val hash = CloudIdentityHasher.hashItemId(parts[2])
+            changed = dismissed.remove("${parts[0]}:${parts[1]}:$hash") || changed
+        }
+        if (changed) {
+            preferences.edit().putStringSet(KEY_DISMISSED, dismissed).apply()
+        }
+    }
+
+    fun saveNextEpisode(entry: VodProgressEntry): List<VodProgressEntry> = synchronized(lock) {
+        val hash = CloudIdentityHasher.hashItemId(entry.itemId)
+        undismiss(entry.key, entry.seriesId?.toString())
+        val updated = entries().filterNot {
+            it.key == entry.key ||
+            (it.kind == entry.kind && it.sourceId == entry.sourceId && (
+                it.itemId == entry.itemId ||
+                it.itemId == hash ||
+                (entry.seriesId != null && it.seriesId != null && it.seriesId == entry.seriesId)
+            ))
+        }.toMutableList()
+        updated.add(0, entry)
+        val limited = updated.sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
+        preferences.edit().putString(KEY_ENTRIES, encode(limited)).apply()
+        limited
+    }
+
     fun save(entry: VodProgressEntry): List<VodProgressEntry> = synchronized(lock) {
         val hash = CloudIdentityHasher.hashItemId(entry.itemId)
+        undismiss(entry.key, entry.seriesId?.toString())
         val existing = entries().firstOrNull {
-            it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (it.itemId == entry.itemId || it.itemId == hash))
+            it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (
+                it.itemId == entry.itemId ||
+                it.itemId == hash ||
+                (entry.seriesId != null && it.seriesId != null && it.seriesId == entry.seriesId)
+            ))
         }
         if (entry.positionMs < MINIMUM_PROGRESS_MS) {
-            if (existing != null && existing.positionMs >= MINIMUM_PROGRESS_MS) {
+            if (existing != null && (existing.positionMs >= MINIMUM_PROGRESS_MS || existing.positionMs == 0L)) {
                 return entries()
             }
         }
         val updated = entries().filterNot {
-            it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (it.itemId == entry.itemId || it.itemId == hash))
+            it.key == entry.key || (it.kind == entry.kind && it.sourceId == entry.sourceId && (
+                it.itemId == entry.itemId ||
+                it.itemId == hash ||
+                (entry.seriesId != null && it.seriesId != null && it.seriesId == entry.seriesId)
+            ))
         }.toMutableList()
         if (entry.positionMs >= MINIMUM_PROGRESS_MS &&
             (entry.durationMs <= 0 || entry.positionMs < entry.durationMs * COMPLETED_FRACTION)
@@ -146,13 +209,15 @@ class VodProgressStore internal constructor(
         limited
     }
 
-    fun remove(key: String): List<VodProgressEntry> = synchronized(lock) {
+    fun remove(key: String, seriesId: Int? = null): List<VodProgressEntry> = synchronized(lock) {
+        dismiss(key, seriesId?.toString())
         val parts = key.split(":")
         val hashedKey = if (parts.size >= 3) {
             "${parts[0]}:${parts[1]}:${CloudIdentityHasher.hashItemId(parts[2])}"
         } else null
         val updated = entries().filterNot {
-            it.key == key || (hashedKey != null && it.key == hashedKey)
+            it.key == key || (hashedKey != null && it.key == hashedKey) ||
+            (seriesId != null && it.kind == VodProgressKind.EPISODE && it.seriesId == seriesId)
         }
         preferences.edit().putString(KEY_ENTRIES, encode(updated)).apply()
         updated
@@ -165,12 +230,13 @@ class VodProgressStore internal constructor(
     }
 
     fun clear(): List<VodProgressEntry> = synchronized(lock) {
-        preferences.edit().remove(KEY_ENTRIES).apply()
+        preferences.edit().remove(KEY_ENTRIES).remove(KEY_DISMISSED).apply()
         emptyList()
     }
 
     companion object {
         private const val KEY_ENTRIES = "entries_json"
+        private const val KEY_DISMISSED = "dismissed_keys"
         private const val MINIMUM_PROGRESS_MS = 10_000L
         private const val COMPLETED_FRACTION = 0.95
         private const val MAX_ENTRIES = 100

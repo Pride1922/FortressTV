@@ -291,4 +291,147 @@ class SportsBindingResolverTest {
         assertNotNull(resolved)
         assertEquals("PT: V+ TVI", resolved!!.name)
     }
+
+    @Test
+    fun matchViaEpg_prefersSportTv2OverSportTvPlusStudioShow() {
+        val kickoff = Instant.now().plusSeconds(1800)
+        val fixture = sampleFixture(
+            broadcaster = "Sport TV 2",
+            home = "Vitória SC",
+            away = "SL Benfica",
+            kickoff = kickoff
+        )
+
+        val sportTvPlusChannel = sampleChannel(
+            name = "PT: SPORT TV + HD",
+            tvgId = "sporttvplus.pt"
+        )
+        val sportTv2Channel = sampleChannel(
+            name = "PT: SPORT TV 2 HD",
+            tvgId = "sporttv2.pt"
+        )
+
+        val epgGuide = EpgGuide(
+            channels = mapOf(
+                "sporttvplus.pt" to EpgChannel("sporttvplus.pt", "SPORT TV +"),
+                "sporttv2.pt" to EpgChannel("sporttv2.pt", "SPORT TV 2")
+            ),
+            programmes = mapOf(
+                "sporttvplus.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "sporttvplus.pt",
+                        title = "Grande Jornada",
+                        description = "Acompanhamento ao minuto do jogo Vitória SC vs SL Benfica",
+                        category = "Informação",
+                        startEpochMilli = kickoff.minusSeconds(900).toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(7200).toEpochMilli()
+                    )
+                ),
+                "sporttv2.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "sporttv2.pt",
+                        title = "Liga Portugal Betclic: Vitória SC x SL Benfica (Direto)",
+                        description = "Transmissão exclusiva em direto",
+                        category = "Desporto",
+                        startEpochMilli = kickoff.toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(6300).toEpochMilli()
+                    )
+                )
+            )
+        )
+
+        // Put Sport TV + before Sport TV 2 to ensure channel priority and scoring beat list order
+        val resolved = SportsBindingResolver.resolve(
+            fixture = fixture,
+            channels = listOf(sportTvPlusChannel, sportTv2Channel),
+            epgGuide = epgGuide
+        )
+
+        assertNotNull(resolved)
+        assertEquals("PT: SPORT TV 2 HD", resolved!!.name)
+    }
+
+    @Test
+    fun matchBroadcasterDirectly_doesNotMatchSportTvPlusWhenTargetIsSportTv() {
+        val channels = listOf(
+            sampleChannel("PT: SPORT TV + HD"),
+            sampleChannel("PT: SPORT TV 1 HD"),
+            sampleChannel("PT: SPORT TV 2 HD")
+        )
+
+        // Matching "Sport TV 2" must not hit Sport TV +
+        val matched2 = SportsBindingResolver.matchBroadcasterDirectly("Sport TV 2", channels)
+        assertNotNull(matched2)
+        assertEquals("PT: SPORT TV 2 HD", matched2!!.name)
+
+        // Matching "Sport TV +" explicitly must hit Sport TV +
+        val matchedPlus = SportsBindingResolver.matchBroadcasterDirectly("Sport TV +", channels)
+        assertNotNull(matchedPlus)
+        assertEquals("PT: SPORT TV + HD", matchedPlus!!.name)
+    }
+
+    @Test
+    fun resolveAll_sanitizesScrapedSportTvPlusToSportTvAndBindsToSportTv2ViaEpg() {
+        val kickoff = Instant.now().plusSeconds(1800)
+        // Scraped card fixture says "Sport TV +" for a Benfica league match
+        val fixture = sampleFixture(
+            broadcaster = "Sport TV +",
+            home = "Vitória SC",
+            away = "SL Benfica",
+            kickoff = kickoff
+        )
+
+        val sportTvPlus = sampleChannel("PT: SPORT TV + HD", tvgId = "sporttvplus.pt")
+        val sportTv1 = sampleChannel("PT: SPORT TV 1 HD", tvgId = "sporttv1.pt")
+        val sportTv2 = sampleChannel("PT: SPORT TV 2 HD", tvgId = "sporttv2.pt")
+
+        val epgGuide = EpgGuide(
+            channels = mapOf(
+                "sporttvplus.pt" to EpgChannel("sporttvplus.pt", "SPORT TV +"),
+                "sporttv1.pt" to EpgChannel("sporttv1.pt", "SPORT TV 1"),
+                "sporttv2.pt" to EpgChannel("sporttv2.pt", "SPORT TV 2")
+            ),
+            programmes = mapOf(
+                "sporttvplus.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "sporttvplus.pt",
+                        title = "Super Futebol",
+                        description = "Debate e acompanhamento do jogo Vitória SC vs SL Benfica",
+                        category = "Informação",
+                        startEpochMilli = kickoff.toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(7200).toEpochMilli()
+                    )
+                ),
+                "sporttv1.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "sporttv1.pt",
+                        title = "Fórmula 1: GP Brasil",
+                        description = "Corrida",
+                        category = "Desporto",
+                        startEpochMilli = kickoff.toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(7200).toEpochMilli()
+                    )
+                ),
+                "sporttv2.pt" to listOf(
+                    EpgProgramme(
+                        channelId = "sporttv2.pt",
+                        title = "Liga Portugal Betclic: Vitória SC x SL Benfica (Direto)",
+                        description = "Transmissão da 11ª jornada",
+                        category = "Desporto",
+                        startEpochMilli = kickoff.toEpochMilli(),
+                        stopEpochMilli = kickoff.plusSeconds(7200).toEpochMilli()
+                    )
+                )
+            )
+        )
+
+        val results = SportsBindingResolver.resolveAll(
+            fixtures = listOf(fixture),
+            channels = listOf(sportTvPlus, sportTv1, sportTv2),
+            epgGuide = epgGuide
+        )
+
+        assertEquals(1, results.size)
+        assertEquals("PT: SPORT TV 2 HD", results[0].second.name)
+    }
 }

@@ -378,4 +378,89 @@ class VodProgressStoreTest {
         assertEquals(1, store.entries().size)
         assertEquals(120_000L, store.entries().first().positionMs)
     }
+
+    @Test
+    fun saveNextEpisodeSavesUnstartedEpisodeAndReplacesPreviousEpisodeInSeries() {
+        val store = VodProgressStore(
+            prefsProvider = { TestSharedPreferences() },
+            initialNamespace = "test_series"
+        )
+        val ep20 = VodProgressEntry(
+            key = "episode:source-1:520",
+            kind = VodProgressKind.EPISODE,
+            sourceId = "source-1",
+            itemId = "520",
+            seriesId = 42,
+            title = "The Mentalist · S5 E20 · Red Velvet Cupcakes",
+            posterUrl = null,
+            containerExtension = "mp4",
+            season = 5,
+            episode = 20,
+            positionMs = 1_200_000L,
+            durationMs = 2_400_000L,
+            updatedAtMs = 1000L
+        )
+        store.save(ep20)
+        assertEquals(1, store.entries().size)
+        assertEquals("520", store.entries().first().itemId)
+
+        // Ep 20 completes and next episode (Ep 21) is suggested
+        val ep21 = VodProgressEntry(
+            key = "episode:source-1:521",
+            kind = VodProgressKind.EPISODE,
+            sourceId = "source-1",
+            itemId = "521",
+            seriesId = 42,
+            title = "The Mentalist · S5 E21 · Red and Itchy",
+            posterUrl = null,
+            containerExtension = "mp4",
+            season = 5,
+            episode = 21,
+            positionMs = 0L,
+            durationMs = 0L,
+            updatedAtMs = 2000L
+        )
+        store.saveNextEpisode(ep21)
+
+        val entries = store.entries()
+        assertEquals(1, entries.size)
+        assertEquals("521", entries.first().itemId)
+        assertEquals(0L, entries.first().positionMs)
+        assertEquals(0f, entries.first().progressFraction, 0.001f)
+    }
+
+    @Test
+    fun removeDismissesEntryAndSaveUndismisses() {
+        val store = VodProgressStore(
+            prefsProvider = { TestSharedPreferences() },
+            initialNamespace = "test_dismiss"
+        )
+        val entry = VodProgressEntry(
+            key = "episode:source-1:521",
+            kind = VodProgressKind.EPISODE,
+            sourceId = "source-1",
+            itemId = "521",
+            seriesId = 42,
+            title = "The Mentalist · S5 E21",
+            posterUrl = null,
+            containerExtension = "mp4",
+            season = 5,
+            episode = 21,
+            positionMs = 0L,
+            durationMs = 0L,
+            updatedAtMs = 1000L
+        )
+        store.saveNextEpisode(entry)
+        assertEquals(1, store.entries().size)
+
+        // User dismisses/removes entry from continue watching
+        store.remove(entry.key, entry.seriesId)
+        assertEquals(0, store.entries().size)
+        assertEquals(true, store.isDismissed(entry.key, "42"))
+
+        // User starts watching next episode again -> undismisses automatically
+        store.save(entry.copy(positionMs = 60_000L, durationMs = 2_400_000L))
+        assertEquals(false, store.isDismissed(entry.key, "42"))
+        assertEquals(1, store.entries().size)
+    }
 }

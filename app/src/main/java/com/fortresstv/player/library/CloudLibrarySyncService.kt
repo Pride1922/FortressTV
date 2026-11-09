@@ -590,7 +590,7 @@ class CloudLibrarySyncService internal constructor(
                     )
                     if (existingIndex >= 0) {
                         entries[existingIndex] = entry
-                    } else if (prog.positionMs > 0) {
+                    } else if (prog.positionMs > 0 || kind == VodProgressKind.EPISODE) {
                         entries.add(entry)
                     }
                 }
