@@ -444,6 +444,9 @@ internal fun FortressTVApp(
     val epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
     var epgSourceTimezone by remember { mutableStateOf(settings.epgSourceTimezone().orEmpty()) }
     val epgMappingStore = remember { com.fortresstv.player.epg.EpgMappingStore(context.applicationContext) }
+
+
+
     var epgMappings by remember { mutableStateOf(epgMappingStore.getAllMappings()) }
     var epgLoadedDays by remember { mutableIntStateOf(3) }
     val epgRepository = remember { DefaultEpgRepository(context) }
@@ -486,6 +489,9 @@ internal fun FortressTVApp(
     val cloudSourceSyncService = remember { com.fortresstv.player.source.CloudSourceSyncService.get(context) }
     val cloudLibrarySyncService = remember { com.fortresstv.player.library.CloudLibrarySyncService.get(context) }
     val migrationService = remember { com.fortresstv.player.account.LocalDataMigrationService(context) }
+    val epgSyncWorkflow = remember(context, settings, epgRepository, epgMappingStore, accountRepository, cloudSourceSyncService, scope) {
+        EpgSyncWorkflow(context.applicationContext, settings, epgRepository, epgMappingStore, accountRepository, cloudSourceSyncService, scope)
+    }
 
     fun requestAdultAction(action: (String?) -> Unit) {
         val status = profileRepository.getPinStatus()
@@ -499,32 +505,11 @@ internal fun FortressTVApp(
     }
 
     fun handleSaveEpgMapping(channel: PlaylistChannel, xmltvChannel: com.fortresstv.player.epg.EpgChannel, unlockToken: String?) {
-        val mapping = com.fortresstv.player.epg.EpgChannelMapping(
-            iptvSourceId = channel.sourceId,
-            iptvChannelId = channel.sourceItemId,
-            epgSourceId = epgSource?.displayName,
-            xmltvChannelId = xmltvChannel.id,
-            isAvailable = true
-        )
-        epgMappingStore.saveMapping(mapping)
-        epgMappings = epgMappingStore.getAllMappings()
-        val accountState = accountRepository.getAccountState()
-        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
-            scope.launch(Dispatchers.IO) {
-                cloudSourceSyncService.syncEpgMappingToCloud(mapping, unlockToken)
-            }
-        }
+        epgMappings = epgSyncWorkflow.saveMapping(channel, xmltvChannel, epgSource?.displayName, unlockToken)
     }
 
     fun handleResetEpgMapping(channel: PlaylistChannel, unlockToken: String?) {
-        epgMappingStore.removeMapping(channel.sourceId, channel.sourceItemId)
-        epgMappings = epgMappingStore.getAllMappings()
-        val accountState = accountRepository.getAccountState()
-        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
-            scope.launch(Dispatchers.IO) {
-                cloudSourceSyncService.deleteEpgMappingFromCloud(channel.sourceId, channel.sourceItemId, unlockToken)
-            }
-        }
+        epgMappings = epgSyncWorkflow.resetMapping(channel, unlockToken)
     }
 
     val shouldShowCloudOnboarding = remember {
@@ -905,70 +890,22 @@ internal fun FortressTVApp(
         allowCachedResult: Boolean
     ): Playlist = sourceSyncWorkflow.parsePlaylistWithCache(profile, cacheType, stream, allowCachedResult)
 
-    suspend fun parseEpg(stream: java.io.InputStream, loadedDays: Int = epgLoadedDays): EpgGuide = withContext(Dispatchers.Default) {
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        BufferedInputStream(stream).use { buffered ->
-            buffered.mark(2)
-            val first = buffered.read()
-            val second = buffered.read()
-            buffered.reset()
-            val decompressed = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
-            XmlTvParser.parse(
-                SizeLimitedInputStream(decompressed, 250L * 1024L * 1024L, "Decompressed EPG"),
-                loadedDays = loadedDays
-            )
-        }
-    }
+    suspend fun parseEpg(stream: java.io.InputStream, loadedDays: Int = epgLoadedDays): EpgGuide =
+        epgSyncWorkflow.parseEpg(stream, loadedDays)
 
     suspend fun parseEpgWithCache(
         source: ContentSource,
         stream: java.io.InputStream,
         allowCachedResult: Boolean,
         loadedDays: Int = epgLoadedDays
-    ): EpgGuide = withContext(Dispatchers.IO) {
-        val fallbackZone = runCatching { java.time.ZoneId.of(epgSourceTimezone) }.getOrDefault(java.time.ZoneId.systemDefault())
-        val baseFingerprint = SourceReader.fingerprint(context, source, "epg")
-        val fingerprint = if (baseFingerprint != null) "$baseFingerprint#days=$loadedDays#tz=${fallbackZone.id}" else null
-        if (allowCachedResult && fingerprint != null) {
-            val manifest = EpgDiskCache.readCurrentManifest(context, fingerprint)
-            val zone = manifest?.let { runCatching { java.time.ZoneId.of(it.timezoneId) }.getOrNull() } ?: java.time.ZoneId.systemDefault()
-            val currentTodayEpoch = java.time.LocalDate.now(zone).toEpochDay()
-            val hasFullWindow = manifest != null &&
-                manifest.todayEpochDay == currentTodayEpoch &&
-                (0 until loadedDays).all { manifest.partitions.containsKey(currentTodayEpoch + it) }
-
-            if (hasFullWindow) {
-                EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { cached ->
-                    stream.close()
-                    epgRepository.setGuide(cached)
-                    return@withContext cached
-                }
-            } else if (manifest != null && manifest.partitions.isNotEmpty()) {
-                EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { partialCached ->
-                    epgRepository.setGuide(partialCached)
-                    withContext(Dispatchers.Main) { epgGuide = partialCached }
-                }
-            }
-        }
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        val manifest = BufferedInputStream(stream).use { buffered ->
-            buffered.mark(2)
-            val first = buffered.read()
-            val second = buffered.read()
-            buffered.reset()
-            val decompressed = if (first == 0x1f && second == 0x8b) GZIPInputStream(buffered) else buffered
-            XmlTvParser.parseToDisk(
-                input = SizeLimitedInputStream(decompressed, 250L * 1024L * 1024L, "Decompressed EPG"),
-                context = context,
-                fingerprint = fingerprint.orEmpty(),
-                loadedDays = loadedDays,
-                fallbackSourceZone = fallbackZone
-            )
-        }
-        val guide = EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)
-        epgRepository.setGuide(guide)
-        guide
-    }
+    ): EpgGuide = epgSyncWorkflow.parseEpgWithCache(
+        source = source,
+        stream = stream,
+        allowCachedResult = allowCachedResult,
+        loadedDays = loadedDays,
+        epgSourceTimezone = epgSourceTimezone,
+        onPartialGuideLoaded = { epgGuide = it }
+    )
 
     fun loadPlaylistProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
         loading = true
