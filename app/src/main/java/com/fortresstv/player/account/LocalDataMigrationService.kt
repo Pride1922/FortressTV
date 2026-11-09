@@ -122,6 +122,16 @@ internal class LocalDataMigrationService(
             }
         }
 
+        // 1d. Sync local OMDb credentials to cloud if configured
+        val omdbStore = com.fortresstv.player.omdb.OmdbSettingsStore(context)
+        val localOmdb = omdbStore.loadSettings()
+        if (localOmdb.apiKey.isNotBlank()) {
+            try {
+                sourceApi.saveOmdb(localOmdb, token, accountState.accessToken)
+            } catch (_: Exception) {
+            }
+        }
+
         // 2. Import local library and progress into target adult profile
         val localLibrary = UserLibraryStore(context, "local")
         val localProgress = VodProgressStore(context, "local")

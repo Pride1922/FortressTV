@@ -330,6 +330,14 @@ import com.fortresstv.player.tmdb.TmdbMetadata
 import com.fortresstv.player.tmdb.TmdbMetadataResolver
 import com.fortresstv.player.tmdb.TmdbSeasonMetadata
 import com.fortresstv.player.tmdb.TmdbSettings
+import com.fortresstv.player.omdb.LocalOmdbSettings
+import com.fortresstv.player.omdb.OmdbAwardsRow
+import com.fortresstv.player.omdb.OmdbClient
+import com.fortresstv.player.omdb.OmdbMetadata
+import com.fortresstv.player.omdb.OmdbMetadataResolver
+import com.fortresstv.player.omdb.OmdbRatingsRow
+import com.fortresstv.player.omdb.OmdbSettings
+import com.fortresstv.player.omdb.OmdbSettingsStore
 import com.fortresstv.player.introdb.EpisodeSegments
 import com.fortresstv.player.introdb.LocalTheIntroDbSettings
 import com.fortresstv.player.introdb.MediaSegment
@@ -638,6 +646,8 @@ private fun FortressTVApp(
     var tmdbSettings by remember { mutableStateOf(tmdbStore.loadSettings()) }
     val introDbStore = remember { TheIntroDbSettingsStore(context.applicationContext) }
     var introDbSettings by remember { mutableStateOf(introDbStore.loadSettings()) }
+    val omdbStore = remember { OmdbSettingsStore(context.applicationContext) }
+    var omdbSettings by remember { mutableStateOf(omdbStore.loadSettings()) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -648,9 +658,9 @@ private fun FortressTVApp(
     var autoPictureInPicture by remember { mutableStateOf(true) }
     var telemetryEnabled by remember { mutableStateOf(settings.telemetryEnabled()) }
     var playbackMode by remember { mutableStateOf(PlaybackMode.AUTO) }
-    var preferredAudioLanguage by remember { mutableStateOf("default") }
-    var preferredSubtitleLanguage by remember { mutableStateOf("off") }
-    var subtitleFallbackEnglish by remember { mutableStateOf(true) }
+    var preferredAudioLanguage by remember { mutableStateOf(settings.preferredAudioLanguage(initialProfileId)) }
+    var preferredSubtitleLanguage by remember { mutableStateOf(settings.preferredSubtitleLanguage(initialProfileId)) }
+    var subtitleFallbackEnglish by remember { mutableStateOf(settings.subtitleFallbackEnglish(initialProfileId)) }
     val strings = getStringsFor(appLanguage)
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
@@ -1180,11 +1190,13 @@ private fun FortressTVApp(
         }
     }
 
-    LaunchedEffect(activeHouseholdProfile.language) {
-        val target = if (activeHouseholdProfile.language.startsWith("pt")) AppLanguage.PORTUGUESE else AppLanguage.ENGLISH
-        if (appLanguage != target) {
-            appLanguage = target
-            settings.setLanguage(target.code)
+    LaunchedEffect(activeHouseholdProfile.id, activeHouseholdProfile.language) {
+        if (activeHouseholdProfile.id != "restricted_default") {
+            val target = if (activeHouseholdProfile.language.startsWith("pt")) AppLanguage.PORTUGUESE else AppLanguage.ENGLISH
+            if (appLanguage != target) {
+                appLanguage = target
+                settings.setLanguage(target.code)
+            }
         }
     }
 
@@ -1250,6 +1262,43 @@ private fun FortressTVApp(
         appLanguage = newLang
         scope.launch(Dispatchers.IO) {
             settings.setLanguage(newLang.code)
+            val current = activeHouseholdProfile
+            if (current.id != "restricted_default") {
+                val profileLang = if (newLang == AppLanguage.PORTUGUESE) "pt-PT" else "en"
+                if (current.language != profileLang) {
+                    profileRepository.saveProfile(current.copy(language = profileLang))
+                }
+            }
+        }
+    }
+
+    val onPreferredAudioLanguageChanged: (String) -> Unit = { lang ->
+        preferredAudioLanguage = lang
+        scope.launch(Dispatchers.IO) { settings.setPreferredAudioLanguage(lang, activeHouseholdProfile.id) }
+        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+            cloudLibrarySyncService.recordPreferencesMutation(
+                profileId = activeHouseholdProfile.id,
+                audioLang = lang,
+                subtitleLang = preferredSubtitleLanguage,
+                subFallback = subtitleFallbackEnglish,
+                startupDestination = startupDestination.persistedValue,
+                epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+            )
+        }
+    }
+
+    val onPreferredSubtitleLanguageChanged: (String) -> Unit = { lang ->
+        preferredSubtitleLanguage = lang
+        scope.launch(Dispatchers.IO) { settings.setPreferredSubtitleLanguage(lang, activeHouseholdProfile.id) }
+        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+            cloudLibrarySyncService.recordPreferencesMutation(
+                profileId = activeHouseholdProfile.id,
+                audioLang = preferredAudioLanguage,
+                subtitleLang = lang,
+                subFallback = subtitleFallbackEnglish,
+                startupDestination = startupDestination.persistedValue,
+                epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
+            )
         }
     }
 
@@ -1562,9 +1611,6 @@ private fun FortressTVApp(
         val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
         val savedTelemetryPreference = withContext(Dispatchers.IO) { settings.telemetryEnabled() }
         val savedPlaybackMode = withContext(Dispatchers.IO) { settings.playbackMode() }
-        val savedAudioLang = withContext(Dispatchers.IO) { settings.preferredAudioLanguage() }
-        val savedSubLang = withContext(Dispatchers.IO) { settings.preferredSubtitleLanguage() }
-        val savedSubFallback = withContext(Dispatchers.IO) { settings.subtitleFallbackEnglish() }
         appLanguage = AppLanguage.fromCode(savedLangCode)
         epgScheduleCorrectionMinutes = correction
         epgSourceTimezone = sourceTz
@@ -1574,9 +1620,6 @@ private fun FortressTVApp(
         autoPictureInPicture = savedPictureInPicturePreference
         telemetryEnabled = savedTelemetryPreference
         playbackMode = savedPlaybackMode
-        preferredAudioLanguage = savedAudioLang
-        preferredSubtitleLanguage = savedSubLang
-        subtitleFallbackEnglish = savedSubFallback
 
         val (savedPlaylists, enabledPlaylists) = withContext(Dispatchers.IO) {
             val all = settings.getPlaylists()
@@ -1826,6 +1869,15 @@ private fun FortressTVApp(
                 } else if (tmdbSettings.apiKey.isNotBlank()) {
                     cloudSourceService.syncTmdbToCloud(tmdbSettings, profileRepository.currentUnlockToken())
                 }
+                val restoredOmdb = cloudSourceService.restoreOmdbFromCloud(profileRepository.currentUnlockToken())
+                if (restoredOmdb != null && restoredOmdb.apiKey.isNotBlank()) {
+                    omdbStore.saveSettings(restoredOmdb)
+                    withContext(Dispatchers.Main) {
+                        omdbSettings = restoredOmdb
+                    }
+                } else if (omdbSettings.apiKey.isNotBlank()) {
+                    cloudSourceService.syncOmdbToCloud(omdbSettings, profileRepository.currentUnlockToken())
+                }
             }
         }
 
@@ -1899,7 +1951,8 @@ private fun FortressTVApp(
         LocalFormFactor provides formFactor,
         LocalPlaybackMode provides playbackMode,
         LocalTmdbSettings provides effectiveTmdbSettings,
-        LocalTheIntroDbSettings provides introDbSettings
+        LocalTheIntroDbSettings provides introDbSettings,
+        LocalOmdbSettings provides omdbSettings
     ) {
         Box(Modifier.fillMaxSize()) {
             if (showOnboardingDialog) {
@@ -2015,6 +2068,8 @@ private fun FortressTVApp(
                     preferredAudioLanguage = preferredAudioLanguage,
                     preferredSubtitleLanguage = preferredSubtitleLanguage,
                     subtitleFallbackEnglish = subtitleFallbackEnglish,
+                    onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                    onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                     openSubtitlesSettings = openSubtitlesSettings,
                     hideAdultContent = effectiveHideAdultContent,
                     onHideAdultContentChanged = handleHideAdultContentChanged,
@@ -2228,6 +2283,15 @@ private fun FortressTVApp(
                         } else if (tmdbSettings.apiKey.isNotBlank()) {
                             cloudSourceSyncService.syncTmdbToCloud(tmdbSettings, token)
                         }
+                        val restoredOmdb = cloudSourceSyncService.restoreOmdbFromCloud(token)
+                        if (restoredOmdb != null && restoredOmdb.apiKey.isNotBlank()) {
+                            omdbStore.saveSettings(restoredOmdb)
+                            withContext(Dispatchers.Main) {
+                                omdbSettings = restoredOmdb
+                            }
+                        } else if (omdbSettings.apiKey.isNotBlank()) {
+                            cloudSourceSyncService.syncOmdbToCloud(omdbSettings, token)
+                        }
                     }
                 },
                 playlists = playlists,
@@ -2270,35 +2334,9 @@ private fun FortressTVApp(
                     scope.launch(Dispatchers.IO) { settings.setPlaybackMode(mode) }
                 },
                 preferredAudioLanguage = preferredAudioLanguage,
-                onPreferredAudioLanguageChanged = { lang ->
-                    preferredAudioLanguage = lang
-                    scope.launch(Dispatchers.IO) { settings.setPreferredAudioLanguage(lang, activeHouseholdProfile.id) }
-                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
-                        cloudLibrarySyncService.recordPreferencesMutation(
-                            profileId = activeHouseholdProfile.id,
-                            audioLang = lang,
-                            subtitleLang = preferredSubtitleLanguage,
-                            subFallback = subtitleFallbackEnglish,
-                            startupDestination = startupDestination.persistedValue,
-                            epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
-                        )
-                    }
-                },
+                onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
                 preferredSubtitleLanguage = preferredSubtitleLanguage,
-                onPreferredSubtitleLanguageChanged = { lang ->
-                    preferredSubtitleLanguage = lang
-                    scope.launch(Dispatchers.IO) { settings.setPreferredSubtitleLanguage(lang, activeHouseholdProfile.id) }
-                    if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
-                        cloudLibrarySyncService.recordPreferencesMutation(
-                            profileId = activeHouseholdProfile.id,
-                            audioLang = preferredAudioLanguage,
-                            subtitleLang = lang,
-                            subFallback = subtitleFallbackEnglish,
-                            startupDestination = startupDestination.persistedValue,
-                            epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
-                        )
-                    }
-                },
+                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                 subtitleFallbackEnglish = subtitleFallbackEnglish,
                 onSubtitleFallbackEnglishChanged = { enabled ->
                     subtitleFallbackEnglish = enabled
@@ -2338,6 +2376,16 @@ private fun FortressTVApp(
                 onIntroDbSettingsChanged = { newIntroDb ->
                     introDbSettings = newIntroDb
                     introDbStore.saveSettings(newIntroDb)
+                },
+                omdbSettings = omdbSettings,
+                onOmdbSettingsChanged = { newOmdb ->
+                    omdbSettings = newOmdb
+                    scope.launch(Dispatchers.IO) {
+                        omdbStore.saveSettings(newOmdb)
+                        if (currentUserId != null && newOmdb.apiKey.isNotBlank()) {
+                            cloudSourceSyncService.syncOmdbToCloud(newOmdb)
+                        }
+                    }
                 },
                 hideAdultContent = hideAdultContent,
                 isChildProfile = activeHouseholdProfile.isChild,
@@ -2380,6 +2428,11 @@ private fun FortressTVApp(
                     if (currentUserId != null && tmdbSettings.apiKey.isNotBlank()) {
                         scope.launch(Dispatchers.IO) {
                             cloudSourceSyncService.syncTmdbToCloud(tmdbSettings)
+                        }
+                    }
+                    if (currentUserId != null && omdbSettings.apiKey.isNotBlank()) {
+                        scope.launch(Dispatchers.IO) {
+                            cloudSourceSyncService.syncOmdbToCloud(omdbSettings)
                         }
                     }
                 },
@@ -4450,6 +4503,8 @@ private fun FortressLibrary(
     preferredAudioLanguage: String = "default",
     preferredSubtitleLanguage: String = "off",
     subtitleFallbackEnglish: Boolean = true,
+    onPreferredAudioLanguageChanged: ((String) -> Unit)? = null,
+    onPreferredSubtitleLanguageChanged: ((String) -> Unit)? = null,
     openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     hideAdultContent: Boolean = false,
     onHideAdultContentChanged: ((Boolean) -> Unit)? = null,
@@ -4651,6 +4706,27 @@ private fun FortressLibrary(
             }.take(25)
         }
 
+        val homeOmdbSettings = LocalOmdbSettings.current
+        LaunchedEffect(progressEntries, homeFollowedSeries, homeRecentMovies, homeOmdbSettings) {
+            if (homeOmdbSettings.enabled && homeOmdbSettings.apiKey.isNotBlank()) {
+                val targets = mutableListOf<com.fortresstv.player.omdb.OmdbPreFetchTarget>()
+                // 1. Continue watching items (most recent first)
+                progressEntries.take(20).forEach { entry ->
+                    val type = if (entry.kind == VodProgressKind.EPISODE) "series" else "movie"
+                    targets.add(com.fortresstv.player.omdb.OmdbPreFetchTarget(type = type, title = entry.title))
+                }
+                // 2. Followed series
+                homeFollowedSeries.take(15).forEach { entry ->
+                    targets.add(com.fortresstv.player.omdb.OmdbPreFetchTarget(type = "series", title = entry.series.name, year = entry.series.year, imdbId = entry.series.imdbId))
+                }
+                // 3. Recent movies
+                homeRecentMovies.take(15).forEach { entry ->
+                    targets.add(com.fortresstv.player.omdb.OmdbPreFetchTarget(type = "movie", title = entry.movie.name, year = entry.movie.year, imdbId = entry.movie.imdbId))
+                }
+                OmdbMetadataResolver.prefetchCuratedBatch(context, homeOmdbSettings, targets)
+            }
+        }
+
         Box(Modifier.weight(1f).fillMaxHeight()) {
             when (destination) {
                 LibraryDestination.HOME -> HomeScreen(
@@ -4741,6 +4817,11 @@ private fun FortressLibrary(
                     epgRepository = epgRepository,
                     playChannelsFullscreen = playChannelsFullscreen,
                     autoPictureInPicture = autoPictureInPicture,
+                    preferredAudioLanguage = preferredAudioLanguage,
+                    preferredSubtitleLanguage = preferredSubtitleLanguage,
+                    subtitleFallbackEnglish = subtitleFallbackEnglish,
+                    onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                    onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                     loading = loading,
                     error = error,
                     onRetryLoad = onRetryLoad,
@@ -4981,6 +5062,8 @@ private fun FortressLibrary(
                 preferredAudioLanguage = preferredAudioLanguage,
                 preferredSubtitleLanguage = preferredSubtitleLanguage,
                 subtitleFallbackEnglish = subtitleFallbackEnglish,
+                onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                 openSubtitlesSettings = openSubtitlesSettings,
                 loadNextEpisode = if (request.kind == VodProgressKind.EPISODE) {
                     suspend { resolveNextEpisodePlayback(request, xtreamProfiles, context) }
@@ -5733,6 +5816,10 @@ private fun XtreamMoviesScreen(
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
+    var filterTopRated by remember { mutableStateOf(false) }
+    var filterFresh by remember { mutableStateOf(false) }
+    var topRatedCount by remember { mutableStateOf(0) }
+    var freshCount by remember { mutableStateOf(0) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var visibleMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
@@ -5750,10 +5837,10 @@ private fun XtreamMoviesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption) {
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh) {
         isCatalogLoading = true
         visibleMovies = withContext(Dispatchers.Default) {
-            val filtered = catalogs.flatMap { catalog ->
+            val baseFiltered = catalogs.flatMap { catalog ->
                 val categoryNames = catalog.movieCategories.associate { it.id to it.name }
                 catalog.movies.asSequence()
                     .filter {
@@ -5768,16 +5855,36 @@ private fun XtreamMoviesScreen(
                     .map { CatalogMovie(catalog, it) }
                     .toList()
             }
-            when (sortOption) {
-                VodSortOption.DEFAULT -> filtered
-                VodSortOption.RATING -> filtered.sortedByDescending { it.movie.rating?.toDoubleOrNull() ?: 0.0 }
-                VodSortOption.YEAR -> filtered.sortedByDescending { it.movie.year?.toIntOrNull() ?: 0 }
-                VodSortOption.ALPHABETICAL -> filtered.sortedBy { it.movie.name.lowercase() }
+            val hasOmdb = OmdbMetadataResolver.hasAnyCached()
+            val scoredItems = baseFiltered.map { entry ->
+                val cached = if (hasOmdb) {
+                    OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                } else null
+                val imdbScore = cached?.imdbRating?.toDoubleOrNull() ?: entry.movie.rating?.toDoubleOrNull() ?: 0.0
+                val rtScore = cached?.rottenTomatoes?.removeSuffix("%")?.trim()?.toIntOrNull() ?: 0
+                Triple(entry, imdbScore, rtScore)
             }
+            topRatedCount = scoredItems.count { it.second >= 7.5 }
+            freshCount = scoredItems.count { it.third >= 60 }
+
+            val filtered = scoredItems
+                .filter { (!filterTopRated || it.second >= 7.5) && (!filterFresh || it.third >= 60) }
+                .let { list ->
+                    when (sortOption) {
+                        VodSortOption.DEFAULT -> list.map { it.first }
+                        VodSortOption.RATING -> list.sortedWith(
+                            compareByDescending<Triple<CatalogMovie, Double, Int>> { it.second > 0.0 }
+                                .thenByDescending { it.second }
+                        ).map { it.first }
+                        VodSortOption.YEAR -> list.sortedByDescending { it.first.movie.year?.toIntOrNull() ?: 0 }.map { it.first }
+                        VodSortOption.ALPHABETICAL -> list.sortedBy { it.first.movie.name.lowercase() }.map { it.first }
+                    }
+                }
+            filtered
         }
         isCatalogLoading = false
     }
-    LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
     val fastScrollNames = remember(visibleMovies, sortOption) {
@@ -5805,6 +5912,64 @@ private fun XtreamMoviesScreen(
         },
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { filterTopRated = !filterTopRated },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (filterTopRated) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, if (filterTopRated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                    modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = if (filterTopRated) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFFFB800),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "${strings.topRatedFilter} · $topRatedCount",
+                            color = if (filterTopRated) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = if (filterTopRated) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (freshCount > 0 || filterFresh) {
+                    Surface(
+                        onClick = { filterFresh = !filterFresh },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (filterFresh) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, if (filterFresh) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("🍅", fontSize = 12.sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "${strings.freshFilter} · $freshCount",
+                                color = if (filterFresh) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                fontSize = 12.sp,
+                                fontWeight = if (filterFresh) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
         }
     ) {
         gridItemsIndexed(
@@ -5817,10 +5982,15 @@ private fun XtreamMoviesScreen(
                 val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
                 source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
             }
+            val cachedOmdb = remember(entry.movie.id) {
+                OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+            }
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                rottenTomatoes = cachedOmdb?.rottenTomatoes,
                 isWatched = libraryId in watchedItemIds,
                 progressFraction = progressByKey[libraryId]?.progressFraction,
                 loadPosterFallback = if (entry.movie.posterUrl.isNullOrBlank()) {
@@ -5880,6 +6050,10 @@ private fun XtreamSeriesScreen(
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
+    var filterTopRated by remember { mutableStateOf(false) }
+    var filterFresh by remember { mutableStateOf(false) }
+    var topRatedCount by remember { mutableStateOf(0) }
+    var freshCount by remember { mutableStateOf(0) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
     var visibleSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
@@ -5896,10 +6070,10 @@ private fun XtreamSeriesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption) {
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh) {
         isCatalogLoading = true
         visibleSeries = withContext(Dispatchers.Default) {
-            val filtered = catalogs.flatMap { catalog ->
+            val baseFiltered = catalogs.flatMap { catalog ->
                 val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
                 catalog.series.asSequence()
                     .filter {
@@ -5914,16 +6088,36 @@ private fun XtreamSeriesScreen(
                     .map { CatalogSeries(catalog, it) }
                     .toList()
             }
-            when (sortOption) {
-                VodSortOption.DEFAULT -> filtered
-                VodSortOption.RATING -> filtered.sortedByDescending { it.series.rating?.toDoubleOrNull() ?: 0.0 }
-                VodSortOption.YEAR -> filtered.sortedByDescending { it.series.year?.toIntOrNull() ?: 0 }
-                VodSortOption.ALPHABETICAL -> filtered.sortedBy { it.series.name.lowercase() }
+            val hasOmdb = OmdbMetadataResolver.hasAnyCached()
+            val scoredItems = baseFiltered.map { entry ->
+                val cached = if (hasOmdb) {
+                    OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                } else null
+                val imdbScore = cached?.imdbRating?.toDoubleOrNull() ?: entry.series.rating?.toDoubleOrNull() ?: 0.0
+                val rtScore = cached?.rottenTomatoes?.removeSuffix("%")?.trim()?.toIntOrNull() ?: 0
+                Triple(entry, imdbScore, rtScore)
             }
+            topRatedCount = scoredItems.count { it.second >= 7.5 }
+            freshCount = scoredItems.count { it.third >= 60 }
+
+            val filtered = scoredItems
+                .filter { (!filterTopRated || it.second >= 7.5) && (!filterFresh || it.third >= 60) }
+                .let { list ->
+                    when (sortOption) {
+                        VodSortOption.DEFAULT -> list.map { it.first }
+                        VodSortOption.RATING -> list.sortedWith(
+                            compareByDescending<Triple<CatalogSeries, Double, Int>> { it.second > 0.0 }
+                                .thenByDescending { it.second }
+                        ).map { it.first }
+                        VodSortOption.YEAR -> list.sortedByDescending { it.first.series.year?.toIntOrNull() ?: 0 }.map { it.first }
+                        VodSortOption.ALPHABETICAL -> list.sortedBy { it.first.series.name.lowercase() }.map { it.first }
+                    }
+                }
+            filtered
         }
         isCatalogLoading = false
     }
-    LaunchedEffect(appliedQuery, selectedCategory, sortOption) {
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
     val fastScrollNames = remember(visibleSeries, sortOption) {
@@ -5951,6 +6145,64 @@ private fun XtreamSeriesScreen(
         },
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { filterTopRated = !filterTopRated },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (filterTopRated) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, if (filterTopRated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                    modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = if (filterTopRated) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFFFB800),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "${strings.topRatedFilter} · $topRatedCount",
+                            color = if (filterTopRated) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = if (filterTopRated) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (freshCount > 0 || filterFresh) {
+                    Surface(
+                        onClick = { filterFresh = !filterFresh },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (filterFresh) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(1.dp, if (filterFresh) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("🍅", fontSize = 12.sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "${strings.freshFilter} · $freshCount",
+                                color = if (filterFresh) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                fontSize = 12.sp,
+                                fontWeight = if (filterFresh) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
         }
     ) {
         gridItemsIndexed(
@@ -5958,10 +6210,15 @@ private fun XtreamSeriesScreen(
             key = { _, entry -> "${entry.catalog.sourceId}:${entry.series.id}" },
             contentType = { _, _ -> "series_poster" }
         ) { index, entry ->
+            val cachedOmdb = remember(entry.series.id) {
+                OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+            }
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
                 subtitle = listOfNotNull(entry.series.year, entry.series.rating).joinToString(" · "),
+                imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                rottenTomatoes = cachedOmdb?.rottenTomatoes,
                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                 onClick = { selected = entry }
             )
@@ -6730,6 +6987,8 @@ private fun VodPosterCard(
     title: String,
     posterUrl: String?,
     subtitle: String,
+    imdbRating: String? = null,
+    rottenTomatoes: String? = null,
     isWatched: Boolean = false,
     progressFraction: Float? = null,
     modifier: Modifier = Modifier,
@@ -6772,6 +7031,17 @@ private fun VodPosterCard(
         }
     }
     val isTv = LocalFormFactor.current.isTelevision
+    val hasRatingPill = (!imdbRating.isNullOrBlank() && imdbRating != "N/A") ||
+        (!rottenTomatoes.isNullOrBlank() && rottenTomatoes != "N/A")
+
+    // The "two sources on the same card" fix:
+    // If rating pill is shown on the poster, strip rating from subtitle to avoid repeating the score twice!
+    val displaySubtitle = if (hasRatingPill) {
+        subtitle.replace(Regex("★.*"), "").trim()
+    } else {
+        subtitle
+    }
+
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -6798,6 +7068,62 @@ private fun VodPosterCard(
                 } else {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                 }
+
+                // Frosted Rating Badge on Top-Left (IMDb is primary, Rotten Tomatoes exception)
+                if (!imdbRating.isNullOrBlank() && imdbRating != "N/A") {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xDE1A1605),
+                        border = BorderStroke(0.5.dp, Color(0xFFF5C518).copy(alpha = 0.85f)),
+                        modifier = Modifier.padding(7.dp).align(Alignment.TopStart)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = Color(0xFFF5C518),
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(Modifier.width(2.dp))
+                            Text(
+                                text = imdbRating,
+                                color = Color(0xFFFFFAEB),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                } else if (!rottenTomatoes.isNullOrBlank() && rottenTomatoes != "N/A") {
+                    val pct = rottenTomatoes.replace("%", "").trim().toIntOrNull() ?: 0
+                    val isFresh = pct >= 60
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isFresh) Color(0xDE260D08) else Color(0xDE121E0F),
+                        border = BorderStroke(0.5.dp, if (isFresh) Color(0xFFFA320A).copy(alpha = 0.8f) else Color(0xFF468C32).copy(alpha = 0.8f)),
+                        modifier = Modifier.padding(7.dp).align(Alignment.TopStart)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isFresh) "🍅" else "🟢",
+                                fontSize = 10.sp
+                            )
+                            Spacer(Modifier.width(2.dp))
+                            Text(
+                                text = rottenTomatoes,
+                                color = if (isFresh) Color(0xFFFFEBE8) else Color(0xFFEAF5E8),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
                 if (isWatched) {
                     Surface(
                         shape = CircleShape,
@@ -6823,9 +7149,9 @@ private fun VodPosterCard(
             }
             Column(Modifier.padding(11.dp)) {
                 Text(title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (subtitle.isNotBlank()) {
+                if (displaySubtitle.isNotBlank()) {
                     Spacer(Modifier.height(3.dp))
-                    Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
+                    Text(displaySubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
                 }
             }
         }
@@ -6858,10 +7184,12 @@ private fun MovieDetailsDialog(
     val context = LocalContext.current
     val strings = LocalAppStrings.current
     val tmdbSettings = LocalTmdbSettings.current
+    val omdbSettings = LocalOmdbSettings.current
     var details by remember(movie.id, client) { mutableStateOf<XtreamMovieDetails?>(null) }
     var detailsError by remember(movie.id, client) { mutableStateOf(false) }
     var retryKey by remember(movie.id, client) { mutableIntStateOf(0) }
     var tmdbMetadata by remember(movie.id, tmdbSettings) { mutableStateOf<TmdbMetadata?>(null) }
+    var omdbMetadata by remember(movie.id, omdbSettings) { mutableStateOf<OmdbMetadata?>(null) }
 
     LaunchedEffect(movie.id, tmdbSettings) {
         if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()) {
@@ -6875,6 +7203,21 @@ private fun MovieDetailsDialog(
             )
             if (resolved != null) {
                 tmdbMetadata = resolved
+            }
+        }
+    }
+
+    LaunchedEffect(movie.id, omdbSettings) {
+        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+            val resolved = OmdbMetadataResolver.resolveMovie(
+                context = context,
+                settings = omdbSettings,
+                rawTitle = movie.name,
+                year = movie.year,
+                imdbId = movie.imdbId
+            )
+            if (resolved != null) {
+                omdbMetadata = resolved
             }
         }
     }
@@ -7008,15 +7351,15 @@ private fun MovieDetailsDialog(
                                     effectiveReleaseDate?.take(4) ?: movie.year,
                                     effectiveRating ?: movie.rating
                                 )
-                                if (metadata.isNotBlank()) {
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        metadata,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
+                                Spacer(Modifier.height(4.dp))
+                                OmdbRatingsRow(
+                                    metadata = omdbMetadata,
+                                    fallbackText = metadata
+                                )
+                                OmdbAwardsRow(
+                                    awards = omdbMetadata?.awards,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
                                 sourceName?.let {
                                     Spacer(Modifier.height(3.dp))
                                     Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
@@ -7181,15 +7524,15 @@ private fun MovieDetailsDialog(
                                     effectiveReleaseDate?.take(4) ?: movie.year,
                                     effectiveRating ?: movie.rating
                                 )
-                                if (metadata.isNotBlank()) {
-                                    Spacer(Modifier.height(10.dp))
-                                    Text(
-                                        metadata,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
+                                Spacer(Modifier.height(10.dp))
+                                OmdbRatingsRow(
+                                    metadata = omdbMetadata,
+                                    fallbackText = metadata
+                                )
+                                OmdbAwardsRow(
+                                    awards = omdbMetadata?.awards,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
                                 sourceName?.let {
                                     Spacer(Modifier.height(6.dp))
                                     Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
@@ -7373,10 +7716,12 @@ private fun SeriesEpisodesDialog(
     var focusEpisodeAfterSeasonChange by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val tmdbSettings = LocalTmdbSettings.current
+    val omdbSettings = LocalOmdbSettings.current
     var details by remember(series.id) { mutableStateOf<XtreamSeriesDetails?>(null) }
     var loadError by remember(series.id) { mutableStateOf(false) }
     var retryKey by remember(series.id) { mutableIntStateOf(0) }
     var tmdbMetadata by remember(series.id, tmdbSettings) { mutableStateOf<TmdbMetadata?>(null) }
+    var omdbMetadata by remember(series.id, omdbSettings) { mutableStateOf<OmdbMetadata?>(null) }
 
     LaunchedEffect(series.id, tmdbSettings) {
         if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()) {
@@ -7390,6 +7735,21 @@ private fun SeriesEpisodesDialog(
             )
             if (resolved != null) {
                 tmdbMetadata = resolved
+            }
+        }
+    }
+
+    LaunchedEffect(series.id, omdbSettings) {
+        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+            val resolved = OmdbMetadataResolver.resolveSeries(
+                context = context,
+                settings = omdbSettings,
+                rawTitle = series.name,
+                year = series.year,
+                imdbId = series.imdbId
+            )
+            if (resolved != null) {
+                omdbMetadata = resolved
             }
         }
     }
@@ -7575,15 +7935,15 @@ private fun SeriesEpisodesDialog(
                                 details?.releaseDate?.take(4) ?: series.year,
                                 details?.rating ?: series.rating
                             )
-                            if (meta.isNotBlank()) {
-                                Spacer(Modifier.height(3.dp))
-                                Text(
-                                    meta,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = if (isCompact) 12.sp else 14.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                            Spacer(Modifier.height(3.dp))
+                            OmdbRatingsRow(
+                                metadata = omdbMetadata,
+                                fallbackText = meta
+                            )
+                            OmdbAwardsRow(
+                                awards = omdbMetadata?.awards,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
                             val plot = tmdbMetadata?.overview ?: details?.plot ?: series.plot
                             if (!plot.isNullOrBlank()) {
                                 Spacer(Modifier.height(3.dp))
@@ -8176,6 +8536,8 @@ private fun VodPlayerDialog(
     preferredAudioLanguage: String = "default",
     preferredSubtitleLanguage: String = "off",
     subtitleFallbackEnglish: Boolean = true,
+    onPreferredAudioLanguageChanged: ((String) -> Unit)? = null,
+    onPreferredSubtitleLanguageChanged: ((String) -> Unit)? = null,
     openSubtitlesSettings: OpenSubtitlesSettings = OpenSubtitlesSettings(),
     loadNextEpisode: (suspend () -> VodPlaybackRequest?)?,
     loadAllEpisodes: (suspend () -> List<VodPlaybackRequest>)? = null,
@@ -8596,6 +8958,8 @@ private fun VodPlayerDialog(
         attachedSubtitles = updated
         val label = "OpenSubtitles · ${item.release}"
         pendingSubtitleOverrideLabel = label
+        val detected = if (item.language.lowercase().startsWith("pt")) "pt" else item.language.lowercase().take(2)
+        onPreferredSubtitleLanguageChanged?.invoke(detected)
         val currentPos = player.currentPosition
         val wasPlaying = player.playWhenReady
         val newMediaItem = MediaItem.Builder()
@@ -9654,6 +10018,8 @@ private fun VodPlayerDialog(
                         }
                     } else null,
                     onUserTrackSelected = { userManuallySelectedTracks = true },
+                    onAudioLanguageSelected = onPreferredAudioLanguageChanged,
+                    onSubtitleLanguageSelected = onPreferredSubtitleLanguageChanged,
                     onClose = { showTracksDialog = false }
                 )
             }
@@ -9796,6 +10162,8 @@ private fun PlayerControlsDrawer(
     isLive: Boolean,
     onSearchOpenSubtitles: (() -> Unit)? = null,
     onUserTrackSelected: () -> Unit = {},
+    onAudioLanguageSelected: ((String) -> Unit)? = null,
+    onSubtitleLanguageSelected: ((String) -> Unit)? = null,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -9993,6 +10361,9 @@ private fun PlayerControlsDrawer(
                                             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
                                             .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
                                             .build()
+                                        TrackLanguageMatcher.detectLanguageCode(track)?.let { code ->
+                                            onAudioLanguageSelected?.invoke(code)
+                                        }
                                     },
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
@@ -10042,6 +10413,7 @@ private fun PlayerControlsDrawer(
                                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                                     .build()
+                                onSubtitleLanguageSelected?.invoke("off")
                             },
                             shape = RoundedCornerShape(10.dp),
                             color = if (isOff) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
@@ -10077,6 +10449,9 @@ private fun PlayerControlsDrawer(
                                         .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                                         .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
                                         .build()
+                                    TrackLanguageMatcher.detectLanguageCode(track)?.let { code ->
+                                        onSubtitleLanguageSelected?.invoke(code)
+                                    }
                                 },
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
@@ -10737,10 +11112,15 @@ private fun HomeScreen(
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(searchMatchingMovies, key = { "search:movie:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                    val cachedOmdb = remember(entry.movie.id) {
+                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    }
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
                                         subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
                                         onClick = { selectedMovie = entry },
@@ -10762,10 +11142,15 @@ private fun HomeScreen(
                             Spacer(Modifier.height(8.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(searchMatchingSeries, key = { "search:series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                                    val cachedOmdb = remember(entry.series.id) {
+                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                    }
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
                                         subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)
                                     )
@@ -11026,10 +11411,15 @@ private fun HomeScreen(
                             val followedRowState = rememberLazyListState()
                             LazyRow(state = followedRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(followedSeries, key = { index, it -> "home_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
+                                    val cachedOmdb = remember(entry.series.id) {
+                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                    }
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
                                         subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        imdbRating = cachedOmdb?.imdbRating,
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier
                                             .width(120.dp)
@@ -11085,10 +11475,15 @@ private fun HomeScreen(
                                         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
                                         source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
                                     }
+                                    val cachedOmdb = remember(entry.movie.id) {
+                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    }
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
                                         subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
                                         loadPosterFallback = if (entry.movie.posterUrl.isNullOrBlank()) {
@@ -11124,10 +11519,15 @@ private fun HomeScreen(
                             val seriesRowState = rememberLazyListState()
                             LazyRow(state = seriesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(featuredSeries, key = { index, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
+                                    val cachedOmdb = remember(entry.series.id) {
+                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                    }
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
                                         subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)
                                     )
@@ -11395,10 +11795,15 @@ private fun FavoriteLibraryScreen(
                     ) {
                         gridItemsIndexed(movies, key = { _, entry -> "watchlist:${entry.catalog.sourceId}:${entry.movie.id}" }) { index, entry ->
                             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                            val cachedOmdb = remember(entry.movie.id) {
+                                OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                            }
                             VodPosterCard(
                                 title = entry.movie.name,
                                 posterUrl = entry.movie.posterUrl,
                                 subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                 isWatched = libraryId in watchedItemIds,
                                 progressFraction = progressByKey[libraryId]?.progressFraction,
                                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
@@ -11418,10 +11823,15 @@ private fun FavoriteLibraryScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         gridItemsIndexed(series, key = { _, entry -> "followed:${entry.catalog.sourceId}:${entry.series.id}" }) { index, entry ->
+                            val cachedOmdb = remember(entry.series.id) {
+                                OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                            }
                             VodPosterCard(
                                 title = entry.series.name,
                                 posterUrl = entry.series.coverUrl,
                                 subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                                 onClick = { selectedSeries = entry }
                             )
@@ -11502,6 +11912,11 @@ private fun ChannelBrowser(
     epgRepository: EpgRepository? = null,
     playChannelsFullscreen: Boolean,
     autoPictureInPicture: Boolean,
+    preferredAudioLanguage: String = "default",
+    preferredSubtitleLanguage: String = "off",
+    subtitleFallbackEnglish: Boolean = true,
+    onPreferredAudioLanguageChanged: ((String) -> Unit)? = null,
+    onPreferredSubtitleLanguageChanged: ((String) -> Unit)? = null,
     loading: Boolean,
     error: String?,
     onRetryLoad: (() -> Unit)?,
@@ -11719,7 +12134,7 @@ private fun ChannelBrowser(
         isLandscapeTablet -> 340.dp
         else -> 430.dp
     }
-    val movablePlayerPanel = remember(playerFocusRequester, effectiveChannelFocusRequester) {
+    val movablePlayerPanel = remember(playerFocusRequester, effectiveChannelFocusRequester, preferredAudioLanguage, preferredSubtitleLanguage, subtitleFallbackEnglish) {
         movableContentOf { currentChannel: PlaylistChannel, playerModifier: Modifier, isCompactPreview: Boolean ->
             PlayerPanel(
                 channel = currentChannel,
@@ -11733,6 +12148,11 @@ private fun ChannelBrowser(
                 autoEnterFullscreen = playChannelsFullscreen,
                 fullscreenTrigger = fullscreenTrigger,
                 autoPictureInPicture = autoPictureInPicture,
+                preferredAudioLanguage = preferredAudioLanguage,
+                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                subtitleFallbackEnglish = subtitleFallbackEnglish,
+                onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                 onChannelSelected = ::selectChannel,
                 modifier = playerModifier,
                 compactPreview = isCompactPreview,
@@ -12955,6 +13375,11 @@ private fun PlayerPanel(
     autoEnterFullscreen: Boolean,
     fullscreenTrigger: Int = 0,
     autoPictureInPicture: Boolean,
+    preferredAudioLanguage: String = "default",
+    preferredSubtitleLanguage: String = "off",
+    subtitleFallbackEnglish: Boolean = true,
+    onPreferredAudioLanguageChanged: ((String) -> Unit)? = null,
+    onPreferredSubtitleLanguageChanged: ((String) -> Unit)? = null,
     onChannelSelected: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier,
     compactPreview: Boolean = false,
@@ -13385,6 +13810,11 @@ private fun PlayerPanel(
                 previousWatchedChannel = previousWatchedChannel,
                 healthSnapshot = currentHealth,
                 onOpenHealthDialog = { showHealthDialog = true },
+                preferredAudioLanguage = preferredAudioLanguage,
+                preferredSubtitleLanguage = preferredSubtitleLanguage,
+                subtitleFallbackEnglish = subtitleFallbackEnglish,
+                onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+                onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
                 epgGuide = epgGuide,
                 epgTimeShiftHours = epgTimeShiftHours,
                 onExit = {
@@ -13628,6 +14058,11 @@ private fun PlayerPanel(
             previousWatchedChannel = previousWatchedChannel,
             healthSnapshot = currentHealth,
             onOpenHealthDialog = { showHealthDialog = true },
+            preferredAudioLanguage = preferredAudioLanguage,
+            preferredSubtitleLanguage = preferredSubtitleLanguage,
+            subtitleFallbackEnglish = subtitleFallbackEnglish,
+            onPreferredAudioLanguageChanged = onPreferredAudioLanguageChanged,
+            onPreferredSubtitleLanguageChanged = onPreferredSubtitleLanguageChanged,
             onChannelSelected = ::handleChannelSwitch,
             onExit = {
                 manualFullscreen = false
@@ -14051,6 +14486,11 @@ private fun FullscreenPlayer(
     previousWatchedChannel: PlaylistChannel? = null,
     healthSnapshot: com.fortresstv.player.telemetry.ChannelHealthSnapshot? = null,
     onOpenHealthDialog: () -> Unit = {},
+    preferredAudioLanguage: String = "default",
+    preferredSubtitleLanguage: String = "off",
+    subtitleFallbackEnglish: Boolean = true,
+    onPreferredAudioLanguageChanged: ((String) -> Unit)? = null,
+    onPreferredSubtitleLanguageChanged: ((String) -> Unit)? = null,
     onChannelSelected: (PlaylistChannel) -> Unit,
     onExit: () -> Unit,
     onRetry: () -> Unit,
@@ -14106,6 +14546,49 @@ private fun FullscreenPlayer(
     val audioTracks = remember(currentTracks) { extractAudioTracks(currentTracks) }
     val subtitleTracks = remember(currentTracks) { extractSubtitleTracks(currentTracks) }
     val videoTracks = remember(currentTracks) { extractVideoTracks(currentTracks) }
+    var userManuallySelectedTracks by remember(channel) { mutableStateOf(false) }
+
+    LaunchedEffect(currentTracks, preferredAudioLanguage, preferredSubtitleLanguage, subtitleFallbackEnglish) {
+        if (!userManuallySelectedTracks && currentTracks != null) {
+            val audioList = TrackLanguageMatcher.extractAudioTracks(currentTracks)
+            val subtitleList = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
+
+            var builder = player.trackSelectionParameters.buildUpon()
+
+            // 1. Preferred Audio
+            if (preferredAudioLanguage != "default") {
+                val targetAudio = TrackLanguageMatcher.findBestAudioTrack(audioList, preferredAudioLanguage)
+                if (targetAudio != null && !targetAudio.isSelected) {
+                    builder = builder.setOverrideForType(
+                        TrackSelectionOverride(targetAudio.group.mediaTrackGroup, targetAudio.trackIndex)
+                    )
+                }
+            }
+
+            // 2. Preferred Subtitles
+            if (preferredSubtitleLanguage == "off") {
+                builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            } else {
+                val targetSub = TrackLanguageMatcher.findBestSubtitleTrack(
+                    subtitleList,
+                    preferredSubtitleLanguage,
+                    subtitleFallbackEnglish
+                )
+                if (targetSub != null) {
+                    builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .setOverrideForType(
+                            TrackSelectionOverride(targetSub.group.mediaTrackGroup, targetSub.trackIndex)
+                        )
+                } else {
+                    builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                }
+            }
+
+            player.trackSelectionParameters = builder.build()
+        }
+    }
 
     val isTv = LocalFormFactor.current.isTelevision
     val playerFocusRequester = remember { FocusRequester() }
@@ -14990,7 +15473,9 @@ private fun FullscreenPlayer(
                     subtitleTracks = subtitleTracks,
                     videoTracks = videoTracks,
                     isLive = true,
-                    onUserTrackSelected = {},
+                    onUserTrackSelected = { userManuallySelectedTracks = true },
+                    onAudioLanguageSelected = onPreferredAudioLanguageChanged,
+                    onSubtitleLanguageSelected = onPreferredSubtitleLanguageChanged,
                     onClose = { showTracksDialog = false }
                 )
             }
@@ -16356,6 +16841,8 @@ private fun SettingsDialog(
     onTmdbSettingsChanged: (TmdbSettings) -> Unit = {},
     introDbSettings: TheIntroDbSettings = TheIntroDbSettings(),
     onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit = {},
+    omdbSettings: OmdbSettings = OmdbSettings(),
+    onOmdbSettingsChanged: (OmdbSettings) -> Unit = {},
     hideAdultContent: Boolean,
     isChildProfile: Boolean = false,
     onHideAdultContentChanged: (Boolean) -> Unit,
@@ -16663,7 +17150,9 @@ private fun SettingsDialog(
                                     tmdbSettings = tmdbSettings,
                                     onTmdbSettingsChanged = onTmdbSettingsChanged,
                                     introDbSettings = introDbSettings,
-                                    onIntroDbSettingsChanged = onIntroDbSettingsChanged
+                                    onIntroDbSettingsChanged = onIntroDbSettingsChanged,
+                                    omdbSettings = omdbSettings,
+                                    onOmdbSettingsChanged = onOmdbSettingsChanged
                                 )
                                 5 -> AccountTab(
                                     showHeader = false,
@@ -16795,7 +17284,9 @@ private fun SettingsDialog(
                                 tmdbSettings = tmdbSettings,
                                 onTmdbSettingsChanged = onTmdbSettingsChanged,
                                 introDbSettings = introDbSettings,
-                                onIntroDbSettingsChanged = onIntroDbSettingsChanged
+                                onIntroDbSettingsChanged = onIntroDbSettingsChanged,
+                                omdbSettings = omdbSettings,
+                                onOmdbSettingsChanged = onOmdbSettingsChanged
                             )
                             5 -> AccountTab(
                                 showHeader = false,
@@ -17072,13 +17563,17 @@ private fun ApiKeysTab(
     tmdbSettings: TmdbSettings,
     onTmdbSettingsChanged: (TmdbSettings) -> Unit,
     introDbSettings: TheIntroDbSettings,
-    onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit
+    onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit,
+    omdbSettings: OmdbSettings = OmdbSettings(),
+    onOmdbSettingsChanged: (OmdbSettings) -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var isTestingConnection by remember { mutableStateOf(false) }
     var connectionTestResult by remember { mutableStateOf<Result<Boolean>?>(null) }
+    var isTestingOmdbConnection by remember { mutableStateOf(false) }
+    var omdbConnectionTestResult by remember { mutableStateOf<Result<Boolean>?>(null) }
 
     Column(
         modifier = Modifier
@@ -17240,6 +17735,157 @@ private fun ApiKeysTab(
                                     modifier = Modifier.clickable {
                                         runCatching {
                                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(strings.tmdbInfoLink))
+                                            context.startActivity(intent)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        SettingsGroup(title = strings.omdbHeader) {
+            SettingsToggleRow(
+                title = strings.omdbEnabled,
+                subtitle = "",
+                icon = Icons.Default.Star,
+                checked = omdbSettings.enabled,
+                onCheckedChange = { checked ->
+                    onOmdbSettingsChanged(omdbSettings.copy(enabled = checked))
+                }
+            )
+
+            if (omdbSettings.enabled) {
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    var omdbKeyText by remember(omdbSettings.apiKey) { mutableStateOf(omdbSettings.apiKey) }
+                    var omdbKeyVisible by remember { mutableStateOf(false) }
+
+                    OutlinedTextField(
+                        value = omdbKeyText,
+                        onValueChange = {
+                            omdbKeyText = it
+                            omdbConnectionTestResult = null
+                            onOmdbSettingsChanged(omdbSettings.copy(apiKey = it))
+                        },
+                        label = { Text(strings.omdbApiKey) },
+                        supportingText = { Text(strings.omdbApiKeyHint, fontSize = 11.sp) },
+                        visualTransformation = if (omdbKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { omdbKeyVisible = !omdbKeyVisible }) {
+                                Icon(
+                                    if (omdbKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (omdbKeyVisible) strings.hidePassword else strings.showPassword
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (omdbKeyText.isNotBlank()) {
+                                    isTestingOmdbConnection = true
+                                    omdbConnectionTestResult = null
+                                    coroutineScope.launch {
+                                        val res = OmdbClient(omdbKeyText.trim()).validateApiKey()
+                                        omdbConnectionTestResult = res
+                                        isTestingOmdbConnection = false
+                                    }
+                                }
+                            },
+                            enabled = omdbKeyText.isNotBlank() && !isTestingOmdbConnection
+                        ) {
+                            if (isTestingOmdbConnection) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(strings.omdbTestConnection, fontSize = 13.sp)
+                        }
+
+                        omdbConnectionTestResult?.let { result ->
+                            if (result.isSuccess) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        strings.omdbConnectionSuccess,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        result.exceptionOrNull()?.message?.takeIf(String::isNotBlank) ?: strings.omdbConnectionFailed,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    strings.omdbInfoHelp,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    strings.omdbInfoLink,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.clickable {
+                                        runCatching {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(strings.omdbInfoLink))
                                             context.startActivity(intent)
                                         }
                                     }

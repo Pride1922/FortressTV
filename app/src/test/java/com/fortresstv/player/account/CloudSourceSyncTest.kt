@@ -239,4 +239,48 @@ class CloudSourceSyncTest {
         assertEquals("pt-PT", restored.language)
         assertTrue(restored.enabled)
     }
+
+    @Test
+    fun saveAndGetOmdbSettingsPreservesProperties() {
+        var savedBody: JSONObject? = null
+        val transport = object : com.fortresstv.player.profile.ProfileTransport {
+            override fun request(
+                method: String,
+                path: String,
+                body: JSONObject?,
+                accessToken: String?,
+                headers: Map<String, String>?
+            ): String {
+                if (path.contains("fortress_save_omdb")) {
+                    savedBody = body
+                    return "{\"success\":true}"
+                }
+                if (path.contains("fortress_get_omdb")) {
+                    return """
+                        {
+                            "configured": true,
+                            "enabled": true,
+                            "api_key": "omdb-test-key"
+                        }
+                    """.trimIndent()
+                }
+                return "{}"
+            }
+        }
+        val api = SupabaseSourceApi(transport)
+        val testSettings = com.fortresstv.player.omdb.OmdbSettings(
+            enabled = true,
+            apiKey = "omdb-test-key"
+        )
+        val saveResult = api.saveOmdb(testSettings, "unlock-tok", "access-tok")
+        assertTrue(saveResult)
+        assertNotNull(savedBody)
+        assertEquals("omdb-test-key", savedBody!!.getString("p_api_key"))
+        assertTrue(savedBody!!.getBoolean("p_enabled"))
+
+        val restored = api.getOmdb(null, "access-tok")
+        assertNotNull(restored)
+        assertEquals("omdb-test-key", restored!!.apiKey)
+        assertTrue(restored.enabled)
+    }
 }

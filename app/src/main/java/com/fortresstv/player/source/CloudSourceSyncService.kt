@@ -252,6 +252,45 @@ class CloudSourceSyncService internal constructor(
         }
     }
 
+    suspend fun syncOmdbToCloud(
+        settings: com.fortresstv.player.omdb.OmdbSettings,
+        unlockToken: String? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) {
+                return@withLock Result.failure(IllegalStateException("Not authenticated"))
+            }
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                val ok = sourceApi.saveOmdb(settings, token, accountState.accessToken)
+                if (!ok) error("Failed to save OMDb settings")
+            }
+        }
+    }
+
+    suspend fun restoreOmdbFromCloud(unlockToken: String? = null): com.fortresstv.player.omdb.OmdbSettings? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock null
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                sourceApi.getOmdb(token, accountState.accessToken)
+            }.getOrNull()
+        }
+    }
+
+    suspend fun deleteOmdbFromCloud(unlockToken: String? = null): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
+            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            runCatching {
+                sourceApi.deleteOmdb(token, accountState.accessToken)
+            }.getOrDefault(false)
+        }
+    }
+
     suspend fun deleteSourceFromCloud(sourceId: String, unlockToken: String?): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             val accountState = accountRepository.resolveAccountState()

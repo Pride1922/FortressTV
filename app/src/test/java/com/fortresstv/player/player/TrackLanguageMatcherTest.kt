@@ -50,4 +50,18 @@ class TrackLanguageMatcherTest {
         assertFalse(TrackLanguageMatcher.matchesLanguage("en", "English", "default"))
         assertFalse(TrackLanguageMatcher.matchesLanguage("en", "English", ""))
     }
+
+    @Test
+    fun detectLanguageCode_detectsKnownLanguages() {
+        assertEquals("pt", TrackLanguageMatcher.detectLanguageCode("por", "Português"))
+        assertEquals("pt", TrackLanguageMatcher.detectLanguageCode("pt-PT", null))
+        assertEquals("pt", TrackLanguageMatcher.detectLanguageCode(null, "Portuguese"))
+        assertEquals("en", TrackLanguageMatcher.detectLanguageCode("eng", "English"))
+        assertEquals("es", TrackLanguageMatcher.detectLanguageCode("spa", "Español"))
+        assertEquals("fr", TrackLanguageMatcher.detectLanguageCode("fra", "Français"))
+        assertEquals("de", TrackLanguageMatcher.detectLanguageCode("deu", "Deutsch"))
+        assertEquals("it", TrackLanguageMatcher.detectLanguageCode("ita", "Italiano"))
+        assertEquals("nl", TrackLanguageMatcher.detectLanguageCode("nl", "Nederlands"))
+        assertNull(TrackLanguageMatcher.detectLanguageCode(null, "Unknown Track"))
+    }
 }

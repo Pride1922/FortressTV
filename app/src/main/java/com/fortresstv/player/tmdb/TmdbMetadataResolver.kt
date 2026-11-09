@@ -11,8 +11,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 object TmdbMetadataResolver {
 
-    private val memoryCache = ConcurrentHashMap<String, TmdbMetadata?>()
-    private val seasonMemoryCache = ConcurrentHashMap<String, TmdbSeasonMetadata?>()
+    private val NOT_FOUND = TmdbMetadata(tmdbId = -1, title = "")
+    private val NOT_FOUND_SEASON = TmdbSeasonMetadata(seasonNumber = -1)
+
+    private val memoryCache = ConcurrentHashMap<String, TmdbMetadata>()
+    private val seasonMemoryCache = ConcurrentHashMap<String, TmdbSeasonMetadata>()
     private const val CACHE_DIR_NAME = "tmdb_cache"
     private const val CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000L // 14 days
 
@@ -32,8 +35,9 @@ object TmdbMetadataResolver {
         if (!settings.enabled || settings.apiKey.isBlank()) return@withContext null
 
         val cacheKey = buildCacheKey("movie", rawTitle, year, tmdbId, imdbId, settings.language)
-        if (memoryCache.containsKey(cacheKey)) {
-            return@withContext memoryCache[cacheKey]
+        val cachedMem = memoryCache[cacheKey]
+        if (cachedMem != null) {
+            return@withContext if (cachedMem === NOT_FOUND || cachedMem.tmdbId <= 0) null else cachedMem
         }
 
         val cachedDisk = readDiskCache(context, cacheKey)
@@ -61,9 +65,11 @@ object TmdbMetadataResolver {
             result = client.searchMovie(rawTitle, year, language)
         }
 
-        memoryCache[cacheKey] = result
         if (result != null) {
+            memoryCache[cacheKey] = result
             writeDiskCache(context, cacheKey, result)
+        } else {
+            memoryCache[cacheKey] = NOT_FOUND
         }
 
         result
@@ -80,8 +86,9 @@ object TmdbMetadataResolver {
         if (!settings.enabled || settings.apiKey.isBlank()) return@withContext null
 
         val cacheKey = buildCacheKey("tv", rawTitle, year, tmdbId, imdbId, settings.language)
-        if (memoryCache.containsKey(cacheKey)) {
-            return@withContext memoryCache[cacheKey]
+        val cachedMem = memoryCache[cacheKey]
+        if (cachedMem != null) {
+            return@withContext if (cachedMem === NOT_FOUND || cachedMem.tmdbId <= 0) null else cachedMem
         }
 
         val cachedDisk = readDiskCache(context, cacheKey)
@@ -109,9 +116,11 @@ object TmdbMetadataResolver {
             result = client.searchSeries(rawTitle, year, language)
         }
 
-        memoryCache[cacheKey] = result
         if (result != null) {
+            memoryCache[cacheKey] = result
             writeDiskCache(context, cacheKey, result)
+        } else {
+            memoryCache[cacheKey] = NOT_FOUND
         }
 
         result
@@ -127,8 +136,9 @@ object TmdbMetadataResolver {
 
         val language = settings.language.ifBlank { "pt-PT" }
         val cacheKey = "season_${tmdbSeriesId}_${seasonNumber}_${language.lowercase()}"
-        if (seasonMemoryCache.containsKey(cacheKey)) {
-            return@withContext seasonMemoryCache[cacheKey]
+        val cachedMem = seasonMemoryCache[cacheKey]
+        if (cachedMem != null) {
+            return@withContext if (cachedMem === NOT_FOUND_SEASON || cachedMem.seasonNumber < 0) null else cachedMem
         }
 
         val cachedDisk = readSeasonDiskCache(context, cacheKey)
@@ -139,9 +149,11 @@ object TmdbMetadataResolver {
 
         val client = TmdbClient(settings.apiKey)
         val result = client.getSeasonDetails(tmdbSeriesId, seasonNumber, language)
-        seasonMemoryCache[cacheKey] = result
         if (result != null) {
+            seasonMemoryCache[cacheKey] = result
             writeSeasonDiskCache(context, cacheKey, result)
+        } else {
+            seasonMemoryCache[cacheKey] = NOT_FOUND_SEASON
         }
 
         result

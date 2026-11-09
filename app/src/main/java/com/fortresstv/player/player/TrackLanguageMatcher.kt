@@ -109,6 +109,21 @@ object TrackLanguageMatcher {
         return false
     }
 
+    fun detectLanguageCode(trackLang: String?, trackLabel: String?): String? {
+        val supported = listOf("pt", "en", "es", "fr", "de", "it")
+        val matched = supported.firstOrNull { matchesLanguage(trackLang, trackLabel, it) }
+        if (matched != null) return matched
+        val code = trackLang?.trim()?.lowercase()
+        if (!code.isNullOrBlank()) {
+            return supported.firstOrNull { code == it || code.startsWith("$it-") || code.startsWith("${it}_") }
+                ?: code.take(2)
+        }
+        return null
+    }
+
+    fun detectLanguageCode(track: PlaybackTrackItem): String? =
+        detectLanguageCode(track.language, track.label)
+
     fun findBestAudioTrack(tracks: List<PlaybackTrackItem>, preferredLang: String): PlaybackTrackItem? {
         if (preferredLang == "default" || preferredLang.isBlank()) return null
         // 1. Try preferred language

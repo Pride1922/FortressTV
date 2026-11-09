@@ -343,6 +343,21 @@ interface Strings {
     val tmdbConnectionFailed: String
     val tmdbInfoHelp: String
     val tmdbInfoLink: String
+    val omdbHeader: String
+    val omdbEnabled: String
+    val omdbApiKey: String
+    val omdbApiKeyHint: String
+    val omdbTestConnection: String
+    val omdbConnectionSuccess: String
+    val omdbConnectionFailed: String
+    val omdbInfoHelp: String
+    val omdbInfoLink: String
+    val imdbRating: String
+    val rottenTomatoes: String
+    val metascore: String
+    val awards: String
+    val topRatedFilter: String
+    val freshFilter: String
     val skipIntro: String
     val skipRecap: String
     val skipCredits: String
@@ -844,6 +859,21 @@ object EnglishStrings : Strings {
     override val tmdbConnectionFailed = "Connection failed"
     override val tmdbInfoHelp = "Obtain a free TMDB API key or Read Access Token at themoviedb.org"
     override val tmdbInfoLink = "https://www.themoviedb.org/settings/api"
+    override val omdbHeader = "Open Movie Database (OMDb)"
+    override val omdbEnabled = "Enable OMDb Ratings"
+    override val omdbApiKey = "OMDb API Key"
+    override val omdbApiKeyHint = "Enter your free 8-character OMDb API key"
+    override val omdbTestConnection = "Test Connection"
+    override val omdbConnectionSuccess = "Connection successful"
+    override val omdbConnectionFailed = "Connection failed"
+    override val omdbInfoHelp = "Obtain a free personal OMDb API key at omdbapi.com"
+    override val omdbInfoLink = "https://www.omdbapi.com/apikey.aspx"
+    override val imdbRating = "IMDb"
+    override val rottenTomatoes = "Rotten Tomatoes"
+    override val metascore = "Metascore"
+    override val awards = "Awards"
+    override val topRatedFilter = "Top Rated (7.5+)"
+    override val freshFilter = "Fresh (60%+)"
     override val skipIntro = "Skip Intro"
     override val skipRecap = "Skip Recap"
     override val skipCredits = "Skip Credits"
@@ -1348,6 +1378,21 @@ object PortugueseStrings : Strings {
     override val tmdbConnectionFailed = "Falha na ligação"
     override val tmdbInfoHelp = "Obtenha uma chave gratuita da API TMDB ou Token de Leitura em themoviedb.org"
     override val tmdbInfoLink = "https://www.themoviedb.org/settings/api"
+    override val omdbHeader = "Open Movie Database (OMDb)"
+    override val omdbEnabled = "Ativar Classificações OMDb"
+    override val omdbApiKey = "Chave de API OMDb"
+    override val omdbApiKeyHint = "Introduza a sua chave gratuita de 8 caracteres da API OMDb"
+    override val omdbTestConnection = "Testar Ligação"
+    override val omdbConnectionSuccess = "Ligação com sucesso"
+    override val omdbConnectionFailed = "Falha na ligação"
+    override val omdbInfoHelp = "Obtenha uma chave gratuita pessoal da API OMDb em omdbapi.com"
+    override val omdbInfoLink = "https://www.omdbapi.com/apikey.aspx"
+    override val imdbRating = "IMDb"
+    override val rottenTomatoes = "Rotten Tomatoes"
+    override val metascore = "Metascore"
+    override val awards = "Prémios"
+    override val topRatedFilter = "Mais Votados (7.5+)"
+    override val freshFilter = "Frescos (60%+)"
     override val skipIntro = "Saltar Introdução"
     override val skipRecap = "Saltar Resumo"
     override val skipCredits = "Saltar Créditos"

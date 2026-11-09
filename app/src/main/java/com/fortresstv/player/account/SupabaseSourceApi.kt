@@ -123,6 +123,48 @@ internal class SupabaseSourceApi(
         return text.trim() == "true"
     }
 
+    fun saveOmdb(
+        settings: com.fortresstv.player.omdb.OmdbSettings,
+        unlockToken: String?,
+        accessToken: String
+    ): Boolean {
+        val body = JSONObject().apply {
+            put("p_enabled", settings.enabled)
+            put("p_api_key", settings.apiKey.trim())
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_save_omdb", body, accessToken, null)
+        val json = JSONObject(text.ifBlank { "{}" })
+        return json.optBoolean("success", false)
+    }
+
+    fun getOmdb(
+        unlockToken: String?,
+        accessToken: String
+    ): com.fortresstv.player.omdb.OmdbSettings? {
+        val body = JSONObject().apply {
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_get_omdb", body, accessToken, null)
+        val json = JSONObject(text.ifBlank { "{}" })
+        if (!json.optBoolean("configured", false)) return null
+        return com.fortresstv.player.omdb.OmdbSettings(
+            enabled = json.optBoolean("enabled", false),
+            apiKey = json.optString("api_key", "")
+        )
+    }
+
+    fun deleteOmdb(
+        unlockToken: String?,
+        accessToken: String
+    ): Boolean {
+        val body = JSONObject().apply {
+            unlockToken?.let { put("p_unlock_token", it) }
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_delete_omdb", body, accessToken, null)
+        return text.trim() == "true"
+    }
+
     fun saveOpenSubtitles(
         settings: com.fortresstv.player.subtitles.OpenSubtitlesSettings,
         unlockToken: String?,
