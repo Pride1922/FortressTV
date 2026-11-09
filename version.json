@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC14",
-    "versionCode":  48,
-    "notes":  "FortressTV 2.0.0-RC14:\n- TV Series episode metadata enrichment: fetches per-episode overviews, episode titles, and high-resolution 16:9 stills from TMDB.\n- Xtream season synopsis fallback: parses season-level overviews from get_series_info when provider episode info is empty.\n- Next Up banner synopsis: shows episode description on the Next Up hero card in the series dialog.\n- Auto (Match Profile) language: metadata and episode descriptions automatically follow the active household profile (pt-PT -\u003e pt-BR -\u003e en-US cascade for Portuguese profiles; English for English profiles).",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC14/fortresstv.apk",
-    "sha256":  "15AB280FEA1CA259D80192ECAAD828A7F3F97A09C2613BA7EF9B027CA4904C20"
+    "version":  "2.0.0-RC15",
+    "versionCode":  49,
+    "notes":  "FortressTV 2.0.0-RC15: Automatically suggests the next unwatched episode in Continue Watching upon series episode completion, and improves sports channel binding to accurately prioritize live match broadcasts over news/commentary channels (such as Sport TV +).",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC15/fortresstv.apk",
+    "sha256":  "1B8FD78DE5C91FEA9A4B838EAB53C43CFD83A19FF995C8E32781FF810E711C86"
 }
