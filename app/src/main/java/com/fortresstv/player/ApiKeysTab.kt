@@ -881,23 +881,37 @@ internal fun ApiKeysTab(
                     )
 
                     var clientIdText by remember(traktClientId) { mutableStateOf(traktClientId) }
+                    val cleanClientId = clientIdText.trim().trim('"', '\'')
+                    val isInvalidLength = cleanClientId.isNotEmpty() && cleanClientId.length != 64
 
                     OutlinedTextField(
                         value = clientIdText,
                         onValueChange = {
                             clientIdText = it
-                            traktClientId = it
-                            traktStore.saveClientId(it)
+                            val sanitized = it.trim().trim('"', '\'')
+                            traktClientId = sanitized
+                            traktStore.saveClientId(sanitized)
                         },
                         label = { Text(strings.traktClientId) },
-                        supportingText = { Text(strings.traktClientIdHint, fontSize = 11.sp) },
+                        isError = isInvalidLength,
+                        supportingText = {
+                            if (isInvalidLength) {
+                                Text(
+                                    strings.traktClientIdLengthWarning.format(cleanClientId.length),
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            } else {
+                                Text(strings.traktClientIdHint, fontSize = 11.sp)
+                            }
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
                     Button(
                         onClick = { showTraktPairingDialog = true },
-                        enabled = clientIdText.isNotBlank(),
+                        enabled = cleanClientId.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Link, contentDescription = null)

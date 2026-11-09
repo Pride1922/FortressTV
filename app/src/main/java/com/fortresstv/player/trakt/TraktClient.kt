@@ -25,36 +25,49 @@ open class TraktClient(
      * Generates a device code and user code for the Device Code Flow.
      */
     open fun generateDeviceCode(clientId: String): TraktAuthResult<TraktDeviceCode> {
+        val cleanClientId = clientId.trim().trim('"', '\'')
         val payload = JSONObject().apply {
-            put("client_id", clientId)
+            put("client_id", cleanClientId)
         }
-        val url = "${authHost.trimEnd('/')}/oauth/device/code"
 
-        return try {
-            val response = executePost(url, payload.toString(), clientId = clientId)
-            if (response.code in 200..299) {
-                val json = JSONObject(response.body)
-                TraktAuthResult.Success(TraktDeviceCode.fromJson(json))
-            } else {
-                TraktAuthResult.Failure("Failed to request device code: ${response.code}", statusCode = response.code)
+        val hosts = listOf(authHost, apiHost).distinct()
+        var lastFailure: TraktAuthResult.Failure? = null
+
+        for (host in hosts) {
+            val url = "${host.trimEnd('/')}/oauth/device/code"
+            try {
+                val response = executePost(url, payload.toString(), clientId = cleanClientId)
+                if (response.code in 200..299) {
+                    val json = JSONObject(response.body)
+                    return TraktAuthResult.Success(TraktDeviceCode.fromJson(json))
+                } else {
+                    val message = parseErrorDetail(response.code, response.body, "device code")
+                    lastFailure = TraktAuthResult.Failure(message, statusCode = response.code)
+                    if (response.code == 401) {
+                        return lastFailure
+                    }
+                }
+            } catch (e: Throwable) {
+                lastFailure = TraktAuthResult.Failure("Network error requesting device code: ${e.message}", cause = e)
             }
-        } catch (e: Throwable) {
-            TraktAuthResult.Failure("Network error requesting device code: ${e.message}", cause = e)
         }
+
+        return lastFailure ?: TraktAuthResult.Failure("Failed to request device code: unknown error")
     }
 
     /**
      * Polls the device token endpoint once.
      */
     open fun pollDeviceToken(deviceCode: String, clientId: String): TraktPollResult {
+        val cleanClientId = clientId.trim().trim('"', '\'')
         val payload = JSONObject().apply {
             put("code", deviceCode)
-            put("client_id", clientId)
+            put("client_id", cleanClientId)
         }
         val url = "${authHost.trimEnd('/')}/oauth/device/token"
 
         return try {
-            val response = executePost(url, payload.toString(), clientId = clientId)
+            val response = executePost(url, payload.toString(), clientId = cleanClientId)
             when (response.code) {
                 200 -> {
                     val json = JSONObject(response.body)
@@ -70,7 +83,10 @@ open class TraktClient(
                     val retryAfter = response.headers["Retry-After"]?.toIntOrNull() ?: 5
                     TraktPollResult.SlowDown(retryAfter)
                 }
-                else -> TraktPollResult.Error(response.code, response.body.ifBlank { "HTTP ${response.code}" })
+                else -> {
+                    val message = parseErrorDetail(response.code, response.body, "token polling")
+                    TraktPollResult.Error(response.code, message)
+                }
             }
         } catch (e: Throwable) {
             TraktPollResult.Error(-1, e.message ?: "Connection error")
@@ -128,9 +144,10 @@ open class TraktClient(
         redirectUri: String,
         clientId: String
     ): TraktAuthResult<TraktToken> {
+        val cleanClientId = clientId.trim().trim('"', '\'')
         val payload = JSONObject().apply {
             put("code", code)
-            put("client_id", clientId)
+            put("client_id", cleanClientId)
             put("code_verifier", codeVerifier)
             put("redirect_uri", redirectUri)
             put("grant_type", "authorization_code")
@@ -138,12 +155,13 @@ open class TraktClient(
         val url = "${authHost.trimEnd('/')}/oauth/token"
 
         return try {
-            val response = executePost(url, payload.toString(), clientId = clientId)
+            val response = executePost(url, payload.toString(), clientId = cleanClientId)
             if (response.code in 200..299) {
                 val json = JSONObject(response.body)
                 TraktAuthResult.Success(TraktToken.fromJson(json))
             } else {
-                TraktAuthResult.Failure("Token exchange failed: ${response.code}", statusCode = response.code)
+                val message = parseErrorDetail(response.code, response.body, "token exchange")
+                TraktAuthResult.Failure(message, statusCode = response.code)
             }
         } catch (e: Throwable) {
             TraktAuthResult.Failure("Token exchange network error: ${e.message}", cause = e)
@@ -154,23 +172,41 @@ open class TraktClient(
      * Refreshes an access token using a single-use refresh token (without client secret).
      */
     open fun refreshToken(refreshToken: String, clientId: String): TraktAuthResult<TraktToken> {
+        val cleanClientId = clientId.trim().trim('"', '\'')
         val payload = JSONObject().apply {
             put("refresh_token", refreshToken)
-            put("client_id", clientId)
+            put("client_id", cleanClientId)
             put("grant_type", "refresh_token")
         }
         val url = "${authHost.trimEnd('/')}/oauth/token"
 
         return try {
-            val response = executePost(url, payload.toString(), clientId = clientId)
+            val response = executePost(url, payload.toString(), clientId = cleanClientId)
             if (response.code in 200..299) {
                 val json = JSONObject(response.body)
                 TraktAuthResult.Success(TraktToken.fromJson(json))
             } else {
-                TraktAuthResult.Failure("Token refresh failed: ${response.code}", statusCode = response.code)
+                val message = parseErrorDetail(response.code, response.body, "token refresh")
+                TraktAuthResult.Failure(message, statusCode = response.code)
             }
         } catch (e: Throwable) {
             TraktAuthResult.Failure("Token refresh network error: ${e.message}", cause = e)
+        }
+    }
+
+    protected open fun parseErrorDetail(code: Int, body: String, action: String): String {
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val error = json?.optString("error").orEmpty()
+        val desc = json?.optString("error_description").orEmpty()
+
+        return when {
+            code == 401 && (error == "invalid_client" || desc.contains("not found", ignoreCase = true) || desc.contains("client", ignoreCase = true)) ->
+                "Invalid Trakt Client ID (401: client not found). Trakt requires the 64-character Client ID from your app at trakt.tv/oauth/applications."
+            code == 401 -> "Trakt authorization error (401): ${desc.ifBlank { error.ifBlank { "Unauthorized" } }}"
+            desc.isNotBlank() -> "Trakt error ($code): $desc"
+            error.isNotBlank() -> "Trakt error ($code): $error"
+            body.isNotBlank() -> "Failed to request $action ($code): ${body.take(120)}"
+            else -> "Failed to request $action: HTTP $code"
         }
     }
 

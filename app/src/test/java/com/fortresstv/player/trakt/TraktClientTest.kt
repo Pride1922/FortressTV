@@ -246,4 +246,73 @@ class TraktClientTest {
         assertTrue(pollAttempts >= 1)
         assertTrue(job.isCancelled)
     }
+
+    @Test
+    fun generateDeviceCodeTrimsWhitespaceAndQuotes() {
+        val client = MockTraktClient()
+        client.postHandler = { url, body, clientId ->
+            assertEquals("clean_client_id", clientId)
+            val json = JSONObject(body)
+            assertEquals("clean_client_id", json.getString("client_id"))
+            TraktHttpResponse(200, """
+                {
+                    "device_code": "dc_1",
+                    "user_code": "UC-1",
+                    "verification_url": "https://trakt.tv/activate",
+                    "expires_in": 300,
+                    "interval": 5
+                }
+            """.trimIndent(), emptyMap())
+        }
+
+        val result = client.generateDeviceCode("  \"clean_client_id\"  \n")
+        assertTrue(result is TraktAuthResult.Success)
+    }
+
+    @Test
+    fun generateDeviceCodeReturnsInformativeMessageOn401InvalidClient() {
+        val client = MockTraktClient()
+        client.postHandler = { _, _, _ ->
+            TraktHttpResponse(401, """
+                {
+                    "error": "invalid_client",
+                    "error_description": "client not found"
+                }
+            """.trimIndent(), emptyMap())
+        }
+
+        val result = client.generateDeviceCode("invalid_key")
+        assertTrue(result is TraktAuthResult.Failure)
+        val failure = result as TraktAuthResult.Failure
+        assertEquals(401, failure.statusCode)
+        assertTrue(failure.message.contains("64-character Client ID"))
+    }
+
+    @Test
+    fun generateDeviceCodeFallsBackToApiHostWhenAuthHostFails() {
+        val client = MockTraktClient()
+        val visitedUrls = mutableListOf<String>()
+        client.postHandler = { url, _, _ ->
+            visitedUrls.add(url)
+            if (url.startsWith("https://auth.trakt.tv")) {
+                TraktHttpResponse(503, "Service Unavailable", emptyMap())
+            } else {
+                TraktHttpResponse(200, """
+                    {
+                        "device_code": "dc_fallback",
+                        "user_code": "UC-FB",
+                        "verification_url": "https://trakt.tv/activate",
+                        "expires_in": 300,
+                        "interval": 5
+                    }
+                """.trimIndent(), emptyMap())
+            }
+        }
+
+        val result = client.generateDeviceCode("my_client_id")
+        assertTrue(result is TraktAuthResult.Success)
+        assertEquals(2, visitedUrls.size)
+        assertEquals("https://auth.trakt.tv/oauth/device/code", visitedUrls[0])
+        assertEquals("https://api.trakt.tv/oauth/device/code", visitedUrls[1])
+    }
 }

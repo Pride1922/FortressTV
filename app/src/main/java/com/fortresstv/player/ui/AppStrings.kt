@@ -373,6 +373,7 @@ interface Strings {
     val traktDesc: String
     val traktClientId: String
     val traktClientIdHint: String
+    val traktClientIdLengthWarning: String
     val traktConnect: String
     val traktDisconnect: String
     val traktConnectedAs: String
@@ -910,7 +911,8 @@ object EnglishStrings : Strings {
     override val traktHeader = "Trakt.tv"
     override val traktDesc = "Sync watch history, playback progress and scrobble VOD automatically."
     override val traktClientId = "Trakt Client ID"
-    override val traktClientIdHint = "Enter your Trakt application Client ID"
+    override val traktClientIdHint = "Enter your Trakt application Client ID (64 characters)"
+    override val traktClientIdLengthWarning = "Trakt Client ID must be 64 hexadecimal characters (currently %d)"
     override val traktConnect = "Connect with Trakt"
     override val traktDisconnect = "Disconnect"
     override val traktConnectedAs = "Connected as"
@@ -1451,7 +1453,8 @@ object PortugueseStrings : Strings {
     override val traktHeader = "Trakt.tv"
     override val traktDesc = "Sincronize o histórico, progresso de reprodução e scrobble VOD automaticamente."
     override val traktClientId = "ID de Cliente Trakt"
-    override val traktClientIdHint = "Introduza o ID de Cliente da sua aplicação Trakt"
+    override val traktClientIdHint = "Introduza o ID de Cliente da sua aplicação Trakt (64 carateres)"
+    override val traktClientIdLengthWarning = "O ID de Cliente Trakt deve ter 64 carateres hexadecimais (atualmente %d)"
     override val traktConnect = "Ligar ao Trakt"
     override val traktDisconnect = "Desligar"
     override val traktConnectedAs = "Ligado como"
