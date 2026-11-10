@@ -36,10 +36,12 @@ class TmdbClient(
     suspend fun getMovieDetails(tmdbId: Int, language: String = "pt-PT"): TmdbMetadata? = withContext(Dispatchers.IO) {
         runCatching {
             val endpoint = "/3/movie/$tmdbId"
+            val baseLang = language.substringBefore('-').substringBefore('_').lowercase().trim().ifBlank { "en" }
+            val videoLangs = if (baseLang != "en") "$baseLang,en,null" else "en,null"
             val queryParams = mapOf(
                 "language" to language,
                 "append_to_response" to "credits,videos",
-                "include_video_language" to "pt,en,null"
+                "include_video_language" to videoLangs
             )
             val raw = executeRequest(endpoint, queryParams)
             val json = JSONObject(raw)
@@ -50,17 +52,19 @@ class TmdbClient(
             if (overview == null && !language.equals("en-US", ignoreCase = true)) {
                 overview = fetchFallbackOverview(endpoint, "en-US")
             }
-            parseMovieMetadata(json, overview)
+            parseMovieMetadata(json, overview, language)
         }.getOrNull()
     }
 
     suspend fun getSeriesDetails(tmdbId: Int, language: String = "pt-PT"): TmdbMetadata? = withContext(Dispatchers.IO) {
         runCatching {
             val endpoint = "/3/tv/$tmdbId"
+            val baseLang = language.substringBefore('-').substringBefore('_').lowercase().trim().ifBlank { "en" }
+            val videoLangs = if (baseLang != "en") "$baseLang,en,null" else "en,null"
             val queryParams = mapOf(
                 "language" to language,
                 "append_to_response" to "credits,videos",
-                "include_video_language" to "pt,en,null"
+                "include_video_language" to videoLangs
             )
             val raw = executeRequest(endpoint, queryParams)
             val json = JSONObject(raw)
@@ -71,7 +75,7 @@ class TmdbClient(
             if (overview == null && !language.equals("en-US", ignoreCase = true)) {
                 overview = fetchFallbackOverview(endpoint, "en-US")
             }
-            parseSeriesMetadata(json, overview)
+            parseSeriesMetadata(json, overview, language)
         }.getOrNull()
     }
 
@@ -203,7 +207,7 @@ class TmdbClient(
         json.optString("overview").trim().takeIf(String::isNotEmpty)
     }.getOrNull()
 
-    private fun parseMovieMetadata(json: JSONObject, overviewOverride: String?): TmdbMetadata {
+    private fun parseMovieMetadata(json: JSONObject, overviewOverride: String?, preferredLanguage: String = "pt-PT"): TmdbMetadata {
         val id = json.optInt("id")
         val title = json.optString("title").ifBlank { json.optString("original_title") }
         val posterPath = json.optString("poster_path").trim().takeIf(String::isNotEmpty)
@@ -216,7 +220,7 @@ class TmdbClient(
         val credits = json.optJSONObject("credits")
         val director = parseDirector(credits?.optJSONArray("crew"))
         val cast = parseCast(credits?.optJSONArray("cast"))
-        val trailerUrl = parseTrailerUrl(json.optJSONObject("videos")?.optJSONArray("results"))
+        val trailerUrl = parseTrailerUrl(json.optJSONObject("videos")?.optJSONArray("results"), preferredLanguage)
 
         return TmdbMetadata(
             tmdbId = id,
@@ -233,7 +237,7 @@ class TmdbClient(
         )
     }
 
-    private fun parseSeriesMetadata(json: JSONObject, overviewOverride: String?): TmdbMetadata {
+    private fun parseSeriesMetadata(json: JSONObject, overviewOverride: String?, preferredLanguage: String = "pt-PT"): TmdbMetadata {
         val id = json.optInt("id")
         val title = json.optString("name").ifBlank { json.optString("original_name") }
         val posterPath = json.optString("poster_path").trim().takeIf(String::isNotEmpty)
@@ -247,7 +251,7 @@ class TmdbClient(
         val director = parseDirector(credits?.optJSONArray("crew"))
             ?: parseCreatedBy(json.optJSONArray("created_by"))
         val cast = parseCast(credits?.optJSONArray("cast"))
-        val trailerUrl = parseTrailerUrl(json.optJSONObject("videos")?.optJSONArray("results"))
+        val trailerUrl = parseTrailerUrl(json.optJSONObject("videos")?.optJSONArray("results"), preferredLanguage)
 
         return TmdbMetadata(
             tmdbId = id,
@@ -371,8 +375,11 @@ class TmdbClient(
         return list
     }
 
-    internal fun parseTrailerUrl(videos: JSONArray?): String? {
+    internal fun parseTrailerUrl(videos: JSONArray?, preferredLanguage: String = "pt-PT"): String? {
         if (videos == null) return null
+
+        val targetBase = preferredLanguage.substringBefore('-').substringBefore('_').trim().lowercase().ifBlank { "pt" }
+        val targetFull = preferredLanguage.trim().lowercase()
 
         var selectedKey: String? = null
         var highestPriority = 0
@@ -384,18 +391,21 @@ class TmdbClient(
             val key = video.optString("key").trim()
             if (!youTubeVideoIdPattern.matches(key)) continue
 
-            val language = video.optString("iso_639_1").trim().lowercase()
-            val languagePriority = when (language.substringBefore('-')) {
-                "pt" -> 4
-                "en" -> 1
-                else -> continue
+            val vidLang = video.optString("iso_639_1").trim().lowercase()
+            val vidBase = vidLang.substringBefore('-')
+
+            val languagePriority = when {
+                vidBase == targetBase -> 6
+                vidBase == "en" -> 2
+                else -> 1 // general fallback
             }
             val officialPriority = if (video.optBoolean("official")) 2 else 0
-            val portugalPriority = if (
-                language == "pt-pt" ||
-                (language == "pt" && video.optString("iso_3166_1").equals("PT", ignoreCase = true))
+            val exactCountryPriority = if (
+                vidLang == targetFull ||
+                (vidBase == targetBase && targetFull.contains('-') && video.optString("iso_3166_1").equals(targetFull.substringAfter('-'), ignoreCase = true))
             ) 1 else 0
-            val priority = languagePriority + officialPriority + portugalPriority
+
+            val priority = languagePriority + officialPriority + exactCountryPriority
             if (priority > highestPriority) {
                 selectedKey = key
                 highestPriority = priority

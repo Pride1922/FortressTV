@@ -135,7 +135,7 @@ class TmdbClientTest {
     }
 
     @Test
-    fun testParseTrailerUrlPrioritizesPortuguese() {
+    fun testParseTrailerUrlPrioritizesProfileLanguage() {
         val client = TmdbClient("dummy-key")
         val videosJson = org.json.JSONArray("""[
             {
@@ -148,9 +148,8 @@ class TmdbClientTest {
             {
                 "site": "YouTube",
                 "type": "Trailer",
-                "key": "brTrailer01",
-                "iso_639_1": "pt",
-                "iso_3166_1": "BR",
+                "key": "esTrailer01",
+                "iso_639_1": "es",
                 "official": true
             },
             {
@@ -163,28 +162,19 @@ class TmdbClientTest {
             }
         ]""")
 
-        val url = client.parseTrailerUrl(videosJson)
-        assertEquals("https://www.youtube.com/watch?v=ptTrailer01", url)
+        // Portuguese profile prioritizes pt-PT
+        val ptUrl = client.parseTrailerUrl(videosJson, preferredLanguage = "pt-PT")
+        assertEquals("https://www.youtube.com/watch?v=ptTrailer01", ptUrl)
+
+        // Spanish profile prioritizes es
+        val esUrl = client.parseTrailerUrl(videosJson, preferredLanguage = "es-ES")
+        assertEquals("https://www.youtube.com/watch?v=esTrailer01", esUrl)
     }
 
     @Test
-    fun testParseTrailerUrlFallsBackToEnglishWhenNoPortuguese() {
+    fun testParseTrailerUrlFallsBackToEnglishWhenNoProfileLanguageTrailer() {
         val client = TmdbClient("dummy-key")
         val videosJson = org.json.JSONArray("""[
-            {
-                "site": "YouTube",
-                "type": "Teaser",
-                "key": "ptTeaser001",
-                "iso_639_1": "pt",
-                "official": true
-            },
-            {
-                "site": "YouTube",
-                "type": "Trailer",
-                "key": "invalid-key-length",
-                "iso_639_1": "pt",
-                "official": true
-            },
             {
                 "site": "YouTube",
                 "type": "Trailer",
@@ -200,19 +190,9 @@ class TmdbClientTest {
             }
         ]""")
 
-        val url = client.parseTrailerUrl(videosJson)
+        // Profile is French, but only English trailers exist -> falls back to English
+        val url = client.parseTrailerUrl(videosJson, preferredLanguage = "fr-FR")
         assertEquals("https://www.youtube.com/watch?v=enTrailer01", url)
-    }
-
-    @Test
-    fun testParseTrailerUrlReturnsNullWithoutPortugueseOrEnglishTrailer() {
-        val client = TmdbClient("dummy-key")
-        val videosJson = org.json.JSONArray("""[
-            {"site":"YouTube","type":"Trailer","key":"frTrailer01","iso_639_1":"fr"},
-            {"site":"YouTube","type":"Teaser","key":"ptTeaser001","iso_639_1":"pt"}
-        ]""")
-
-        assertNull(client.parseTrailerUrl(videosJson))
     }
 
     @Test
