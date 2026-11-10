@@ -420,6 +420,7 @@ internal fun FortressTVApp(
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     var startupDestination by remember { mutableStateOf(settings.startupDestination(initialProfileId)) }
     var homeHiddenSections by remember { mutableStateOf(settings.homeHiddenSections(initialProfileId)) }
+    var homeSectionOrder by remember { mutableStateOf(settings.homeSectionOrder(initialProfileId)) }
     var showCustomizeHomeDialog by remember { mutableStateOf(false) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
@@ -613,6 +614,7 @@ internal fun FortressTVApp(
         subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
         startupDestination = settings.startupDestination(targetProfileId)
         homeHiddenSections = settings.homeHiddenSections(targetProfileId)
+        homeSectionOrder = settings.homeSectionOrder(targetProfileId)
         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
         libraryNamespace = ns
 
@@ -785,6 +787,7 @@ internal fun FortressTVApp(
                         subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
                         startupDestination = settings.startupDestination(targetProfileId)
                         homeHiddenSections = settings.homeHiddenSections(targetProfileId)
+                        homeSectionOrder = settings.homeSectionOrder(targetProfileId)
                         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
                         if (activeSourceId != null) {
                             hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
@@ -1626,6 +1629,7 @@ internal fun FortressTVApp(
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
                     homeHiddenSections = homeHiddenSections,
+                    homeSectionOrder = homeSectionOrder,
                     onOpenCustomizeHome = { showCustomizeHomeDialog = true },
                     xtreamCatalogs = xtreamCatalogs.values.toList(),
                     xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
@@ -2158,6 +2162,11 @@ internal fun FortressTVApp(
         if (showCustomizeHomeDialog) {
             com.fortresstv.player.ui.CustomizeHomeDialog(
                 hiddenSections = homeHiddenSections,
+                sectionOrder = homeSectionOrder,
+                onOrderChange = { updated ->
+                    homeSectionOrder = updated
+                    settings.setHomeSectionOrder(updated, activeHouseholdProfile.id)
+                },
                 onToggleSection = { sectionId ->
                     val updated = if (sectionId in homeHiddenSections) {
                         homeHiddenSections - sectionId

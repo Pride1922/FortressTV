@@ -361,6 +361,15 @@ class SourceSettingsStore internal constructor(
         preferences.edit().putStringSet(key, hidden).apply()
     }
 
+    fun homeSectionOrder(profileId: String): List<String> =
+        com.fortresstv.player.ui.HomeSectionId.ordered(
+            preferences.getString("home_section_order_$profileId", null)?.split(',').orEmpty()
+        )
+
+    fun setHomeSectionOrder(order: List<String>, profileId: String) {
+        preferences.edit().putString("home_section_order_$profileId", order.joinToString(",")).apply()
+    }
+
     fun hideAdultContent(): Boolean =
         preferences.getBoolean("hide_adult_content", false)
 

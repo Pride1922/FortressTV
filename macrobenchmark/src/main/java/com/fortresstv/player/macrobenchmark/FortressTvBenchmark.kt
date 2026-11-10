@@ -55,6 +55,30 @@ class FortressTvBenchmark {
     }
 
     @Test
+    fun homeShelvesFling() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait()
+            waitForStartupDestination()
+            device.findObject(By.res("library_destination_home"))?.click()
+            val shelves = device.wait(Until.findObject(By.res("home_shelves")), UI_TIMEOUT)
+            assertNotNull("Home shelves did not become available", shelves)
+            assumeTrue("Populate enough Home shelves to scroll", shelves?.isScrollable == true)
+        }
+    ) {
+        val shelves = device.findObject(By.res("home_shelves"))
+        shelves.setGestureMargin(device.displayWidth / 5)
+        shelves.fling(Direction.DOWN)
+        shelves.fling(Direction.UP)
+        device.waitForIdle()
+    }
+
+    @Test
     fun channelListFling() = benchmarkRule.measureRepeated(
         packageName = PACKAGE_NAME,
         metrics = listOf(FrameTimingMetric()),

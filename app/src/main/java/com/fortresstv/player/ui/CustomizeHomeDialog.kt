@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
@@ -38,6 +40,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,12 +61,21 @@ object HomeSectionId {
     const val FEATURED_SERIES = "featured_series"
     const val TRAKT_WATCHLIST = "trakt_watchlist"
     const val TRAKT_RECOMMENDATIONS = "trakt_recommendations"
+
+    val defaultOrder = listOf(
+        CONTINUE_WATCHING, FAVORITE_CHANNELS, RECENT_CHANNELS, SPORTS, FOLLOWED_SERIES,
+        TRAKT_WATCHLIST, TRAKT_RECOMMENDATIONS, RECENT_MOVIES, FEATURED_SERIES
+    )
+
+    fun ordered(saved: List<String>): List<String> = (saved.filter { it in defaultOrder } + defaultOrder).distinct()
 }
 
 @Composable
 fun CustomizeHomeDialog(
     hiddenSections: Set<String>,
+    sectionOrder: List<String>,
     onToggleSection: (String) -> Unit,
+    onOrderChange: (List<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -78,7 +90,7 @@ fun CustomizeHomeDialog(
         Triple(HomeSectionId.TRAKT_RECOMMENDATIONS, strings.sectionTraktRecommendations, Icons.Default.ThumbUp),
         Triple(HomeSectionId.RECENT_MOVIES, strings.sectionRecentMovies, Icons.Default.Movie),
         Triple(HomeSectionId.FEATURED_SERIES, strings.sectionFeaturedSeries, Icons.Default.AutoAwesome)
-    )
+    ).associateBy { it.first }.let { sections -> sectionOrder.mapNotNull(sections::get) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -128,27 +140,29 @@ fun CustomizeHomeDialog(
                 HorizontalDivider(color = Color(0xFF262A36), thickness = 1.dp)
                 Spacer(Modifier.height(10.dp))
 
-                // List of sections with switches
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .weight(1f, fill = false)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items.forEach { (id, label, icon) ->
+                    items.forEachIndexed { index, (id, label, icon) -> key(id) {
                         val isVisible = id !in hiddenSections
+                        fun move(to: Int) {
+                            onOrderChange(items.map { it.first }.toMutableList().apply { add(to, removeAt(index)) })
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .clickable { onToggleSection(id) }
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f).clickable { onToggleSection(id) }.padding(vertical = 7.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -164,13 +178,20 @@ fun CustomizeHomeDialog(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
-                                Spacer(Modifier.width(12.dp))
+                                Spacer(Modifier.width(8.dp))
                                 Text(
                                     text = label,
                                     color = if (isVisible) Color.White else Color(0xFF888E9E),
                                     fontSize = 14.sp,
                                     fontWeight = if (isVisible) FontWeight.SemiBold else FontWeight.Normal
                                 )
+                            }
+
+                            IconButton(onClick = { move(index - 1) }, enabled = index > 0) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = strings.moveHomeSectionUp(label))
+                            }
+                            IconButton(onClick = { move(index + 1) }, enabled = index < items.lastIndex) {
+                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = strings.moveHomeSectionDown(label))
                             }
 
                             Switch(
@@ -184,7 +205,7 @@ fun CustomizeHomeDialog(
                                 )
                             )
                         }
-                    }
+                    } }
                 }
 
                 Spacer(Modifier.height(18.dp))

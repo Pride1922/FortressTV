@@ -78,9 +78,7 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
@@ -426,6 +424,28 @@ internal data class HomeSearchResults(
 )
 
 @Composable
+private fun HomeShortcut(title: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = colors.surfaceContainer,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        modifier = modifier.tvFocusHighlight(shape = shape, scaleOnFocus = 1.02f)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(18.dp))
+            Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
 internal fun HomeScreen(
     channels: List<PlaylistChannel>,
     catalogs: List<XtreamCatalog>,
@@ -459,6 +479,7 @@ internal fun HomeScreen(
     onWatchChannel: (PlaylistChannel) -> Unit,
     onNavigateToDestination: (LibraryDestination) -> Unit,
     homeHiddenSections: Set<String> = emptySet(),
+    homeSectionOrder: List<String> = com.fortresstv.player.ui.HomeSectionId.defaultOrder,
     onOpenCustomizeHome: () -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
@@ -580,15 +601,29 @@ internal fun HomeScreen(
         } else com.fortresstv.player.trakt.TraktMatchedRecommendations()
     }
 
-    val hasContent = (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) ||
-        (com.fortresstv.player.ui.HomeSectionId.SPORTS !in homeHiddenSections && sportsFixtures.isNotEmpty()) ||
-        (com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS !in homeHiddenSections && favoriteChannels.isNotEmpty()) ||
-        (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) ||
-        (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) ||
-        (showTraktWatchlist && !matchedTraktWatchlist.isEmpty) ||
-        (showTraktRecs && (!matchedTraktRecs.isEmpty || canManageHiddenRecommendations)) ||
-        (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) ||
-        (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty())
+    val visibleShelves = homeSectionOrder.filter { section ->
+        section !in homeHiddenSections && when (section) {
+            com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING -> progressEntries.any { it.title.isNotBlank() }
+            com.fortresstv.player.ui.HomeSectionId.SPORTS -> sportsFixtures.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS -> favoriteChannels.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS -> recentChannelsList.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES -> followedSeries.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST -> showTraktWatchlist && !matchedTraktWatchlist.isEmpty
+            com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS -> showTraktRecs && (!matchedTraktRecs.isEmpty || canManageHiddenRecommendations)
+            com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES -> recentMovies.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES -> featuredSeries.isNotEmpty()
+            else -> false
+        }
+    }
+    val homeRows = buildList {
+        addAll(visibleShelves)
+        add(if (visibleShelves.isEmpty()) 0 else 1, "shortcuts")
+        if (visibleShelves.isEmpty()) add("empty")
+    }
+    val homeListState = rememberLazyListState()
+    LaunchedEffect(homeSectionOrder) {
+        homeListState.requestScrollToItem(0)
+    }
 
     BackHandler(enabled = isTv && isTvSearchActive) {
         isTvSearchActive = false
@@ -641,7 +676,10 @@ internal fun HomeScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
-        // Top Search Bar & Customize Home
+        if (!isSearching) {
+            Text(strings.navHome, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -665,11 +703,7 @@ internal fun HomeScreen(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(searchBarFocusRequester)
-                    .then(
-                        if (!hasContent || isSearching) {
-                            Modifier.focusRequester(contentFocusRequester)
-                        } else Modifier
-                    )
+                    .focusRequester(contentFocusRequester)
                     .focusProperties {
                         if (sidebarFocusRequester != null) {
                             left = sidebarFocusRequester
@@ -773,7 +807,7 @@ internal fun HomeScreen(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                 modifier = Modifier
-                    .size(46.dp)
+                    .size(48.dp)
                     .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.05f else 1.0f)
             ) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -877,7 +911,7 @@ internal fun HomeScreen(
                                         imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
-                                        progressFraction = progressEntries.firstOrNull { it.key == libraryId }?.progressFraction,
+                                        progressFraction = progressByKey[libraryId]?.progressFraction,
                                         onClick = { selectedMovie = entry },
                                         modifier = Modifier.width(120.dp)
                                     )
@@ -916,61 +950,56 @@ internal fun HomeScreen(
                 }
             }
         } else {
-            if (!hasContent) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
-                        modifier = Modifier.widthIn(max = 480.dp)
-                    ) {
-                        Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            ShieldMark(Modifier.size(64.dp))
-                            Spacer(Modifier.height(14.dp))
-                            Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                strings.homeNoContent,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                fontSize = 14.sp
-                            )
-                            Spacer(Modifier.height(18.dp))
-                            Button(onClick = { onNavigateToDestination(LibraryDestination.LIVE_TV) }) {
-                                Icon(Icons.Default.LiveTv, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(strings.navLiveTv)
-                            }
-                        }
-                    }
-                }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(22.dp)
-                ) {
-                    if (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) {
-                        ContinueWatchingRow(
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().testTag("home_shelves"),
+                state = homeListState,
+                verticalArrangement = Arrangement.spacedBy(22.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                items(homeRows, key = { it }) { section ->
+                when (section) {
+                    com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING -> {
+                        HomeContinueWatchingShelf(
                             entries = progressEntries,
                             onClick = onContinueWatching,
                             onRemove = onRemoveContinueWatching,
-                            firstItemFocusRequester = contentFocusRequester,
                             sidebarFocusRequester = sidebarFocusRequester
                         )
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.SPORTS !in homeHiddenSections && sportsFixtures.isNotEmpty()) {
-                        com.fortresstv.player.sports.SportsHubSection(
-                            fixtures = sportsFixtures,
-                            channels = channels,
-                            epgGuide = epgGuide,
-                            onWatchChannel = onWatchChannel
-                        )
+                    "shortcuts" -> {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            HomeShortcut(strings.navLiveTv, Icons.Default.LiveTv, { onNavigateToDestination(LibraryDestination.LIVE_TV) }, Modifier.weight(1f))
+                            HomeShortcut(strings.navMovies, Icons.Default.Movie, { onNavigateToDestination(LibraryDestination.MOVIES) }, Modifier.weight(1f))
+                            HomeShortcut(strings.navSeries, Icons.Default.VideoLibrary, { onNavigateToDestination(LibraryDestination.SERIES) }, Modifier.weight(1f))
+                        }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS !in homeHiddenSections && favoriteChannels.isNotEmpty()) {
+                    "empty" -> {
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+                                modifier = Modifier.widthIn(max = 480.dp)
+                            ) {
+                                Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    ShieldMark(Modifier.size(64.dp))
+                                    Spacer(Modifier.height(14.dp))
+                                    Text(strings.appName, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        strings.homeNoContent,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFD700), modifier = Modifier.size(22.dp))
@@ -1014,11 +1043,6 @@ internal fun HomeScreen(
                                         modifier = Modifier
                                             .width(240.dp)
                                             .height(116.dp)
-                                            .then(
-                                                if (index == 0 && progressEntries.isEmpty()) {
-                                                    Modifier.focusRequester(contentFocusRequester)
-                                                } else Modifier
-                                            )
                                             .focusProperties {
                                                 if (index == 0 && sidebarFocusRequester != null) {
                                                     left = sidebarFocusRequester
@@ -1085,7 +1109,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) {
+                    com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Replay, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -1109,11 +1133,6 @@ internal fun HomeScreen(
                                         modifier = Modifier
                                             .width(180.dp)
                                             .height(64.dp)
-                                            .then(
-                                                if (index == 0 && progressEntries.isEmpty() && favoriteChannels.isEmpty()) {
-                                                    Modifier.focusRequester(contentFocusRequester)
-                                                } else Modifier
-                                            )
                                             .focusProperties {
                                                 if (index == 0 && sidebarFocusRequester != null) {
                                                     left = sidebarFocusRequester
@@ -1150,7 +1169,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) {
+                    com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -1178,11 +1197,6 @@ internal fun HomeScreen(
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier
                                             .width(120.dp)
-                                            .then(
-                                                if (index == 0 && progressEntries.isEmpty() && favoriteChannels.isEmpty() && recentChannelsList.isEmpty()) {
-                                                    Modifier.focusRequester(contentFocusRequester)
-                                                } else Modifier
-                                            )
                                             .focusProperties {
                                                 if (index == 0 && sidebarFocusRequester != null) {
                                                     left = sidebarFocusRequester
@@ -1203,9 +1217,16 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (showTraktWatchlist &&
-                        !matchedTraktWatchlist.isEmpty
-                    ) {
+                    com.fortresstv.player.ui.HomeSectionId.SPORTS -> {
+                        com.fortresstv.player.sports.SportsHubSection(
+                            fixtures = sportsFixtures,
+                            channels = channels,
+                            epgGuide = epgGuide,
+                            onWatchChannel = onWatchChannel
+                        )
+                    }
+
+                    com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -1266,7 +1287,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (showTraktRecs && (!matchedTraktRecs.isEmpty || canManageHiddenRecommendations)) {
+                    com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -1332,7 +1353,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) {
+                    com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Movie, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -1381,7 +1402,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty()) {
+                    com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES -> {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
@@ -1420,22 +1441,8 @@ internal fun HomeScreen(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Button(
-                            onClick = onOpenCustomizeHome,
-                            colors = ButtonDefaults.outlinedButtonColors(),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(strings.customizeHome, fontSize = 13.sp)
-                        }
-                    }
-                    Spacer(Modifier.height(24.dp))
+                    else -> Unit
+                }
                 }
             }
         }

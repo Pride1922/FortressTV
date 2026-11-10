@@ -209,6 +209,8 @@ interface Strings {
     fun kickoffAt(time: String): String
     val customizeHome: String
     val customizeHomeDescription: String
+    fun moveHomeSectionUp(section: String): String
+    fun moveHomeSectionDown(section: String): String
     val sectionSports: String
     val sectionContinueWatching: String
     val sectionFavoriteChannels: String
@@ -779,7 +781,9 @@ object EnglishStrings : Strings {
     override val channelNotDetected = "Channel not found"
     override fun kickoffAt(time: String) = "Kickoff at $time"
     override val customizeHome = "Customize Home"
-    override val customizeHomeDescription = "Choose which rows appear on your Home screen"
+    override val customizeHomeDescription = "Choose which sections appear and in what order."
+    override fun moveHomeSectionUp(section: String) = "Move $section up"
+    override fun moveHomeSectionDown(section: String) = "Move $section down"
     override val sectionSports = "Matches & Sports"
     override val sectionContinueWatching = "Continue Watching"
     override val sectionFavoriteChannels = "Favorite Channels Now"
@@ -1353,7 +1357,9 @@ object PortugueseStrings : Strings {
     override val channelNotDetected = "Canal não detetado"
     override fun kickoffAt(time: String) = "Início às $time"
     override val customizeHome = "Personalizar Início"
-    override val customizeHomeDescription = "Escolha quais as secções que surgem no seu ecrã inicial"
+    override val customizeHomeDescription = "Escolha as secções visíveis e a respetiva ordem."
+    override fun moveHomeSectionUp(section: String) = "Mover $section para cima"
+    override fun moveHomeSectionDown(section: String) = "Mover $section para baixo"
     override val sectionSports = "Jogos e Desporto"
     override val sectionContinueWatching = "Continuar a ver"
     override val sectionFavoriteChannels = "Canais favoritos agora"

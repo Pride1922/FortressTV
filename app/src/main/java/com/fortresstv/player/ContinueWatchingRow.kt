@@ -380,6 +380,106 @@ import coil.request.ImageRequest
 import coil.size.Precision
 
 @Composable
+internal fun HomeContinueWatchingShelf(
+    entries: List<VodProgressEntry>,
+    onClick: (VodProgressEntry) -> Unit,
+    onRemove: (VodProgressEntry) -> Unit,
+    sidebarFocusRequester: FocusRequester?
+) {
+    val cards = remember(entries) {
+        entries.asSequence().filter { it.title.isNotBlank() }.distinctBy { it.key }.take(16).toList()
+    }
+    if (cards.isEmpty()) return
+    val strings = LocalAppStrings.current
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(14.dp)
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(strings.continueWatching, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(cards, key = { _, entry -> entry.key }) { index, entry ->
+                val nextEpisode = entry.progressFraction == 0f && entry.kind == VodProgressKind.EPISODE
+                val season = entry.season
+                val episode = entry.episode
+                val episodeLabel = if (entry.kind == VodProgressKind.EPISODE && season != null && episode != null) {
+                    strings.episodeLabel(season, episode)
+                } else null
+                val title = if (episodeLabel != null && season != null && episode != null) {
+                    val labels = listOf(
+                        com.fortresstv.player.ui.EnglishStrings.episodeLabel(season, episode),
+                        com.fortresstv.player.ui.PortugueseStrings.episodeLabel(season, episode)
+                    )
+                    labels.fold(entry.title) { text, label ->
+                        text.removePrefix("$label · ").replace(" · $label · ", " · ")
+                    }.ifBlank { entry.title }
+                } else entry.title
+                Surface(
+                    modifier = Modifier.width(156.dp),
+                    shape = shape,
+                    color = colors.surfaceContainer,
+                    border = BorderStroke(1.dp, colors.outlineVariant)
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusProperties {
+                                    if (index == 0 && sidebarFocusRequester != null) left = sidebarFocusRequester
+                                }
+                                .clickable(
+                                    onClickLabel = if (nextEpisode) strings.playNow else strings.resume,
+                                    onClick = { onClick(entry) }
+                                )
+                                .tvFocusHighlight(shape = shape, scaleOnFocus = 1f)
+                                .padding(start = 8.dp, top = 8.dp, end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                Modifier.width(40.dp).height(56.dp).clip(RoundedCornerShape(6.dp))
+                                    .background(colors.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (!entry.posterUrl.isNullOrBlank()) {
+                                    AsyncImage(entry.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                }
+                                Surface(shape = CircleShape, color = colors.inverseSurface, modifier = Modifier.size(22.dp)) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = colors.inverseOnSurface, modifier = Modifier.padding(3.dp))
+                                }
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                if (episodeLabel != null) {
+                                    Text(episodeLabel, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant, maxLines = 1)
+                                }
+                            }
+                        }
+                        Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    if (nextEpisode) strings.nextEpisode else "${(entry.progressFraction * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (nextEpisode) colors.primary else colors.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                LinearProgressIndicator(
+                                    progress = { entry.progressFraction },
+                                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp))
+                                )
+                            }
+                            IconButton(onClick = { onRemove(entry) }, modifier = Modifier.tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)) {
+                                Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun ContinueWatchingRow(
     entries: List<VodProgressEntry>,
     onClick: (VodProgressEntry) -> Unit,

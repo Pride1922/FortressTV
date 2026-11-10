@@ -587,6 +587,7 @@ internal fun FortressLibrary(
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
     homeHiddenSections: Set<String> = emptySet(),
+    homeSectionOrder: List<String> = com.fortresstv.player.ui.HomeSectionId.defaultOrder,
     onOpenCustomizeHome: () -> Unit = {},
     xtreamCatalogs: List<XtreamCatalog>,
     xtreamProfiles: List<PlaylistProfile>,
@@ -883,6 +884,7 @@ internal fun FortressLibrary(
                         destination = target
                     },
                     homeHiddenSections = homeHiddenSections,
+                    homeSectionOrder = homeSectionOrder,
                     onOpenCustomizeHome = onOpenCustomizeHome
                 )
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
