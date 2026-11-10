@@ -33,7 +33,9 @@ object XmlTvParser {
         referenceTimeMillis: Long = System.currentTimeMillis(),
         loadedDays: Int = DEFAULT_LOADED_DAYS,
         timezoneId: String = ZoneId.systemDefault().id,
-        fallbackSourceZone: ZoneId = ZoneId.systemDefault()
+        fallbackSourceZone: ZoneId = ZoneId.systemDefault(),
+        requireProgrammes: Boolean = false,
+        beforePublish: () -> Unit = {}
     ): EpgManifest {
         val zone = runCatching { ZoneId.of(timezoneId) }.getOrDefault(ZoneId.systemDefault())
         val today = Instant.ofEpochMilli(referenceTimeMillis).atZone(zone).toLocalDate()
@@ -59,7 +61,7 @@ object XmlTvParser {
             )
             parseXml(input, handler)
 
-            return session.commit(handler.channels)
+            return session.commit(handler.channels, requireProgrammes, beforePublish)
         } catch (t: Throwable) {
             session.abort()
             throw t

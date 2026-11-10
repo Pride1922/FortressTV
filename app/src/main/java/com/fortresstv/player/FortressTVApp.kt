@@ -1089,44 +1089,76 @@ internal fun FortressTVApp(
         }
     }
 
-    fun loadEpg(source: ContentSource, save: Boolean, forceRefresh: Boolean = false, background: Boolean = false): Job {
+    val epgLoadMutex = remember { Mutex() }
+    var startupEpgRestoring by remember { mutableStateOf(false) }
+    var automaticEpgJob by remember { mutableStateOf<Job?>(null) }
+
+    fun loadEpg(
+        source: ContentSource,
+        save: Boolean,
+        forceRefresh: Boolean = false,
+        background: Boolean = false,
+        refreshIfDue: Boolean = false
+    ): Job {
         if (!background) {
             loading = true
             error = null
             retryLoad = null
         }
         return scope.launch(Dispatchers.IO) {
-            runCatching {
-                val stream = if (forceRefresh || !SourceReader.hasCache(context, "epg")) {
-                    SourceReader.fetchAndCache(context, source, "epg").also {
-                        val now = System.currentTimeMillis()
-                        settings.setLastEpgUpdate(now)
-                        withContext(Dispatchers.Main) { epgLastUpdate = now }
-                    }
-                } else {
-                    SourceReader.openCached(context, "epg")
+            epgLoadMutex.withLock {
+                if (background && withContext(Dispatchers.Main) { epgSource != source }) return@withLock
+                val hasCache = SourceReader.hasCache(context, "epg")
+                val dailyRefreshDue = refreshIfDue && withContext(Dispatchers.Main) {
+                    val zone = ZoneId.systemDefault()
+                    val today = LocalDate.now(zone).toEpochDay()
+                    val partitions = epgGuide?.manifest?.partitions
+                    val coversWindow = partitions != null && (0 until epgLoadedDays).all { today + it in partitions }
+                    partitions.isNullOrEmpty() ||
+                        isEpgRefreshDue(settings.lastEpgUpdate(), System.currentTimeMillis(), zone, coversWindow)
                 }
-                parseEpgWithCache(source, stream, allowCachedResult = !forceRefresh)
-            }.onSuccess { guide ->
-                withContext(Dispatchers.Main) {
-                    if (background && epgSource != source) return@withContext
-                    epgGuide = guide
-                    epgSource = source
-                    epgSourceName = source.displayName
-                    if (save) {
-                        settings.saveEpg(source)
-                        val accountState = accountRepository.getAccountState()
-                        if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
-                            scope.launch(Dispatchers.IO) {
-                                cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
+                val fetchRemote = source is ContentSource.RemoteUrl && (
+                    forceRefresh || !hasCache || dailyRefreshDue
+                )
+                if (refreshIfDue && !fetchRemote) return@withLock
+
+                runCatching {
+                    if (source is ContentSource.RemoteUrl && fetchRemote) {
+                        epgSyncWorkflow.refreshRemoteGuide(source, epgLoadedDays, epgSourceTimezone)
+                    } else {
+                        val stream = if (source is ContentSource.LocalFile) SourceReader.open(context, source)
+                        else SourceReader.openCached(context, "epg")
+                        parseEpgWithCache(source, stream, allowCachedResult = !forceRefresh)
+                    }
+                }.onSuccess { guide ->
+                    withContext(Dispatchers.Main) {
+                        if (background && epgSource != source) return@withContext
+                        if (fetchRemote) epgRepository.setGuide(guide)
+                        if (fetchRemote || (source is ContentSource.LocalFile && (forceRefresh || save))) {
+                            val now = System.currentTimeMillis()
+                            settings.setLastEpgUpdate(now)
+                            epgLastUpdate = now
+                        }
+                        epgGuide = guide
+                        epgSource = source
+                        epgSourceName = source.displayName
+                        if (save) {
+                            settings.saveEpg(source)
+                            val accountState = accountRepository.getAccountState()
+                            if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
+                                scope.launch(Dispatchers.IO) {
+                                    cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
+                                }
                             }
                         }
                     }
-                }
-            }.onFailure { err ->
-                if (!background) withContext(Dispatchers.Main) {
-                    error = err.message ?: "Could not load EPG source."
-                    retryLoad = { loadEpg(source, save = save, forceRefresh = true) }
+                }.onFailure { err ->
+                    if (err is CancellationException) throw err
+                    if (!background) withContext(Dispatchers.Main) {
+                        error = if (err is com.fortresstv.player.epg.EmptyEpgDownloadException) strings.noEpgData
+                        else err.message ?: strings.noEpgData
+                        retryLoad = { loadEpg(source, save = save, forceRefresh = true) }
+                    }
                 }
             }
             if (!background) withContext(Dispatchers.Main) {
@@ -1137,8 +1169,8 @@ internal fun FortressTVApp(
 
     fun advanceEpgWindow(source: ContentSource, epochDay: Long) {
         scope.launch {
+            val manifest = epgRepository.manifest.value
             val cachedTodayGuide = withContext(Dispatchers.IO) {
-                val manifest = epgRepository.manifest.value
                 val day = epgRepository.loadDay(epochDay)
                 if (manifest != null && day != null) {
                     EpgGuide(
@@ -1149,17 +1181,14 @@ internal fun FortressTVApp(
                     )
                 } else null
             }
+            if (epgSource != source || epgRepository.manifest.value != manifest) return@launch
             if (cachedTodayGuide != null) {
                 epgRepository.setGuide(cachedTodayGuide)
                 epgGuide = cachedTodayGuide
             }
 
-            when (source) {
-                is ContentSource.RemoteUrl -> loadEpg(source, save = false, forceRefresh = true)
-                is ContentSource.LocalFile -> if (cachedTodayGuide == null) {
-                    loadEpg(source, save = false, forceRefresh = false)
-                }
-                is ContentSource.Xtream -> Unit
+            if (source is ContentSource.LocalFile && cachedTodayGuide == null) {
+                loadEpg(source, save = false, background = true)
             }
         }
     }
@@ -1180,6 +1209,13 @@ internal fun FortressTVApp(
             activeEpgEpochDay = currentAppEpochDay
             val source = withContext(Dispatchers.IO) { settings.epgSource() }
             if (source != null) advanceEpgWindow(source, currentAppEpochDay)
+        }
+    }
+
+    LaunchedEffect(epgSource, foregroundGeneration, currentAppEpochDay, startupEpgRestoring) {
+        val source = epgSource as? ContentSource.RemoteUrl ?: return@LaunchedEffect
+        if (!startupEpgRestoring && automaticEpgJob?.isActive != true) {
+            automaticEpgJob = loadEpg(source, save = false, background = true, refreshIfDue = true)
         }
     }
 
@@ -1239,6 +1275,7 @@ internal fun FortressTVApp(
         telemetryEnabled = saved.telemetry
         playbackMode = saved.playbackMode
         val savedEpg = saved.epg
+        startupEpgRestoring = savedEpg != null
         epgSource = savedEpg
         epgSourceName = savedEpg?.displayName
 
@@ -1290,24 +1327,23 @@ internal fun FortressTVApp(
         val startupEpgJob = if (savedEpg != null) {
             launch {
                 try {
-                    val cachedGuide = withContext(Dispatchers.IO) {
-                        val stream = when {
-                            savedEpg is ContentSource.LocalFile -> SourceReader.open(context, savedEpg)
-                            SourceReader.hasCache(context, "epg") -> SourceReader.openCached(context, "epg")
-                            else -> return@withContext null
+                    epgLoadMutex.withLock {
+                        val cachedGuide = withContext(Dispatchers.IO) {
+                            val stream = when {
+                                savedEpg is ContentSource.LocalFile -> SourceReader.open(context, savedEpg)
+                                SourceReader.hasCache(context, "epg") -> SourceReader.openCached(context, "epg")
+                                else -> return@withContext null
+                            }
+                            parseEpgWithCache(savedEpg, stream, allowCachedResult = true)
                         }
-                        parseEpgWithCache(savedEpg, stream, allowCachedResult = true)
+                        if (epgSource == savedEpg && cachedGuide != null) epgGuide = cachedGuide
                     }
-                    if (epgSource == savedEpg && cachedGuide != null) epgGuide = cachedGuide
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
                     // Keep source restoration independent of a missing or corrupt guide.
-                }
-                if (savedEpg is ContentSource.RemoteUrl && epgSource == savedEpg &&
-                    (epgGuide == null || epgGuide?.programmes.isNullOrEmpty())
-                ) {
-                    loadEpg(savedEpg, save = false, background = true).join()
+                } finally {
+                    startupEpgRestoring = false
                 }
             }
         } else null
@@ -1331,13 +1367,14 @@ internal fun FortressTVApp(
                 if (restoredEpg != null) {
                     startupEpgJob?.join()
                     withContext(Dispatchers.Main) {
-                        val needsLoad = epgSource != restoredEpg || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()
+                        val sourceChanged = epgSource != restoredEpg
+                        val needsLoad = sourceChanged || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()
                         epgSource = restoredEpg
                         epgSourceName = restoredEpg.displayName
                         epgSourceTimezone = settings.epgSourceTimezone().orEmpty()
                         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes()
                         if (needsLoad) {
-                            loadEpg(restoredEpg, save = false, background = true)
+                            loadEpg(restoredEpg, save = false, forceRefresh = sourceChanged, background = true)
                         }
                     }
                 }
@@ -2188,12 +2225,17 @@ internal fun FortressTVApp(
                     TextButton(onClick = {
                         showRemoveEpgConfirm = false
                         settings.clearEpg()
-                        SourceReader.deleteCache(context, "epg")
-                        EpgDiskCache.clear(context)
                         epgGuide = null
                         epgSource = null
                         epgSourceName = null
                         epgLastUpdate = 0L
+                        scope.launch(Dispatchers.IO) {
+                            epgLoadMutex.withLock {
+                                SourceReader.deleteCache(context, "epg")
+                                EpgDiskCache.clear(context)
+                                epgRepository.setGuide(null)
+                            }
+                        }
                         val accountState = accountRepository.getAccountState()
                         if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
                             scope.launch(Dispatchers.IO) {

@@ -13,6 +13,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 object SourceReader {
@@ -47,36 +48,53 @@ object SourceReader {
             }
             is ContentSource.RemoteUrl -> {
                 val targetFile = cacheFile(context, type)
-                val tempFile = File(context.filesDir, "temp_$type.dat")
-                try {
-                    retryTransientNetwork {
-                        openUrl(source.value).use { input ->
-                            tempFile.outputStream().use { output ->
-                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                                var total = 0L
-                                while (true) {
-                                    val read = input.read(buffer)
-                                    if (read < 0) break
-                                    total += read
-                                    require(total <= MAX_SOURCE_BYTES) { "Source exceeds the 100 MB safety limit" }
-                                    output.write(buffer, 0, read)
-                                }
-                            }
-                        }
-                    }
-                    Files.move(
-                        tempFile.toPath(),
-                        targetFile.toPath(),
-                        StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING
-                    )
-                } catch (failure: Throwable) {
-                    tempFile.delete()
-                    throw failure
-                }
+                replaceRemoteCache(source, targetFile) { _, publish -> publish() }
                 BufferedInputStream(FileInputStream(targetFile))
             }
             is ContentSource.Xtream -> error("Xtream sources use the catalogue API")
+        }
+    }
+
+    internal suspend fun <T> refreshRemoteCache(
+        context: Context,
+        source: ContentSource.RemoteUrl,
+        type: String,
+        consume: (File, publish: () -> Unit) -> T
+    ): T = replaceRemoteCache(source, cacheFile(context, type), consume)
+
+    internal suspend fun <T> replaceRemoteCache(
+        source: ContentSource.RemoteUrl,
+        targetFile: File,
+        consume: (File, publish: () -> Unit) -> T
+    ): T = withContext(Dispatchers.IO) {
+        val tempFile = File.createTempFile("source_", ".tmp", targetFile.parentFile)
+        try {
+            retryTransientNetwork {
+                openUrl(source.value).use { input ->
+                    tempFile.outputStream().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var total = 0L
+                        while (true) {
+                            ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            require(total <= MAX_SOURCE_BYTES) { "Source exceeds the 100 MB safety limit" }
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                }
+            }
+            ensureActive()
+            consume(tempFile) {
+                Files.move(
+                    tempFile.toPath(), targetFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING
+                )
+                Unit
+            }
+        } finally {
+            tempFile.delete()
         }
     }
 
@@ -86,9 +104,7 @@ object SourceReader {
 
     /** A cheap identity for cache invalidation; null means the provider cannot be trusted. */
     fun fingerprint(context: Context, source: ContentSource, type: String): String? = when (source) {
-        is ContentSource.RemoteUrl -> cacheFile(context, type).takeIf { it.exists() && it.length() > 0L }?.let {
-            "remote:${source.value}:${it.length()}:${it.lastModified()}"
-        }
+        is ContentSource.RemoteUrl -> fingerprint(source, cacheFile(context, type))
         is ContentSource.LocalFile -> runCatching {
             val uri = Uri.parse(source.value)
             context.contentResolver.query(
@@ -108,6 +124,11 @@ object SourceReader {
         }.getOrNull()
         is ContentSource.Xtream -> null
     }
+
+    internal fun fingerprint(source: ContentSource.RemoteUrl, file: File): String? =
+        file.takeIf { it.isFile && it.length() > 0L }?.let {
+            "remote:${source.value}:${it.length()}:${it.lastModified()}"
+        }
 
     suspend fun open(context: Context, source: ContentSource): InputStream = withContext(Dispatchers.IO) {
         when (source) {

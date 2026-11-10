@@ -13,6 +13,30 @@ class XmlTvStreamingParserTest {
     val tempFolder = TemporaryFolder()
 
     @Test
+    fun emptyRefreshLeavesThePreviousGenerationCurrent() {
+        val epgDir = tempFolder.root
+        val pointer = File(epgDir, "epg_current.bin").apply { writeText("previous") }
+        val staging = File(epgDir, "staging_empty")
+        val session = EpgDiskCache.StagingSession(
+            context = null,
+            epgDir = epgDir,
+            stagingDir = staging,
+            generationId = "empty",
+            fingerprint = "test",
+            timezoneId = "UTC",
+            loadedDays = 3,
+            todayEpochDay = 20700L
+        )
+        val result = runCatching {
+            session.commit(emptyMap(), requireProgrammes = true) { error("Empty guide must not be published") }
+        }
+        session.abort()
+
+        assertTrue(result.exceptionOrNull() is EmptyEpgDownloadException)
+        assertEquals("previous", pointer.readText())
+    }
+
+    @Test
     fun streamingParserSpansMidnightProgrammesAcrossIntersectingDayPartitions() {
         val xml = """
             <?xml version="1.0" encoding="UTF-8"?>

@@ -22,8 +22,21 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.InputStream
 import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 import java.util.zip.GZIPInputStream
+
+internal fun isEpgRefreshDue(
+    lastUpdateMillis: Long,
+    nowMillis: Long,
+    zone: ZoneId,
+    coversWindow: Boolean
+): Boolean {
+    if (lastUpdateMillis <= 0L || lastUpdateMillis > nowMillis) return true
+    val lastUpdateDay = Instant.ofEpochMilli(lastUpdateMillis).atZone(zone).toLocalDate()
+    val currentDay = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+    return lastUpdateDay < currentDay || (!coversWindow && nowMillis - lastUpdateMillis >= 60 * 60_000L)
+}
 
 /**
  * Workflow owner for XMLTV parsing, EPG multi-day sliding window,
@@ -88,6 +101,29 @@ internal class EpgSyncWorkflow(
                 }
             }
         }
+        parseGuide(stream, fingerprint, loadedDays, fallbackZone).also { epgRepository.setGuide(it) }
+    }
+
+    suspend fun refreshRemoteGuide(
+        source: ContentSource.RemoteUrl,
+        loadedDays: Int,
+        epgSourceTimezone: String
+    ): EpgGuide {
+        val zone = runCatching { ZoneId.of(epgSourceTimezone) }.getOrDefault(ZoneId.systemDefault())
+        return SourceReader.refreshRemoteCache(context, source, "epg") { staged, publish ->
+            val fingerprint = SourceReader.fingerprint(source, staged)?.let { "$it#days=$loadedDays#tz=${zone.id}" }
+            parseGuide(staged.inputStream(), fingerprint, loadedDays, zone, requireProgrammes = true, beforePublish = publish)
+        }
+    }
+
+    private fun parseGuide(
+        stream: InputStream,
+        fingerprint: String?,
+        loadedDays: Int,
+        fallbackZone: ZoneId,
+        requireProgrammes: Boolean = false,
+        beforePublish: () -> Unit = {}
+    ): EpgGuide {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         val manifest = BufferedInputStream(stream).use { buffered ->
             buffered.mark(2)
@@ -100,12 +136,12 @@ internal class EpgSyncWorkflow(
                 context = context,
                 fingerprint = fingerprint.orEmpty(),
                 loadedDays = loadedDays,
-                fallbackSourceZone = fallbackZone
+                fallbackSourceZone = fallbackZone,
+                requireProgrammes = requireProgrammes,
+                beforePublish = beforePublish
             )
         }
-        val guide = EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)
-        epgRepository.setGuide(guide)
-        guide
+        return EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)
     }
 
     fun saveMapping(

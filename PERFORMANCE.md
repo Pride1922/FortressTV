@@ -22,7 +22,9 @@ a real multi-day EPG before release.
 - Channel-logo crossfades are disabled and logos use low-cost filtering in scrolling lists.
 - XMLTV parsing runs on a background dispatcher and discards obsolete/far-future entries.
 - XMLTV retains the previous six hours and three calendar days (today plus two), even when
-  the source provides more; the remote source is still refreshed at most once every 24 hours.
+  the source provides more. Launch, resume, and day rollover can refresh a remote guide in
+  the background. A complete guide downloaded today is reused. If the guide still lacks a
+  day, a later resume can retry after one hour. Failed downloads preserve the usable cache.
 - Programme-grid block preparation runs on a background dispatcher.
 - The three-day programme grid is indexed in the background one day at a time. Today is
   published first; prepared days use a cached date/channel lookup when selected.

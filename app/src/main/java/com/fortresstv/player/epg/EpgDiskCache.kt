@@ -17,6 +17,8 @@ import java.util.zip.Deflater
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
+internal class EmptyEpgDownloadException : IllegalArgumentException("The XMLTV download contains no programmes in the guide window")
+
 object EpgDiskCache {
     private const val EPG_DIR = "epg"
     private const val CURRENT_FILE = "epg_current.bin"
@@ -134,8 +136,13 @@ object EpgDiskCache {
         }
 
         @Synchronized
-        fun commit(channels: Map<String, EpgChannel>): EpgManifest {
+        fun commit(
+            channels: Map<String, EpgChannel>,
+            requireProgrammes: Boolean = false,
+            beforePublish: () -> Unit = {}
+        ): EpgManifest {
             require(!isClosed) { "StagingSession already closed" }
+            if (requireProgrammes && daySpools.isEmpty()) throw EmptyEpgDownloadException()
             isClosed = true
 
             val partitions = mutableMapOf<Long, EpgPartitionMetadata>()
@@ -197,6 +204,7 @@ object EpgDiskCache {
                 val currentTemp = File(stagingDir, "current.tmp")
                 currentTemp.writeText(generationId, Charsets.UTF_8)
                 val currentFinal = File(epgDir, CURRENT_FILE)
+                beforePublish()
                 Files.move(
                     currentTemp.toPath(),
                     currentFinal.toPath(),
