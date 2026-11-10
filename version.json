@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC16",
-    "versionCode":  50,
-    "notes":  "FortressTV 2.0.0-RC16\n\nTrakt.tv Integration:\n- Trakt OAuth with RFC 7636 PKCE browser flow (one-tap authorization via fortresstv://trakt/callback).\n- Device code pairing with QR code and Android TV D-pad focus highlight.\n- Secure AndroidKeyStore AES-256 GCM token storage scoped to household profiles.\n- Real-time VOD scrobbler for movies and series with TMDB/IMDB verification, pause debounce, and buffering exclusion.\n- Full English and Portuguese (pt-PT) localization.\n\nArchitecture \u0026 Refactoring:\n- Complete modular split of MainActivity into dedicated feature screens.\n- Extracted lifecycle-owned workflows (SourceSync, EpgSync, SecurityLock, PlaybackOrchestration).",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC16/fortresstv.apk",
-    "sha256":  "04766FF8CFB078A678430C3C013C73E36FD4ADC6997A346D4C8127DF9C9769E2"
+    "version":  "2.0.0-RC17",
+    "versionCode":  51,
+    "notes":  "FortressTV 2.0.0-RC17\n\nTrakt.tv Features:\n- Two-Way Watched History Sync: Import watched movies and TV series episodes directly from Trakt with fast local catalog matching.\n- Manual Watched/Unwatched Toggle Sync: Marking movies or episodes watched or unwatched in FortressTV updates your Trakt watch history in real time.\n- Trakt Watchlist: Dedicated customizable Home screen shelf featuring items from your Trakt Watchlist matched against your active VOD sources.\n- Series Episodes auto-match: Opening series episodes automatically correlates season and episode progress against Trakt history.\n- Trakt Sync Controls: Dedicated Watchlist and Watched History manual sync triggers and status reporting in Settings.\n- Full English and Portuguese (pt-PT) localization.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC17/fortresstv.apk",
+    "sha256":  "14BC2B09C402B7CA9B311B5A2452136A9FAE259A1344DA70E3EC6858A4114178"
 }
