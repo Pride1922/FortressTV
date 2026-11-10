@@ -584,7 +584,7 @@ internal fun FortressLibrary(
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
     onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
-    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode, XtreamSeries?) -> Unit,
     onMarkItemWatched: (String, Boolean) -> Unit,
     onRetryLoad: (() -> Unit)?,
     maximumAge: Int? = null,
@@ -818,11 +818,11 @@ internal fun FortressLibrary(
                         onToggleMovieWatched(sourceId, movie)
                     },
                     onToggleSeriesFollow = onToggleSeriesFollow,
-                    onToggleEpisodeWatched = { sourceId, ep ->
+                    onToggleEpisodeWatched = { sourceId, ep, series ->
                         val key = ep.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         if (willBeWatched) progressEntries = progressStore.remove(key)
-                        onToggleEpisodeWatched(sourceId, ep)
+                        onToggleEpisodeWatched(sourceId, ep, series)
                     },
                     onPlayMovie = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
@@ -1022,11 +1022,11 @@ internal fun FortressLibrary(
                     },
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleFollow = onToggleSeriesFollow,
-                    onToggleEpisodeWatched = { sourceId, ep ->
+                    onToggleEpisodeWatched = { sourceId, ep, series ->
                         val key = ep.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         if (willBeWatched) progressEntries = progressStore.remove(key)
-                        onToggleEpisodeWatched(sourceId, ep)
+                        onToggleEpisodeWatched(sourceId, ep, series)
                     },
                     onPlay = { catalog, series, episode, url ->
                         vodPlayback = VodPlaybackRequest(
@@ -1074,11 +1074,11 @@ internal fun FortressLibrary(
                         onToggleMovieWatched(sourceId, movie)
                     },
                     onToggleSeriesFollow = onToggleSeriesFollow,
-                    onToggleEpisodeWatched = { sourceId, ep ->
+                    onToggleEpisodeWatched = { sourceId, ep, series ->
                         val key = ep.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         if (willBeWatched) progressEntries = progressStore.remove(key)
-                        onToggleEpisodeWatched(sourceId, ep)
+                        onToggleEpisodeWatched(sourceId, ep, series)
                     },
                     onPlayMovie = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream

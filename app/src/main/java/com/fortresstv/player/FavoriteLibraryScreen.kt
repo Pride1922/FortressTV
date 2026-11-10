@@ -404,7 +404,7 @@ internal fun FavoriteLibraryScreen(
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
     onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
-    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode, XtreamSeries?) -> Unit,
     onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
     onPlayEpisode: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
     onWatch: (PlaylistChannel) -> Unit
@@ -651,7 +651,7 @@ internal fun FavoriteLibraryScreen(
                 watchedItemIds = watchedItemIds,
                 progressEntries = progressEntries,
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
-                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
+                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 onDismiss = { selectedSeries = null },
                 onPlay = { episode, url ->
                     selectedSeries = null

@@ -400,6 +400,11 @@ interface Strings {
     val traktWatchlistSynced: String
     val traktAddToWatchlist: String
     val traktRemoveFromWatchlist: String
+    val traktWatchedHistory: String
+    val traktSyncWatchedHistory: String
+    val traktSyncingWatchedHistory: String
+    val traktWatchedHistorySynced: String
+    val traktWatchedHistoryEmpty: String
     val watchTrailer: String
     val genres: String
     val tabAbout: String
@@ -947,6 +952,11 @@ object EnglishStrings : Strings {
     override val traktWatchlistSynced = "Watchlist synced (%d items)"
     override val traktAddToWatchlist = "Add to Trakt Watchlist"
     override val traktRemoveFromWatchlist = "Remove from Trakt Watchlist"
+    override val traktWatchedHistory = "Watched History"
+    override val traktSyncWatchedHistory = "Sync Watched History"
+    override val traktSyncingWatchedHistory = "Syncing watched history with Trakt..."
+    override val traktWatchedHistorySynced = "Watched history synced (%d items matched)"
+    override val traktWatchedHistoryEmpty = "No watched items synced yet."
     override val watchTrailer = "Watch Trailer"
     override val genres = "Genres"
     override val tabAbout = "About"
@@ -1497,6 +1507,11 @@ object PortugueseStrings : Strings {
     override val traktWatchlistSynced = "Lista sincronizada (%d itens)"
     override val traktAddToWatchlist = "Adicionar à Lista do Trakt"
     override val traktRemoveFromWatchlist = "Remover da Lista do Trakt"
+    override val traktWatchedHistory = "Histórico de Visualizações"
+    override val traktSyncWatchedHistory = "Sincronizar Histórico"
+    override val traktSyncingWatchedHistory = "A sincronizar histórico com o Trakt..."
+    override val traktWatchedHistorySynced = "Histórico sincronizado (%d itens correspondidos)"
+    override val traktWatchedHistoryEmpty = "Nenhum item visto sincronizado ainda."
     override val watchTrailer = "Ver Trailer"
     override val genres = "Géneros"
     override val tabAbout = "Sobre"

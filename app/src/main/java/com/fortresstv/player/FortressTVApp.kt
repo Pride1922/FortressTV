@@ -1666,6 +1666,15 @@ internal fun FortressTVApp(
                         val key = movie.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                        val currentTraktNs = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                        scope.launch(Dispatchers.IO) {
+                            com.fortresstv.player.trakt.TraktWatchedSyncService.syncMovieWatched(
+                                context = context,
+                                profileNamespace = currentTraktNs,
+                                movie = movie,
+                                watched = willBeWatched
+                            )
+                        }
                         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                             cloudLibrarySyncService.recordLibraryMutation(
                                 profileId = activeHouseholdProfile.id,
@@ -1707,16 +1716,26 @@ internal fun FortressTVApp(
                             )
                         }
                     },
-                    onToggleEpisodeWatched = { sourceId, episode ->
+                    onToggleEpisodeWatched = { sourceId, episode, series ->
                         val key = episode.libraryId(sourceId)
                         val willBeWatched = key !in watchedItemIds
                         watchedItemIds = userLibrary.setItemWatched(key, willBeWatched)
+                        val currentTraktNs = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                        scope.launch(Dispatchers.IO) {
+                            com.fortresstv.player.trakt.TraktWatchedSyncService.syncEpisodeWatched(
+                                context = context,
+                                profileNamespace = currentTraktNs,
+                                series = series,
+                                episode = episode,
+                                watched = willBeWatched
+                            )
+                        }
                         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                             cloudLibrarySyncService.recordLibraryMutation(
                                 profileId = activeHouseholdProfile.id,
                                 sourceId = sourceId,
                                 itemKind = "episode",
-                                itemId = episode.id.toString(),
+                                itemId = episode.id,
                                 isFavourite = false,
                                 isWatchlisted = false,
                                 isWatched = willBeWatched
@@ -2109,7 +2128,20 @@ internal fun FortressTVApp(
                     currentEpg?.let { loadEpg(it, save = false, forceRefresh = false) }
                 },
                 onOpenCustomizeHome = { showCustomizeHomeDialog = true },
-                traktNamespace = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                traktNamespace = profileProgressNamespace(currentUserId, activeHouseholdProfile.id),
+                onSyncWatchedHistory = {
+                    val currentTraktNs = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                    val result = com.fortresstv.player.trakt.TraktWatchedSyncService.syncWatchedHistory(
+                        context = context,
+                        profileNamespace = currentTraktNs,
+                        catalogs = xtreamCatalogs.values.toList(),
+                        userLibrary = userLibrary
+                    )
+                    if (result.isSuccess) {
+                        watchedItemIds = userLibrary.watchedItemIds()
+                    }
+                    result
+                }
             )
         }
 

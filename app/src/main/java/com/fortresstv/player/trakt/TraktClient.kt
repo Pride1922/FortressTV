@@ -351,6 +351,86 @@ open class TraktClient(
         }
     }
 
+    /**
+     * Fetches all watched movies for the authenticated user from Trakt.
+     */
+    open fun fetchWatchedMovies(accessToken: String, clientId: String): TraktAuthResult<List<TraktWatchedMovie>> {
+        val url = "${apiHost.trimEnd('/')}/sync/watched/movies"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktWatchedMovie>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktWatchedMovie.fromJson(obj)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch watched movies: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching watched movies: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Fetches all watched shows for the authenticated user from Trakt (including seasons & episodes).
+     */
+    open fun fetchWatchedShows(accessToken: String, clientId: String): TraktAuthResult<List<TraktWatchedShow>> {
+        val url = "${apiHost.trimEnd('/')}/sync/watched/shows"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktWatchedShow>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktWatchedShow.fromJson(obj)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch watched shows: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching watched shows: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Adds items (movies or episodes) to the user's Trakt watch history.
+     */
+    open fun addToHistory(payload: JSONObject, accessToken: String, clientId: String): TraktAuthResult<Boolean> {
+        val url = "${apiHost.trimEnd('/')}/sync/history"
+        return try {
+            val response = executePost(url, payload.toString(), accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                TraktAuthResult.Success(true)
+            } else {
+                TraktAuthResult.Failure("Failed to add to watch history: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error adding to watch history: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Removes items (movies or episodes) from the user's Trakt watch history.
+     */
+    open fun removeFromHistory(payload: JSONObject, accessToken: String, clientId: String): TraktAuthResult<Boolean> {
+        val url = "${apiHost.trimEnd('/')}/sync/history/remove"
+        return try {
+            val response = executePost(url, payload.toString(), accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                TraktAuthResult.Success(true)
+            } else {
+                TraktAuthResult.Failure("Failed to remove from watch history: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error removing from watch history: ${e.message}", cause = e)
+        }
+    }
+
     // --- HTTP Helpers using HttpURLConnection ---
 
     open fun executePost(

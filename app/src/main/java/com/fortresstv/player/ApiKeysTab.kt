@@ -395,7 +395,8 @@ internal fun ApiKeysTab(
     onIntroDbSettingsChanged: (TheIntroDbSettings) -> Unit,
     omdbSettings: OmdbSettings = OmdbSettings(),
     onOmdbSettingsChanged: (OmdbSettings) -> Unit = {},
-    traktNamespace: String = "local"
+    traktNamespace: String = "local",
+    onSyncWatchedHistory: (suspend () -> Result<Int>)? = null
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -952,6 +953,78 @@ internal fun ApiKeysTab(
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(strings.traktSyncWatchlist)
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                var isSyncingWatchedHistory by remember { mutableStateOf(false) }
+                var watchedHistorySyncStatus by remember { mutableStateOf<String?>(null) }
+                val watchedStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktWatchedStore(context.applicationContext, traktNamespace) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.traktWatchedHistory,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        val lastSyncMs = watchedStore.lastSyncedEpochMs()
+                        val subtitle = if (isSyncingWatchedHistory) {
+                            strings.traktSyncingWatchedHistory
+                        } else if (watchedHistorySyncStatus != null) {
+                            watchedHistorySyncStatus!!
+                        } else if (lastSyncMs > 0L) {
+                            val count = watchedStore.loadWatchedMovies().size + watchedStore.loadWatchedShows().size
+                            strings.traktWatchedHistorySynced.format(count)
+                        } else {
+                            strings.traktWatchedHistoryEmpty
+                        }
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            isSyncingWatchedHistory = true
+                            watchedHistorySyncStatus = null
+                            coroutineScope.launch {
+                                val result = if (onSyncWatchedHistory != null) {
+                                    onSyncWatchedHistory()
+                                } else {
+                                    com.fortresstv.player.trakt.TraktWatchedSyncService.syncWatchedHistory(context, traktNamespace)
+                                }
+                                isSyncingWatchedHistory = false
+                                watchedHistorySyncStatus = if (result.isSuccess) {
+                                    strings.traktWatchedHistorySynced.format(result.getOrDefault(0))
+                                } else {
+                                    result.exceptionOrNull()?.message ?: "Sync error"
+                                }
+                            }
+                        },
+                        enabled = !isSyncingWatchedHistory
+                    ) {
+                        if (isSyncingWatchedHistory) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(strings.traktSyncWatchedHistory)
                     }
                 }
             } else {

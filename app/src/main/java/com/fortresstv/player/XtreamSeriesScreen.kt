@@ -398,7 +398,7 @@ internal fun XtreamSeriesScreen(
     onContinueWatching: (VodProgressEntry) -> Unit,
     onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     onToggleFollow: (String, XtreamSeries) -> Unit,
-    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode, XtreamSeries?) -> Unit,
     onPlay: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -595,7 +595,7 @@ internal fun XtreamSeriesScreen(
                 watchedItemIds = watchedItemIds,
                 progressEntries = progressEntries,
                 onToggleFollow = { onToggleFollow(entry.catalog.sourceId, entry.series) },
-                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
+                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 onDismiss = { selected = null },
                 onPlay = { episode, url ->
                     selected = null

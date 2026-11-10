@@ -390,7 +390,8 @@ internal fun SeriesEpisodesDialog(
     onToggleFollow: () -> Unit,
     onToggleEpisodeWatched: (XtreamEpisode) -> Unit,
     onDismiss: () -> Unit,
-    onPlay: (XtreamEpisode, String) -> Unit
+    onPlay: (XtreamEpisode, String) -> Unit,
+    traktNamespace: String = "local"
 ) {
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
@@ -447,6 +448,28 @@ internal fun SeriesEpisodesDialog(
             .onSuccess { details = it }
             .onFailure { loadError = true }
     }
+    LaunchedEffect(details, traktNamespace) {
+        val loadedEpisodes = details?.episodes
+        if (!loadedEpisodes.isNullOrEmpty()) {
+            withContext(Dispatchers.IO) {
+                val matched = com.fortresstv.player.trakt.TraktWatchedSyncService.matchWatchedEpisodesForSeries(
+                    context = context,
+                    profileNamespace = traktNamespace,
+                    series = series,
+                    episodes = loadedEpisodes
+                )
+                for (ep in matched) {
+                    val libId = ep.libraryId(sourceId)
+                    if (libId !in watchedItemIds) {
+                        withContext(Dispatchers.Main) {
+                            onToggleEpisodeWatched(ep)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     val episodes = details?.episodes
     val sortedEpisodes = remember(episodes) {
         episodes?.sortedWith(compareBy({ it.season }, { it.episodeNumber })) ?: emptyList()

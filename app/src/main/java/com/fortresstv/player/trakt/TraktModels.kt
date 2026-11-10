@@ -201,3 +201,199 @@ data class TraktWatchlistItem(
         }
     }
 }
+
+data class TraktWatchedMovie(
+    val title: String,
+    val year: Int?,
+    val tmdbId: String?,
+    val imdbId: String?,
+    val traktId: Int?,
+    val plays: Int = 1,
+    val lastWatchedAt: String? = null
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("title", title)
+        year?.let { put("year", it) }
+        tmdbId?.let { put("tmdb", it) }
+        imdbId?.let { put("imdb", it) }
+        traktId?.let { put("trakt", it) }
+        put("plays", plays)
+        lastWatchedAt?.let { put("last_watched_at", it) }
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): TraktWatchedMovie? {
+            val movie = json.optJSONObject("movie") ?: json
+            val title = movie.optString("title").ifBlank { return null }
+            val year = movie.optInt("year").takeIf { it > 1800 }
+            val ids = movie.optJSONObject("ids")
+            val tmdbId = ids?.optInt("tmdb")?.takeIf { it > 0 }?.toString()
+                ?: ids?.optString("tmdb")?.takeIf { it.isNotBlank() && it != "0" }
+                ?: json.optString("tmdb").takeIf { it.isNotBlank() }
+            val imdbId = ids?.optString("imdb")?.takeIf { it.isNotBlank() }
+                ?: json.optString("imdb").takeIf { it.isNotBlank() }
+            val traktId = ids?.optInt("trakt")?.takeIf { it > 0 }
+                ?: json.optInt("trakt").takeIf { it > 0 }
+            val plays = json.optInt("plays", 1)
+            val lastWatchedAt = json.optString("last_watched_at").takeIf { it.isNotBlank() }
+
+            return TraktWatchedMovie(
+                title = title,
+                year = year,
+                tmdbId = tmdbId,
+                imdbId = imdbId,
+                traktId = traktId,
+                plays = plays,
+                lastWatchedAt = lastWatchedAt
+            )
+        }
+    }
+}
+
+data class TraktWatchedShow(
+    val title: String,
+    val year: Int?,
+    val tmdbId: String?,
+    val imdbId: String?,
+    val traktId: Int?,
+    val seasons: Map<Int, Set<Int>> = emptyMap(), // seasonNumber -> Set of episode numbers
+    val plays: Int = 1,
+    val lastWatchedAt: String? = null
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("title", title)
+        year?.let { put("year", it) }
+        tmdbId?.let { put("tmdb", it) }
+        imdbId?.let { put("imdb", it) }
+        traktId?.let { put("trakt", it) }
+        put("plays", plays)
+        lastWatchedAt?.let { put("last_watched_at", it) }
+        val seasonsObj = JSONObject()
+        for ((sNum, eps) in seasons) {
+            val epsArr = org.json.JSONArray()
+            eps.forEach { epsArr.put(it) }
+            seasonsObj.put(sNum.toString(), epsArr)
+        }
+        put("seasons_map", seasonsObj)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): TraktWatchedShow? {
+            val show = json.optJSONObject("show") ?: json
+            val title = show.optString("title").ifBlank { return null }
+            val year = show.optInt("year").takeIf { it > 1800 }
+            val ids = show.optJSONObject("ids")
+            val tmdbId = ids?.optInt("tmdb")?.takeIf { it > 0 }?.toString()
+                ?: ids?.optString("tmdb")?.takeIf { it.isNotBlank() && it != "0" }
+                ?: json.optString("tmdb").takeIf { it.isNotBlank() }
+            val imdbId = ids?.optString("imdb")?.takeIf { it.isNotBlank() }
+                ?: json.optString("imdb").takeIf { it.isNotBlank() }
+            val traktId = ids?.optInt("trakt")?.takeIf { it > 0 }
+                ?: json.optInt("trakt").takeIf { it > 0 }
+            val plays = json.optInt("plays", 1)
+            val lastWatchedAt = json.optString("last_watched_at").takeIf { it.isNotBlank() }
+
+            val seasonsMap = mutableMapOf<Int, MutableSet<Int>>()
+
+            // Check if serialized from toJson() with seasons_map
+            val seasonsMapObj = json.optJSONObject("seasons_map")
+            if (seasonsMapObj != null) {
+                val keys = seasonsMapObj.keys()
+                while (keys.hasNext()) {
+                    val sKey = keys.next()
+                    val sNum = sKey.toIntOrNull() ?: continue
+                    val epsArr = seasonsMapObj.optJSONArray(sKey) ?: continue
+                    val epSet = seasonsMap.getOrPut(sNum) { mutableSetOf() }
+                    for (i in 0 until epsArr.length()) {
+                        epSet.add(epsArr.optInt(i))
+                    }
+                }
+            } else {
+                // Parse standard Trakt API seasons array: [{"number": 1, "episodes": [{"number": 1}]}]
+                val seasonsArr = json.optJSONArray("seasons")
+                if (seasonsArr != null) {
+                    for (sIdx in 0 until seasonsArr.length()) {
+                        val sObj = seasonsArr.optJSONObject(sIdx) ?: continue
+                        val sNum = sObj.optInt("number", -1)
+                        if (sNum < 0) continue
+                        val epSet = seasonsMap.getOrPut(sNum) { mutableSetOf() }
+                        val epsArr = sObj.optJSONArray("episodes")
+                        if (epsArr != null) {
+                            for (eIdx in 0 until epsArr.length()) {
+                                val epObj = epsArr.optJSONObject(eIdx) ?: continue
+                                val epNum = epObj.optInt("number", -1)
+                                if (epNum >= 0) epSet.add(epNum)
+                            }
+                        }
+                    }
+                }
+            }
+
+            return TraktWatchedShow(
+                title = title,
+                year = year,
+                tmdbId = tmdbId,
+                imdbId = imdbId,
+                traktId = traktId,
+                seasons = seasonsMap,
+                plays = plays,
+                lastWatchedAt = lastWatchedAt
+            )
+        }
+    }
+}
+
+object TraktSyncPayloadBuilder {
+    fun moviePayload(
+        title: String,
+        year: Int?,
+        tmdbId: String?,
+        imdbId: String?
+    ): JSONObject {
+        val ids = JSONObject()
+        tmdbId?.toIntOrNull()?.let { ids.put("tmdb", it) }
+        imdbId?.takeIf { it.isNotBlank() }?.let { ids.put("imdb", it) }
+
+        val movieObj = JSONObject().apply {
+            put("title", title)
+            year?.let { put("year", it) }
+            put("ids", ids)
+        }
+        val arr = org.json.JSONArray().apply { put(movieObj) }
+        return JSONObject().apply { put("movies", arr) }
+    }
+
+    fun episodePayload(
+        showTitle: String,
+        showYear: Int?,
+        showTmdbId: String?,
+        showImdbId: String?,
+        seasonNumber: Int,
+        episodeNumber: Int
+    ): JSONObject {
+        val ids = JSONObject()
+        showTmdbId?.toIntOrNull()?.let { ids.put("tmdb", it) }
+        showImdbId?.takeIf { it.isNotBlank() }?.let { ids.put("imdb", it) }
+
+        val episodeObj = JSONObject().apply {
+            put("number", episodeNumber)
+        }
+        val episodesArr = org.json.JSONArray().apply { put(episodeObj) }
+
+        val seasonObj = JSONObject().apply {
+            put("number", seasonNumber)
+            put("episodes", episodesArr)
+        }
+        val seasonsArr = org.json.JSONArray().apply { put(seasonObj) }
+
+        val showObj = JSONObject().apply {
+            put("title", showTitle)
+            showYear?.let { put("year", it) }
+            put("ids", ids)
+            put("seasons", seasonsArr)
+        }
+        val showsArr = org.json.JSONArray().apply { put(showObj) }
+
+        return JSONObject().apply { put("shows", showsArr) }
+    }
+}

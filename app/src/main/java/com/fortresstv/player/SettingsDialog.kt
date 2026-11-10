@@ -453,7 +453,8 @@ internal fun SettingsDialog(
     onRequestAdultAuth: (((String?) -> Unit)) -> Unit = {},
     onEpgLoadedDaysChanged: (Int) -> Unit,
     onOpenCustomizeHome: (() -> Unit)? = null,
-    traktNamespace: String = "local"
+    traktNamespace: String = "local",
+    onSyncWatchedHistory: (suspend () -> Result<Int>)? = null
 ) {
     val strings = LocalAppStrings.current
     val configuration = LocalConfiguration.current
@@ -723,7 +724,8 @@ internal fun SettingsDialog(
                                     onIntroDbSettingsChanged = onIntroDbSettingsChanged,
                                     omdbSettings = omdbSettings,
                                     onOmdbSettingsChanged = onOmdbSettingsChanged,
-                                    traktNamespace = traktNamespace
+                                    traktNamespace = traktNamespace,
+                                    onSyncWatchedHistory = onSyncWatchedHistory
                                 )
                                 5 -> AccountTab(
                                     showHeader = false,
@@ -858,7 +860,8 @@ internal fun SettingsDialog(
                                 onIntroDbSettingsChanged = onIntroDbSettingsChanged,
                                 omdbSettings = omdbSettings,
                                 onOmdbSettingsChanged = onOmdbSettingsChanged,
-                                traktNamespace = traktNamespace
+                                traktNamespace = traktNamespace,
+                                onSyncWatchedHistory = onSyncWatchedHistory
                             )
                             5 -> AccountTab(
                                 showHeader = false,

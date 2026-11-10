@@ -420,4 +420,113 @@ class TraktClientTest {
         assertTrue(result is TraktAuthResult.Success)
         assertTrue((result as TraktAuthResult.Success).data)
     }
+
+    @Test
+    fun fetchWatchedMoviesParsesResponse() {
+        val client = MockTraktClient()
+        client.getHandler = { url, accessToken, clientId ->
+            assertEquals("https://api.trakt.tv/sync/watched/movies", url)
+            assertEquals("token_watched", accessToken)
+            assertEquals("client_watched", clientId)
+            val json = """
+                [
+                    {
+                        "plays": 1,
+                        "last_watched_at": "2024-01-01T00:00:00.000Z",
+                        "movie": {
+                            "title": "Dune: Part Two",
+                            "year": 2024,
+                            "ids": {
+                                "trakt": 599144,
+                                "imdb": "tt15239678",
+                                "tmdb": 693134
+                            }
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchWatchedMovies("token_watched", "client_watched")
+        assertTrue(result is TraktAuthResult.Success)
+        val movies = (result as TraktAuthResult.Success).data
+        assertEquals(1, movies.size)
+        assertEquals("Dune: Part Two", movies[0].title)
+        assertEquals(2024, movies[0].year)
+        assertEquals("693134", movies[0].tmdbId)
+        assertEquals("tt15239678", movies[0].imdbId)
+    }
+
+    @Test
+    fun fetchWatchedShowsParsesResponse() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/sync/watched/shows", url)
+            val json = """
+                [
+                    {
+                        "plays": 10,
+                        "last_watched_at": "2024-01-02T00:00:00.000Z",
+                        "show": {
+                            "title": "Succession",
+                            "year": 2018,
+                            "ids": {
+                                "trakt": 128509,
+                                "imdb": "tt7660850",
+                                "tmdb": 76331
+                            }
+                        },
+                        "seasons": [
+                            {
+                                "number": 1,
+                                "episodes": [
+                                    { "number": 1, "plays": 1 },
+                                    { "number": 2, "plays": 1 }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchWatchedShows("tok", "cid")
+        assertTrue(result is TraktAuthResult.Success)
+        val shows = (result as TraktAuthResult.Success).data
+        assertEquals(1, shows.size)
+        assertEquals("Succession", shows[0].title)
+        assertEquals(setOf(1, 2), shows[0].seasons[1])
+    }
+
+    @Test
+    fun addToHistoryAndRemoveFromHistory() {
+        val client = MockTraktClient()
+        var addedCalled = false
+        var removedCalled = false
+
+        client.postHandler = { url, body, _ ->
+            when (url) {
+                "https://api.trakt.tv/sync/history" -> {
+                    addedCalled = true
+                    TraktHttpResponse(201, """{"added":{"movies":1}}""", emptyMap())
+                }
+                "https://api.trakt.tv/sync/history/remove" -> {
+                    removedCalled = true
+                    TraktHttpResponse(200, """{"deleted":{"movies":1}}""", emptyMap())
+                }
+                else -> TraktHttpResponse(404, "", emptyMap())
+            }
+        }
+
+        val payload = TraktSyncPayloadBuilder.moviePayload("Test", 2024, "123", "tt123")
+        val addRes = client.addToHistory(payload, "tok", "cid")
+        assertTrue(addRes is TraktAuthResult.Success)
+        assertTrue(addedCalled)
+
+        val remRes = client.removeFromHistory(payload, "tok", "cid")
+        assertTrue(remRes is TraktAuthResult.Success)
+        assertTrue(removedCalled)
+    }
 }

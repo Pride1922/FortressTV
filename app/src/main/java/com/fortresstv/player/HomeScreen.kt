@@ -446,7 +446,7 @@ internal fun HomeScreen(
     onToggleMovieWatchlist: (String, XtreamMovie) -> Unit,
     onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onToggleSeriesFollow: (String, XtreamSeries) -> Unit,
-    onToggleEpisodeWatched: (String, XtreamEpisode) -> Unit,
+    onToggleEpisodeWatched: (String, XtreamEpisode, XtreamSeries?) -> Unit,
     onPlayMovie: (XtreamCatalog, XtreamMovie) -> Unit,
     onPlayEpisode: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
     onWatchChannel: (PlaylistChannel) -> Unit,
@@ -1361,7 +1361,8 @@ internal fun HomeScreen(
                 watchedItemIds = watchedItemIds,
                 progressEntries = progressEntries,
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
-                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it) },
+                onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
+                traktNamespace = traktNamespace,
                 onDismiss = { selectedSeries = null },
                 onPlay = { episode, url ->
                     selectedSeries = null
