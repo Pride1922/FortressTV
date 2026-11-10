@@ -412,6 +412,13 @@ interface Strings {
     val traktSyncingRecommendations: String
     val traktRecommendationsSynced: String
     val traktHideRecommendation: String
+    val traktHideRecommendationConfirmation: String
+    val traktHiddenRecommendations: String
+    val traktNoHiddenRecommendations: String
+    val traktRestoreRecommendation: String
+    val traktRecommendationActionFailed: String
+    val traktHiddenRecommendationsFailed: String
+    val traktLoadMoreHiddenRecommendations: String
     val traktHidingRecommendation: String
     val watchTrailer: String
     val openInYouTube: String
@@ -976,6 +983,13 @@ object EnglishStrings : Strings {
     override val traktSyncingRecommendations = "Syncing recommendations with Trakt..."
     override val traktRecommendationsSynced = "Recommendations synced (%d items)"
     override val traktHideRecommendation = "Hide on Trakt"
+    override val traktHideRecommendationConfirmation = "Hide this title from your Trakt recommendations? You can bring it back from Hidden recommendations on Home."
+    override val traktHiddenRecommendations = "Hidden recommendations"
+    override val traktNoHiddenRecommendations = "You have no hidden Trakt recommendations."
+    override val traktRestoreRecommendation = "Restore"
+    override val traktRecommendationActionFailed = "Trakt could not update this recommendation. Try again."
+    override val traktHiddenRecommendationsFailed = "Could not load hidden recommendations from Trakt."
+    override val traktLoadMoreHiddenRecommendations = "Load more"
     override val traktHidingRecommendation = "Hiding recommendation..."
     override val watchTrailer = "Watch Trailer"
     override val openInYouTube = "Open in YouTube"
@@ -1543,6 +1557,13 @@ object PortugueseStrings : Strings {
     override val traktSyncingRecommendations = "A sincronizar recomendações com o Trakt..."
     override val traktRecommendationsSynced = "Recomendações sincronizadas (%d itens)"
     override val traktHideRecommendation = "Ocultar no Trakt"
+    override val traktHideRecommendationConfirmation = "Ocultar este título das suas recomendações no Trakt? Pode recuperá-lo em Recomendações ocultas, no Início."
+    override val traktHiddenRecommendations = "Recomendações ocultas"
+    override val traktNoHiddenRecommendations = "Não tem recomendações ocultas no Trakt."
+    override val traktRestoreRecommendation = "Restaurar"
+    override val traktRecommendationActionFailed = "O Trakt não conseguiu atualizar esta recomendação. Tente novamente."
+    override val traktHiddenRecommendationsFailed = "Não foi possível carregar as recomendações ocultas do Trakt."
+    override val traktLoadMoreHiddenRecommendations = "Carregar mais"
     override val traktHidingRecommendation = "A ocultar recomendação..."
     override val watchTrailer = "Ver Trailer"
     override val openInYouTube = "Abrir no YouTube"

@@ -623,80 +623,16 @@ internal fun MovieDetailsDialog(
 
                         Spacer(Modifier.height(12.dp))
 
-                        // Actions for phones: Primary Watch Now button full width + secondary row
-                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = onWatch,
-                                modifier = Modifier.fillMaxWidth().height(48.dp)
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(strings.watchNow, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            }
-                            if (onHideOnTrakt != null) {
-                                OutlinedButton(
-                                    onClick = onHideOnTrakt,
-                                    modifier = Modifier.fillMaxWidth().height(36.dp)
-                                ) {
-                                    Icon(Icons.Default.VisibilityOff, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(strings.traktHideRecommendation, fontSize = 12.sp)
-                                }
-                            }
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = onToggleWatchlist,
-                                    modifier = Modifier.weight(1f).height(44.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp)
-                                ) {
-                                    Icon(
-                                        if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        fontSize = 12.sp
-                                    )
-                                }
-                                if (!effectiveTrailer.isNullOrBlank()) {
-                                    OutlinedButton(
-                                        onClick = { activeTrailer = effectiveTrailer },
-                                        modifier = Modifier.weight(1f).height(44.dp),
-                                        contentPadding = PaddingValues(horizontal = 6.dp)
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(strings.watchTrailer, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp)
-                                    }
-                                }
-                                OutlinedButton(
-                                    onClick = onToggleWatched,
-                                    modifier = Modifier.weight(1f).height(44.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp)
-                                ) {
-                                    Icon(
-                                        if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
-                                        contentDescription = null,
-                                        tint = if (isWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        if (isWatched) strings.markUnwatched else strings.markWatched,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        fontSize = 12.sp
-                                    )
-                                }
-                            }
-                        }
+                        MovieCardActions(
+                            isWatched = isWatched,
+                            isWatchlisted = isWatchlisted,
+                            watchFocus = watchButtonFocusRequester,
+                            onWatch = onWatch,
+                            onTrailer = effectiveTrailer?.takeIf { it.isNotBlank() }?.let { url -> { activeTrailer = url } },
+                            onToggleWatchlist = onToggleWatchlist,
+                            onToggleWatched = onToggleWatched,
+                            onHideRecommendation = onHideOnTrakt
+                        )
                     }
                 } else {
                     Row(
@@ -791,100 +727,16 @@ internal fun MovieDetailsDialog(
                                 }
                             }
                             Spacer(Modifier.height(24.dp))
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                if (!effectiveTrailer.isNullOrBlank()) {
-                                    OutlinedButton(
-                                        onClick = { activeTrailer = effectiveTrailer },
-                                        modifier = Modifier.weight(1f).height(54.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp)
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(strings.watchTrailer, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                                    }
-                                }
-                                OutlinedButton(
-                                    onClick = onToggleWatchlist,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(54.dp)
-                                        .tvFocusHighlight(
-                                            shape = ButtonDefaults.outlinedShape,
-                                            scaleOnFocus = if (isTv) 1.04f else 1.0f
-                                        )
-                                ) {
-                                    Icon(
-                                        if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
-                                        contentDescription = null
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                OutlinedButton(
-                                    onClick = onToggleWatched,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(54.dp)
-                                        .tvFocusHighlight(
-                                            shape = ButtonDefaults.outlinedShape,
-                                            scaleOnFocus = if (isTv) 1.04f else 1.0f
-                                        )
-                                ) {
-                                    Icon(
-                                        if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
-                                        contentDescription = null,
-                                        tint = if (isWatched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        if (isWatched) strings.markUnwatched else strings.markWatched,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Button(
-                                    onClick = onWatch,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(54.dp)
-                                        .focusRequester(watchButtonFocusRequester)
-                                        .tvFocusHighlight(
-                                            shape = ButtonDefaults.shape,
-                                            scaleOnFocus = if (isTv) 1.05f else 1.0f
-                                        )
-                                ) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(strings.watchNow, fontWeight = FontWeight.Bold)
-                                }
-                                if (onHideOnTrakt != null) {
-                                    OutlinedButton(
-                                        onClick = onHideOnTrakt,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(54.dp)
-                                            .tvFocusHighlight(
-                                                shape = ButtonDefaults.outlinedShape,
-                                                scaleOnFocus = if (isTv) 1.04f else 1.0f
-                                            )
-                                    ) {
-                                        Icon(Icons.Default.VisibilityOff, contentDescription = null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            strings.traktHideRecommendation,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
+                            MovieCardActions(
+                                isWatched = isWatched,
+                                isWatchlisted = isWatchlisted,
+                                watchFocus = watchButtonFocusRequester,
+                                onWatch = onWatch,
+                                onTrailer = effectiveTrailer?.takeIf { it.isNotBlank() }?.let { url -> { activeTrailer = url } },
+                                onToggleWatchlist = onToggleWatchlist,
+                                onToggleWatched = onToggleWatched,
+                                onHideRecommendation = onHideOnTrakt
+                            )
                         }
                     }
                 }
@@ -917,6 +769,77 @@ internal fun MovieDetailsDialog(
     }
 }
 
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun MovieCardActions(
+    isWatched: Boolean,
+    isWatchlisted: Boolean,
+    watchFocus: FocusRequester,
+    onWatch: () -> Unit,
+    onTrailer: (() -> Unit)?,
+    onToggleWatchlist: () -> Unit,
+    onToggleWatched: () -> Unit,
+    onHideRecommendation: (() -> Unit)?
+) {
+    val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = onWatch,
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .focusRequester(watchFocus)
+                .tvFocusHighlight(shape = ButtonDefaults.shape, scaleOnFocus = if (isTv) 1.05f else 1f)
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(strings.watchNow)
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (onTrailer != null) {
+                MovieSecondaryAction(Icons.Default.PlayArrow, strings.watchTrailer, onTrailer)
+            }
+            MovieSecondaryAction(
+                if (isWatchlisted) Icons.Default.Star else Icons.Outlined.StarOutline,
+                if (isWatchlisted) strings.removeFromWatchlist else strings.addToWatchlist,
+                onToggleWatchlist
+            )
+            MovieSecondaryAction(
+                if (isWatched) Icons.Default.CheckCircle else Icons.Outlined.CheckCircle,
+                if (isWatched) strings.markUnwatched else strings.markWatched,
+                onToggleWatched
+            )
+            if (onHideRecommendation != null) {
+                MovieSecondaryAction(Icons.Default.VisibilityOff, strings.traktHideRecommendation, onHideRecommendation)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MovieSecondaryAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    val isTv = LocalFormFactor.current.isTelevision
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .tvFocusHighlight(shape = ButtonDefaults.outlinedShape, scaleOnFocus = if (isTv) 1.04f else 1f),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label)
+    }
+}
 
 @Composable
 internal fun MovieMetadataLine(label: String, value: String?) {

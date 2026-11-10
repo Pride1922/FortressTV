@@ -48,7 +48,8 @@ internal object TraktRecommendationsService {
 
         // If personalized recommendations are empty (e.g. brand new Trakt account with no watch history),
         // fall back to Trakt Trending movies and shows so the shelf is immediately populated.
-        if (items.isEmpty()) {
+        val trendingFallback = items.isEmpty()
+        if (trendingFallback) {
             val trendingMovies = client.fetchTrendingMovies(clientId = clientId, accessToken = accessToken, limit = 40)
             if (trendingMovies is TraktAuthResult.Success) {
                 items.addAll(trendingMovies.data)
@@ -64,44 +65,66 @@ internal object TraktRecommendationsService {
         }
 
         val recStore = TraktRecommendationsStore(context, profileNamespace)
-        recStore.saveRecommendations(items)
-        Result.success(items)
+        recStore.saveRecommendations(items, trendingFallback)
+        Result.success(recStore.loadRecommendations())
     }
 
     suspend fun dismissRecommendation(
         context: Context,
         profileNamespace: String,
-        item: TraktRecommendationItem,
-        client: TraktClient = TraktClient()
-    ): Result<Boolean> = withContext(Dispatchers.IO) {
-        val traktStore = TraktSettingsStore(context, profileNamespace)
-        val clientId = traktStore.loadClientId()
-        if (clientId.isBlank() || !traktStore.isConnected()) {
-            val recStore = TraktRecommendationsStore(context, profileNamespace)
-            recStore.dismissRecommendation(item)
-            return@withContext Result.success(true)
-        }
-
-        val accessToken = traktStore.getValidAccessToken(clientId, client)
-            ?: run {
-                val recStore = TraktRecommendationsStore(context, profileNamespace)
-                recStore.dismissRecommendation(item)
-                return@withContext Result.success(true)
-            }
-
-        val idOrSlug = item.traktId?.toString() ?: item.slug ?: item.imdbId ?: item.tmdbId
-        if (!idOrSlug.isNullOrBlank()) {
-            val result = client.dismissRecommendation(item.kind, idOrSlug, accessToken, clientId)
-            if (result is TraktAuthResult.Failure) {
-                if (result.statusCode != 404) {
-                    return@withContext Result.failure(Exception(result.message))
-                }
+        item: TraktRecommendationItem
+    ): Result<List<TraktRecommendationItem>> = withTraktAccount(context, profileNamespace) { client, token, clientId ->
+        val identifier = item.traktId?.toString() ?: item.slug ?: item.imdbId ?: item.tmdbId
+            ?: return@withTraktAccount Result.failure(IllegalStateException("Recommendation has no Trakt identifier"))
+        when (val result = client.dismissRecommendation(item.kind, identifier, token, clientId)) {
+            is TraktAuthResult.Failure -> Result.failure(IllegalStateException(result.message))
+            is TraktAuthResult.Success -> {
+                val store = TraktRecommendationsStore(context, profileNamespace)
+                store.dismissRecommendation(item)
+                Result.success(store.loadRecommendations())
             }
         }
+    }
 
-        val recStore = TraktRecommendationsStore(context, profileNamespace)
-        recStore.dismissRecommendation(item)
-        Result.success(true)
+    suspend fun fetchHiddenRecommendations(
+        context: Context,
+        profileNamespace: String,
+        page: Int
+    ): Result<TraktHiddenRecommendationsPage> = withTraktAccount(context, profileNamespace) { client, token, clientId ->
+        when (val result = client.fetchHiddenRecommendations(page, token, clientId)) {
+            is TraktAuthResult.Failure -> Result.failure(IllegalStateException(result.message))
+            is TraktAuthResult.Success -> Result.success(result.data)
+        }
+    }
+
+    suspend fun restoreRecommendation(
+        context: Context,
+        profileNamespace: String,
+        item: TraktRecommendationItem
+    ): Result<List<TraktRecommendationItem>> = withTraktAccount(context, profileNamespace) { client, token, clientId ->
+        when (val result = client.restoreRecommendation(item, token, clientId)) {
+            is TraktAuthResult.Failure -> Result.failure(IllegalStateException(result.message))
+            is TraktAuthResult.Success -> {
+                val store = TraktRecommendationsStore(context, profileNamespace)
+                store.restoreRecommendation(item)
+                Result.success(store.loadRecommendations())
+            }
+        }
+    }
+
+    private suspend fun <T> withTraktAccount(
+        context: Context,
+        profileNamespace: String,
+        operation: (TraktClient, String, String) -> Result<T>
+    ): Result<T> = withContext(Dispatchers.IO) {
+        val client = TraktClient()
+        val store = TraktSettingsStore(context, profileNamespace)
+        val clientId = store.loadClientId()
+        val token = if (clientId.isNotBlank() && store.isConnected()) {
+            store.getValidAccessToken(clientId, client)
+        } else null
+        if (token == null) Result.failure(IllegalStateException("Trakt is not connected"))
+        else operation(client, token, clientId)
     }
 
     fun matchRecommendations(

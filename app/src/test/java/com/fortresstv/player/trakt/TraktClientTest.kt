@@ -616,6 +616,41 @@ class TraktClientTest {
     }
 
     @Test
+    fun hiddenRecommendationsIncludeExistingMovieAndSeriesHides() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertTrue(url.endsWith("/users/hidden/recommendations?page=1&limit=50"))
+            TraktHttpResponse(
+                200,
+                """[{"type":"movie","movie":{"title":"Example film","ids":{"trakt":42}}},
+                    {"type":"show","show":{"title":"Example series","ids":{"trakt":43}}}]""",
+                mapOf("x-pagination-page-count" to "2")
+            )
+        }
+        val result = client.fetchHiddenRecommendations(1, "", "") as TraktAuthResult.Success
+        assertTrue(result.data.hasMore)
+        assertEquals(listOf(TraktWatchlistKind.MOVIE, TraktWatchlistKind.SHOW), result.data.items.map { it.kind })
+        assertEquals(listOf(42, 43), result.data.items.map { it.traktId })
+    }
+
+    @Test
+    fun restoresOnlyTheSelectedRecommendationAndRequiresADeletion() {
+        val client = MockTraktClient()
+        val item = TraktRecommendationItem(TraktWatchlistKind.MOVIE, "Example film", null, null, null, 42, null)
+        client.postHandler = { _, _, _ -> TraktHttpResponse(200, """{"deleted":{"movies":1}}""", emptyMap()) }
+
+        assertTrue(client.restoreRecommendation(item, "", "") is TraktAuthResult.Success)
+        assertTrue(client.lastPostUrl.orEmpty().endsWith("/users/hidden/recommendations/remove"))
+        val payload = JSONObject(client.lastPostBody!!)
+        assertEquals(1, payload.getJSONArray("movies").length())
+        assertEquals(42, payload.getJSONArray("movies").getJSONObject(0).getJSONObject("ids").getInt("trakt"))
+        assertFalse(payload.has("shows"))
+
+        client.postHandler = { _, _, _ -> TraktHttpResponse(200, """{"deleted":{"movies":0}}""", emptyMap()) }
+        assertTrue(client.restoreRecommendation(item, "", "") is TraktAuthResult.Failure)
+    }
+
+    @Test
     fun fetchTrendingMoviesParsesWrappedObjects() {
         val client = MockTraktClient()
         client.getHandler = { url, _, _ ->

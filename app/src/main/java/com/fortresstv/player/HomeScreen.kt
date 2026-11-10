@@ -170,6 +170,7 @@ import com.fortresstv.player.trakt.TraktWatchlistStore
 import com.fortresstv.player.trakt.TraktWatchlistService
 import com.fortresstv.player.trakt.TraktMatchedWatchlist
 import com.fortresstv.player.trakt.TraktRecommendationItem
+import com.fortresstv.player.trakt.TraktRecommendationsService
 import com.fortresstv.player.trakt.TraktWatchlistItem
 import com.fortresstv.player.trakt.TraktWatchlistKind
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
@@ -365,6 +366,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import android.content.ContentValues
 import android.os.Environment
@@ -507,7 +510,10 @@ internal fun HomeScreen(
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
 
     val currentHouseholdId = remember { AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
-    val currentProfileId = remember { ProfileRepository.get(context.applicationContext).activeProfile.value.id }
+    val currentProfile by remember(context) {
+        ProfileRepository.get(context.applicationContext).activeProfile
+    }.collectAsState()
+    val currentProfileId = currentProfile.id
     val traktNamespace = remember(currentHouseholdId, currentProfileId) { profileProgressNamespace(currentHouseholdId, currentProfileId) }
     val traktStore = remember(traktNamespace) { TraktSettingsStore(context.applicationContext, traktNamespace) }
     val traktWatchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
@@ -516,6 +522,16 @@ internal fun HomeScreen(
     val traktConnected = traktStore.isConnected()
     var traktWatchlistItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktWatchlistItem>()) }
     var traktRecItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
+    val recommendationLock = remember(traktNamespace) { Mutex() }
+    var showHiddenRecommendations by remember(traktNamespace) { mutableStateOf(false) }
+    var recommendationToHide by remember(traktNamespace) { mutableStateOf<TraktRecommendationItem?>(null) }
+    var hidingRecommendation by remember(traktNamespace) { mutableStateOf(false) }
+    var hideFailed by remember(traktNamespace) { mutableStateOf(false) }
+
+    fun confirmHideRecommendation(item: TraktRecommendationItem) {
+        hideFailed = false
+        recommendationToHide = item
+    }
 
     LaunchedEffect(traktNamespace, traktConnected) {
         if (traktConnected) {
@@ -528,15 +544,16 @@ internal fun HomeScreen(
             if (res.isSuccess) {
                 traktWatchlistItems = res.getOrDefault(emptyList())
             }
-            val recRes = com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context, traktNamespace)
-            if (recRes.isSuccess) {
-                traktRecItems = recRes.getOrDefault(emptyList())
+            recommendationLock.withLock {
+                TraktRecommendationsService.syncRecommendations(context, traktNamespace)
+                    .onSuccess { traktRecItems = it }
             }
         }
     }
 
     val showTraktWatchlist = traktConnected && com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST !in homeHiddenSections
     val showTraktRecs = traktConnected && com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections
+    val canManageHiddenRecommendations = showTraktRecs && !currentProfile.isChild && currentProfileId != "restricted_default"
     val matchedWatchlistState = remember(traktNamespace, showTraktWatchlist, catalogs) {
         mutableStateOf(TraktMatchedWatchlist())
     }
@@ -569,7 +586,7 @@ internal fun HomeScreen(
         (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) ||
         (showTraktWatchlist && !matchedTraktWatchlist.isEmpty) ||
-        (showTraktRecs && !matchedTraktRecs.isEmpty) ||
+        (showTraktRecs && (!matchedTraktRecs.isEmpty || canManageHiddenRecommendations)) ||
         (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty())
 
@@ -1249,9 +1266,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (showTraktRecs &&
-                        !matchedTraktRecs.isEmpty
-                    ) {
+                    if (showTraktRecs && (!matchedTraktRecs.isEmpty || canManageHiddenRecommendations)) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -1273,6 +1288,11 @@ internal fun HomeScreen(
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                            if (canManageHiddenRecommendations) {
+                                TextButton(onClick = { showHiddenRecommendations = true }) {
+                                    Text(strings.traktHiddenRecommendations)
+                                }
                             }
                             Spacer(Modifier.height(10.dp))
                             val traktRecRowState = rememberLazyListState()
@@ -1447,15 +1467,7 @@ internal fun HomeScreen(
             onDismiss = { selectedMovie = null },
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
-            onHideOnTrakt = matchingRec?.let { rec ->
-                {
-                    selectedMovie = null
-                    coroutineScope.launch {
-                        com.fortresstv.player.trakt.TraktRecommendationsService.dismissRecommendation(context, traktNamespace, rec)
-                        traktRecItems = traktRecStore.loadRecommendations()
-                    }
-                }
-            },
+            onHideOnTrakt = matchingRec?.takeIf { canManageHiddenRecommendations }?.let { rec -> { confirmHideRecommendation(rec) } },
             onWatch = {
                 selectedMovie = null
                 onPlayMovie(entry.catalog, entry.movie)
@@ -1487,15 +1499,7 @@ internal fun HomeScreen(
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 traktNamespace = traktNamespace,
-                onHideOnTrakt = matchingRec?.let { rec ->
-                    {
-                        selectedSeries = null
-                        coroutineScope.launch {
-                            com.fortresstv.player.trakt.TraktRecommendationsService.dismissRecommendation(context, traktNamespace, rec)
-                            traktRecItems = traktRecStore.loadRecommendations()
-                        }
-                    }
-                },
+                onHideOnTrakt = matchingRec?.takeIf { canManageHiddenRecommendations }?.let { rec -> { confirmHideRecommendation(rec) } },
                 onDismiss = { selectedSeries = null },
                 onPlay = { episode, url ->
                     selectedSeries = null
@@ -1503,6 +1507,69 @@ internal fun HomeScreen(
                 }
             )
         }
+    }
+
+    recommendationToHide?.takeIf { canManageHiddenRecommendations }?.let { item ->
+        AlertDialog(
+            onDismissRequest = { if (!hidingRecommendation) recommendationToHide = null },
+            title = { Text(strings.traktHideRecommendation) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(item.title, fontWeight = FontWeight.SemiBold)
+                    Text(strings.traktHideRecommendationConfirmation)
+                    if (hidingRecommendation) CircularProgressIndicator(Modifier.size(24.dp))
+                    if (hideFailed) Text(strings.traktRecommendationActionFailed, color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !hidingRecommendation,
+                    onClick = {
+                        hidingRecommendation = true
+                        hideFailed = false
+                        coroutineScope.launch {
+                            try {
+                                recommendationLock.withLock {
+                                    TraktRecommendationsService.dismissRecommendation(context, traktNamespace, item)
+                                        .onSuccess {
+                                            traktRecItems = it
+                                            recommendationToHide = null
+                                            selectedMovie = null
+                                            selectedSeries = null
+                                        }.onFailure { hideFailed = true }
+                                }
+                            } finally {
+                                hidingRecommendation = false
+                            }
+                        }
+                    }
+                ) { Text(strings.traktHideRecommendation) }
+            },
+            dismissButton = {
+                TextButton(enabled = !hidingRecommendation, onClick = { recommendationToHide = null }) {
+                    Text(strings.cancel)
+                }
+            }
+        )
+    }
+
+    if (showHiddenRecommendations && canManageHiddenRecommendations) {
+        HiddenTraktRecommendationsDialog(
+            loadPage = { page ->
+                TraktRecommendationsService.fetchHiddenRecommendations(context, traktNamespace, page).map { result ->
+                    if (!hideAdultContent) result
+                    else result.copy(items = result.items.filterNot { isAdultContent(it.title, null) })
+                }
+            },
+            restore = { item ->
+                recommendationLock.withLock {
+                    TraktRecommendationsService.restoreRecommendation(context, traktNamespace, item)
+                        .onSuccess { traktRecItems = it }
+                        .isSuccess
+                }
+            },
+            onDismiss = { showHiddenRecommendations = false }
+        )
     }
 }
 }

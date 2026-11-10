@@ -14,6 +14,11 @@ import kotlin.coroutines.coroutineContext
 
 data class TraktHttpResponse(val code: Int, val body: String, val headers: Map<String, String>)
 
+internal data class TraktHiddenRecommendationsPage(
+    val items: List<TraktRecommendationItem>,
+    val hasMore: Boolean
+)
+
 open class TraktClient(
     val authHost: String = TraktEndpoints.AUTH_HOST,
     val apiHost: String = TraktEndpoints.API_HOST,
@@ -559,6 +564,64 @@ open class TraktClient(
             }
         } catch (e: Throwable) {
             TraktAuthResult.Failure("Error dismissing recommendation: ${e.message}", cause = e)
+        }
+    }
+
+    internal fun fetchHiddenRecommendations(
+        page: Int,
+        accessToken: String,
+        clientId: String
+    ): TraktAuthResult<TraktHiddenRecommendationsPage> {
+        val limit = 50
+        val url = "${apiHost.trimEnd('/')}/users/hidden/recommendations?page=$page&limit=$limit"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code !in 200..299) {
+                return TraktAuthResult.Failure("Could not fetch hidden recommendations", statusCode = response.code)
+            }
+            val rows = org.json.JSONArray(response.body)
+            val items = (0 until rows.length()).mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                TraktRecommendationItem.fromJson(row)
+            }
+            val pageCount = response.headers.entries
+                .firstOrNull { it.key.equals("X-Pagination-Page-Count", ignoreCase = true) }
+                ?.value?.toIntOrNull()
+            TraktAuthResult.Success(TraktHiddenRecommendationsPage(items, pageCount?.let { page < it } ?: (rows.length() >= limit)))
+        } catch (failure: Exception) {
+            TraktAuthResult.Failure("Could not fetch hidden recommendations", cause = failure)
+        }
+    }
+
+    internal fun restoreRecommendation(
+        item: TraktRecommendationItem,
+        accessToken: String,
+        clientId: String
+    ): TraktAuthResult<Boolean> {
+        val group = if (item.kind == TraktWatchlistKind.MOVIE) "movies" else "shows"
+        val ids = JSONObject()
+        when {
+            item.traktId != null -> ids.put("trakt", item.traktId)
+            !item.imdbId.isNullOrBlank() -> ids.put("imdb", item.imdbId)
+            !item.slug.isNullOrBlank() -> ids.put("slug", item.slug)
+            else -> {
+                val tmdb = item.tmdbId?.toIntOrNull()
+                    ?: return TraktAuthResult.Failure("Recommendation has no Trakt identifier")
+                ids.put("tmdb", tmdb)
+            }
+        }
+        val body = JSONObject().put(group, org.json.JSONArray().put(JSONObject().put("ids", ids)))
+        val url = "${apiHost.trimEnd('/')}/users/hidden/recommendations/remove"
+        return try {
+            val response = executePost(url, body.toString(), accessToken = accessToken, clientId = clientId)
+            if (response.code !in 200..299) {
+                return TraktAuthResult.Failure("Could not restore recommendation", statusCode = response.code)
+            }
+            val deleted = JSONObject(response.body).optJSONObject("deleted")?.optInt(group) ?: 0
+            if (deleted > 0) TraktAuthResult.Success(true)
+            else TraktAuthResult.Failure("Trakt did not restore this recommendation")
+        } catch (failure: Exception) {
+            TraktAuthResult.Failure("Could not restore recommendation", cause = failure)
         }
     }
 
