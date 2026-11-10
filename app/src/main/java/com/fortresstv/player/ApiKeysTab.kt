@@ -383,6 +383,9 @@ import androidx.compose.material.icons.filled.Sync
 import coil.compose.AsyncImage
 import com.fortresstv.player.trakt.TraktDeviceCodeDialog
 import com.fortresstv.player.trakt.TraktSettingsStore
+import com.fortresstv.player.trakt.TraktWatchlistStore
+import com.fortresstv.player.trakt.TraktWatchlistService
+import androidx.compose.material.icons.filled.Bookmark
 
 @Composable
 internal fun ApiKeysTab(
@@ -884,6 +887,73 @@ internal fun ApiKeysTab(
                         traktStore.setScrobbleEnabled(checked)
                     }
                 )
+
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                var isSyncingWatchlist by remember { mutableStateOf(false) }
+                var watchlistSyncStatus by remember { mutableStateOf<String?>(null) }
+                val watchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.traktWatchlist,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        val lastSyncMs = watchlistStore.lastSyncedEpochMs()
+                        val subtitle = if (isSyncingWatchlist) {
+                            strings.traktSyncingWatchlist
+                        } else if (watchlistSyncStatus != null) {
+                            watchlistSyncStatus!!
+                        } else if (lastSyncMs > 0L) {
+                            strings.traktWatchlistSynced.format(watchlistStore.loadWatchlist().size)
+                        } else {
+                            strings.traktWatchlistEmpty
+                        }
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            isSyncingWatchlist = true
+                            watchlistSyncStatus = null
+                            coroutineScope.launch {
+                                val result = TraktWatchlistService.syncWatchlist(context, traktNamespace)
+                                isSyncingWatchlist = false
+                                watchlistSyncStatus = if (result.isSuccess) {
+                                    strings.traktWatchlistSynced.format(result.getOrDefault(emptyList()).size)
+                                } else {
+                                    result.exceptionOrNull()?.message ?: "Sync error"
+                                }
+                            }
+                        },
+                        enabled = !isSyncingWatchlist
+                    ) {
+                        if (isSyncingWatchlist) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(strings.traktSyncWatchlist)
+                    }
+                }
             } else {
                 Column(
                     modifier = Modifier

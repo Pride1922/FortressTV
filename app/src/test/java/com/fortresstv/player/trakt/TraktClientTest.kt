@@ -315,4 +315,109 @@ class TraktClientTest {
         assertEquals("https://auth.trakt.tv/oauth/device/code", visitedUrls[0])
         assertEquals("https://api.trakt.tv/oauth/device/code", visitedUrls[1])
     }
+
+    @Test
+    fun fetchWatchlistMoviesParsesItems() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/sync/watchlist/movies", url)
+            TraktHttpResponse(200, """
+                [
+                    {
+                        "listed_at": "2024-01-01T12:00:00.000Z",
+                        "type": "movie",
+                        "movie": {
+                            "title": "Inception",
+                            "year": 2010,
+                            "ids": {
+                                "trakt": 16,
+                                "slug": "inception-2010",
+                                "imdb": "tt1375666",
+                                "tmdb": 27205
+                            }
+                        }
+                    }
+                ]
+            """.trimIndent(), emptyMap())
+        }
+
+        val result = client.fetchWatchlistMovies("token123", "client456")
+        assertTrue(result is TraktAuthResult.Success)
+        val items = (result as TraktAuthResult.Success).data
+        assertEquals(1, items.size)
+        val item = items[0]
+        assertEquals(TraktWatchlistKind.MOVIE, item.kind)
+        assertEquals("Inception", item.title)
+        assertEquals(2010, item.year)
+        assertEquals("27205", item.tmdbId)
+        assertEquals("tt1375666", item.imdbId)
+    }
+
+    @Test
+    fun fetchWatchlistShowsParsesItems() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/sync/watchlist/shows", url)
+            TraktHttpResponse(200, """
+                [
+                    {
+                        "listed_at": "2024-01-02T12:00:00.000Z",
+                        "type": "show",
+                        "show": {
+                            "title": "Breaking Bad",
+                            "year": 2008,
+                            "ids": {
+                                "trakt": 1,
+                                "slug": "breaking-bad",
+                                "imdb": "tt0903747",
+                                "tmdb": 1396
+                            }
+                        }
+                    }
+                ]
+            """.trimIndent(), emptyMap())
+        }
+
+        val result = client.fetchWatchlistShows("token123", "client456")
+        assertTrue(result is TraktAuthResult.Success)
+        val items = (result as TraktAuthResult.Success).data
+        assertEquals(1, items.size)
+        val item = items[0]
+        assertEquals(TraktWatchlistKind.SHOW, item.kind)
+        assertEquals("Breaking Bad", item.title)
+        assertEquals(2008, item.year)
+        assertEquals("1396", item.tmdbId)
+        assertEquals("tt0903747", item.imdbId)
+    }
+
+    @Test
+    fun addToWatchlistSendsSyncPayload() {
+        val client = MockTraktClient()
+        client.postHandler = { url, body, _ ->
+            assertEquals("https://api.trakt.tv/sync/watchlist", url)
+            val json = JSONObject(body)
+            assertTrue(json.has("movies"))
+            val movies = json.getJSONArray("movies")
+            assertEquals(1, movies.length())
+            val movie = movies.getJSONObject(0)
+            assertEquals("Inception", movie.getString("title"))
+            assertEquals(27205, movie.getJSONObject("ids").getInt("tmdb"))
+            TraktHttpResponse(201, """{"added":{"movies":1,"shows":0}}""", emptyMap())
+        }
+
+        val item = TraktWatchlistItem(
+            kind = TraktWatchlistKind.MOVIE,
+            title = "Inception",
+            year = 2010,
+            tmdbId = "27205",
+            imdbId = "tt1375666",
+            traktId = null,
+            slug = null,
+            listedAt = null
+        )
+
+        val result = client.addToWatchlist(item, "token123", "client456")
+        assertTrue(result is TraktAuthResult.Success)
+        assertTrue((result as TraktAuthResult.Success).data)
+    }
 }

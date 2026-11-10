@@ -123,3 +123,81 @@ sealed class TraktAuthResult<out T> {
     data class Success<T>(val data: T) : TraktAuthResult<T>()
     data class Failure(val message: String, val statusCode: Int? = null, val cause: Throwable? = null) : TraktAuthResult<Nothing>()
 }
+
+enum class TraktWatchlistKind {
+    MOVIE,
+    SHOW
+}
+
+data class TraktWatchlistItem(
+    val kind: TraktWatchlistKind,
+    val title: String,
+    val year: Int?,
+    val tmdbId: String?,
+    val imdbId: String?,
+    val traktId: Int?,
+    val slug: String?,
+    val listedAt: String?
+) {
+    fun toSyncPayload(): JSONObject {
+        val ids = JSONObject()
+        tmdbId?.toIntOrNull()?.let { ids.put("tmdb", it) }
+        imdbId?.takeIf { it.isNotBlank() }?.let { ids.put("imdb", it) }
+        traktId?.let { ids.put("trakt", it) }
+
+        val itemObj = JSONObject().apply {
+            put("title", title)
+            year?.let { put("year", it) }
+            put("ids", ids)
+        }
+
+        val array = org.json.JSONArray().apply { put(itemObj) }
+        return JSONObject().apply {
+            if (kind == TraktWatchlistKind.MOVIE) {
+                put("movies", array)
+            } else {
+                put("shows", array)
+            }
+        }
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject, forcedKind: TraktWatchlistKind? = null): TraktWatchlistItem? {
+            val typeStr = json.optString("type")
+            val kind = forcedKind ?: when (typeStr) {
+                "movie" -> TraktWatchlistKind.MOVIE
+                "show" -> TraktWatchlistKind.SHOW
+                else -> {
+                    if (json.has("movie")) TraktWatchlistKind.MOVIE
+                    else if (json.has("show")) TraktWatchlistKind.SHOW
+                    else return null
+                }
+            }
+            val media = if (kind == TraktWatchlistKind.MOVIE) {
+                json.optJSONObject("movie") ?: json
+            } else {
+                json.optJSONObject("show") ?: json
+            }
+            val title = media.optString("title").ifBlank { return null }
+            val year = media.optInt("year").takeIf { it > 1800 }
+            val ids = media.optJSONObject("ids")
+            val tmdbId = ids?.optInt("tmdb")?.takeIf { it > 0 }?.toString()
+                ?: ids?.optString("tmdb")?.takeIf { it.isNotBlank() && it != "0" }
+            val imdbId = ids?.optString("imdb")?.takeIf { it.isNotBlank() }
+            val traktId = ids?.optInt("trakt")?.takeIf { it > 0 }
+            val slug = ids?.optString("slug")?.takeIf { it.isNotBlank() }
+            val listedAt = json.optString("listed_at").takeIf { it.isNotBlank() }
+
+            return TraktWatchlistItem(
+                kind = kind,
+                title = title,
+                year = year,
+                tmdbId = tmdbId,
+                imdbId = imdbId,
+                traktId = traktId,
+                slug = slug,
+                listedAt = listedAt
+            )
+        }
+    }
+}

@@ -269,6 +269,88 @@ open class TraktClient(
         }
     }
 
+    /**
+     * Fetches movies from the user's Trakt Watchlist.
+     */
+    open fun fetchWatchlistMovies(accessToken: String, clientId: String): TraktAuthResult<List<TraktWatchlistItem>> {
+        val url = "${apiHost.trimEnd('/')}/sync/watchlist/movies"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val items = mutableListOf<TraktWatchlistItem>()
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktWatchlistItem.fromJson(obj, TraktWatchlistKind.MOVIE)?.let { items.add(it) }
+                }
+                TraktAuthResult.Success(items)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch watchlist movies: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching watchlist movies: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Fetches TV shows from the user's Trakt Watchlist.
+     */
+    open fun fetchWatchlistShows(accessToken: String, clientId: String): TraktAuthResult<List<TraktWatchlistItem>> {
+        val url = "${apiHost.trimEnd('/')}/sync/watchlist/shows"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val items = mutableListOf<TraktWatchlistItem>()
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktWatchlistItem.fromJson(obj, TraktWatchlistKind.SHOW)?.let { items.add(it) }
+                }
+                TraktAuthResult.Success(items)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch watchlist shows: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching watchlist shows: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Adds an item to the user's Trakt Watchlist.
+     */
+    open fun addToWatchlist(item: TraktWatchlistItem, accessToken: String, clientId: String): TraktAuthResult<Boolean> {
+        val url = "${apiHost.trimEnd('/')}/sync/watchlist"
+        val payload = item.toSyncPayload()
+        return try {
+            val response = executePost(url, payload.toString(), accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                TraktAuthResult.Success(true)
+            } else {
+                TraktAuthResult.Failure("Failed to add to watchlist: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error adding to watchlist: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Removes an item from the user's Trakt Watchlist.
+     */
+    open fun removeFromWatchlist(item: TraktWatchlistItem, accessToken: String, clientId: String): TraktAuthResult<Boolean> {
+        val url = "${apiHost.trimEnd('/')}/sync/watchlist/remove"
+        val payload = item.toSyncPayload()
+        return try {
+            val response = executePost(url, payload.toString(), accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                TraktAuthResult.Success(true)
+            } else {
+                TraktAuthResult.Failure("Failed to remove from watchlist: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error removing from watchlist: ${e.message}", cause = e)
+        }
+    }
+
     // --- HTTP Helpers using HttpURLConnection ---
 
     open fun executePost(

@@ -1637,6 +1637,19 @@ internal fun FortressTVApp(
                         val isWatchlisted = userLibrary.isMovieWatchlisted(sourceId, movie, movieWatchlistIds)
                         val newWatchlisted = !isWatchlisted
                         movieWatchlistIds = userLibrary.setMovieWatchlisted(sourceId, movie, newWatchlisted)
+                        val currentTraktNs = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                        scope.launch(Dispatchers.IO) {
+                            com.fortresstv.player.trakt.TraktWatchlistService.syncItemWatchlist(
+                                context = context,
+                                profileNamespace = currentTraktNs,
+                                isAdd = newWatchlisted,
+                                kind = com.fortresstv.player.trakt.TraktWatchlistKind.MOVIE,
+                                title = movie.name,
+                                year = movie.year?.toIntOrNull(),
+                                tmdbId = movie.tmdbId,
+                                imdbId = movie.imdbId
+                            )
+                        }
                         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                             cloudLibrarySyncService.recordLibraryMutation(
                                 profileId = activeHouseholdProfile.id,
@@ -1669,6 +1682,19 @@ internal fun FortressTVApp(
                         val isFollowed = userLibrary.isSeriesFollowed(sourceId, series, followedSeriesIds)
                         val newFollowed = !isFollowed
                         followedSeriesIds = userLibrary.setSeriesFollowed(sourceId, series, newFollowed)
+                        val currentTraktNs = profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                        scope.launch(Dispatchers.IO) {
+                            com.fortresstv.player.trakt.TraktWatchlistService.syncItemWatchlist(
+                                context = context,
+                                profileNamespace = currentTraktNs,
+                                isAdd = newFollowed,
+                                kind = com.fortresstv.player.trakt.TraktWatchlistKind.SHOW,
+                                title = series.name,
+                                year = series.year?.toIntOrNull(),
+                                tmdbId = series.tmdbId,
+                                imdbId = series.imdbId
+                            )
+                        }
                         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                             cloudLibrarySyncService.recordLibraryMutation(
                                 profileId = activeHouseholdProfile.id,

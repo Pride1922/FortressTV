@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Movie
@@ -54,6 +55,7 @@ object HomeSectionId {
     const val FOLLOWED_SERIES = "followed_series"
     const val RECENT_MOVIES = "recent_movies"
     const val FEATURED_SERIES = "featured_series"
+    const val TRAKT_WATCHLIST = "trakt_watchlist"
 }
 
 @Composable
@@ -70,6 +72,7 @@ fun CustomizeHomeDialog(
         Triple(HomeSectionId.FAVORITE_CHANNELS, strings.sectionFavoriteChannels, Icons.Default.Star),
         Triple(HomeSectionId.RECENT_CHANNELS, strings.sectionRecentChannels, Icons.Default.History),
         Triple(HomeSectionId.FOLLOWED_SERIES, strings.sectionFollowedSeries, Icons.Default.Tv),
+        Triple(HomeSectionId.TRAKT_WATCHLIST, strings.sectionTraktWatchlist, Icons.Default.Bookmark),
         Triple(HomeSectionId.RECENT_MOVIES, strings.sectionRecentMovies, Icons.Default.Movie),
         Triple(HomeSectionId.FEATURED_SERIES, strings.sectionFeaturedSeries, Icons.Default.AutoAwesome)
     )

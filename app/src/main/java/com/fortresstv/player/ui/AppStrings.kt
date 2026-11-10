@@ -392,6 +392,14 @@ interface Strings {
     val traktPairingRetry: String
     val traktHelp: String
     val traktHelpLink: String
+    val sectionTraktWatchlist: String
+    val traktWatchlist: String
+    val traktWatchlistEmpty: String
+    val traktSyncWatchlist: String
+    val traktSyncingWatchlist: String
+    val traktWatchlistSynced: String
+    val traktAddToWatchlist: String
+    val traktRemoveFromWatchlist: String
     val watchTrailer: String
     val genres: String
     val tabAbout: String
@@ -931,6 +939,14 @@ object EnglishStrings : Strings {
     override val traktPairingRetry = "Try Again"
     override val traktHelp = "Obtain a free Trakt Client ID at trakt.tv/oauth/applications"
     override val traktHelpLink = "https://trakt.tv/oauth/applications"
+    override val sectionTraktWatchlist = "Trakt Watchlist"
+    override val traktWatchlist = "Trakt Watchlist"
+    override val traktWatchlistEmpty = "No items in your Trakt watchlist match your current sources."
+    override val traktSyncWatchlist = "Sync Watchlist"
+    override val traktSyncingWatchlist = "Syncing with Trakt..."
+    override val traktWatchlistSynced = "Watchlist synced (%d items)"
+    override val traktAddToWatchlist = "Add to Trakt Watchlist"
+    override val traktRemoveFromWatchlist = "Remove from Trakt Watchlist"
     override val watchTrailer = "Watch Trailer"
     override val genres = "Genres"
     override val tabAbout = "About"
@@ -1473,6 +1489,14 @@ object PortugueseStrings : Strings {
     override val traktPairingRetry = "Tentar Novamente"
     override val traktHelp = "Obtenha um ID de Cliente Trakt gratuito em trakt.tv/oauth/applications"
     override val traktHelpLink = "https://trakt.tv/oauth/applications"
+    override val sectionTraktWatchlist = "Lista do Trakt"
+    override val traktWatchlist = "Lista do Trakt"
+    override val traktWatchlistEmpty = "Nenhum item da sua lista do Trakt corresponde às fontes atuais."
+    override val traktSyncWatchlist = "Sincronizar Lista"
+    override val traktSyncingWatchlist = "A sincronizar com o Trakt..."
+    override val traktWatchlistSynced = "Lista sincronizada (%d itens)"
+    override val traktAddToWatchlist = "Adicionar à Lista do Trakt"
+    override val traktRemoveFromWatchlist = "Remover da Lista do Trakt"
     override val watchTrailer = "Ver Trailer"
     override val genres = "Géneros"
     override val tabAbout = "Sobre"
