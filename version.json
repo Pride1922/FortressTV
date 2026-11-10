@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC20",
-    "versionCode":  54,
-    "notes":  "FortressTV 2.0.0-RC20 prioritizes the active profile\u0027s language for trailer resolution with automatic English fallback, in-app cinematic trailer playback, Trakt trending fallback, and resilient VOD catalogue matching.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC20/fortresstv.apk",
-    "sha256":  "49A23F78F07CC5B01A3D285D009AEBF497158C2EF210BB6C04BBF80CDEF0BA05"
+  "version": "2.0.0-RC21",
+  "versionCode": 55,
+  "notes": "- Faster startup from cached sources. Home and Live TV can open while catalogue refresh, programme guide restoration, and Home shelves continue loading.\n- Cached startup was verified on the tablet with FortressTV network access blocked.\n\n- Arranque mais rápido com fontes em cache. O Início e a TV em direto podem abrir enquanto o catálogo, o guia de programação e as secções do Início continuam a carregar.\n- O arranque com dados em cache foi verificado no tablet com o acesso à rede da FortressTV bloqueado.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC21/fortresstv.apk",
+  "sha256": "0E1972C3B75D6A790FE08395D3794DE4410B330F388374784D91AB009C3CD2A4"
 }
