@@ -383,6 +383,7 @@ import coil.size.Precision
 @Composable
 internal fun PlayerPanel(
     channel: PlaylistChannel,
+    channelSelectedAtMs: Long,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
     channels: List<PlaylistChannel>,
@@ -591,7 +592,7 @@ internal fun PlayerPanel(
                     )
                     val fallback = candidates.firstOrNull()
                     if (fallback != null) {
-                        Log.i("FortressTV.Failover", "Failing over from ${activeChannel.name} to ${fallback.name} (${fallback.streamUrl})")
+                        Log.i("FortressTV.Failover", "Switching to a backup after a playback error")
                         attemptedFailoverUrls = attemptedFailoverUrls + fallback.streamUrl
                         playbackError = null
                         failoverMessage = if (fallback.sourceId.isNotBlank() && fallback.sourceId != channel.sourceId) {
@@ -647,7 +648,14 @@ internal fun PlayerPanel(
         playbackError = null
         isFreezeReconnecting = false
         liveFrameProgress.recordFrame(android.os.SystemClock.elapsedRealtime())
-        player.setMediaItem(FortressPlayerFactory.mediaItem(activeChannel.streamUrl, PlaybackContentType.LIVE, playbackMode))
+        val mediaItem = FortressPlayerFactory.mediaItem(activeChannel.streamUrl, PlaybackContentType.LIVE, playbackMode)
+        if (playbackMode == PlaybackMode.AUTO || BuildConfig.BUILD_TYPE == "benchmark") {
+            val requestedAt = channelSelectedAtMs.takeIf { activeChannel == channel && it > 0L }
+                ?: android.os.SystemClock.elapsedRealtime()
+            player.setMediaSource(FortressPlayerFactory.liveSource(context, mediaItem, requestedAt, playbackMode))
+        } else {
+            player.setMediaItem(mediaItem)
+        }
         player.prepare()
         player.play()
         if (autoEnterFullscreen) manualFullscreen = true
@@ -686,7 +694,7 @@ internal fun PlayerPanel(
                     )
                     val fallback = candidates.firstOrNull()
                     if (fallback != null) {
-                        Log.i("FortressTV.Failover", "Failing over from stall on ${activeChannel.name} to ${fallback.name} (${fallback.streamUrl})")
+                        Log.i("FortressTV.Failover", "Switching to a backup after a startup stall")
                         attemptedFailoverUrls = attemptedFailoverUrls + fallback.streamUrl
                         playbackError = null
                         failoverMessage = if (fallback.sourceId.isNotBlank() && fallback.sourceId != channel.sourceId) {
@@ -764,7 +772,7 @@ internal fun PlayerPanel(
                     )
                     val fallback = candidates.firstOrNull()
                     if (fallback != null) {
-                        Log.i("FortressTV.Failover", "Failing over from freeze on ${activeChannel.name} to ${fallback.name} (${fallback.streamUrl})")
+                        Log.i("FortressTV.Failover", "Switching to a backup after a playback freeze")
                         attemptedFailoverUrls = attemptedFailoverUrls + fallback.streamUrl
                         playbackError = null
                         failoverMessage = if (fallback.sourceId.isNotBlank() && fallback.sourceId != channel.sourceId) {

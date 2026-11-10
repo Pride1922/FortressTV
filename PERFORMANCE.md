@@ -168,6 +168,68 @@ ADB remained available. The prior firewall state was restored afterward.
 The RC19 accessibility sample provides only an upper bound, so there is no
 direct before-and-after comparison for Home readiness.
 
+### RC22 live channel switching on the tablet (2026-11-10)
+
+An instrumented benchmark build measured live channel changes in Automatic mode on
+the Android 16 tablet. It recorded selection, media source preparation, the first
+network payload bytes delivered to the player, and Media3's first rendered frame.
+
+Across 24 switches between three configured Xtream channels, 22 reached a first
+frame, one ended with a bad HTTP status, and one reached the 15-second observation
+limit without stream bytes. The control served the same paced synthetic 720p
+H.264/AAC MPEG-TS fixture under two channel entries on tablet loopback. All 12
+control switches reached a first frame.
+
+| Source | Selection to prepare median | Selection to bytes median | Bytes to frame median | Selection to frame median | Selection to frame P95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Xtream | 18 ms | 238 ms | 170 ms | 414 ms | 9,494 ms |
+| Tablet loopback | 21 ms | 132 ms | 478 ms | 606 ms | 623 ms |
+
+The percentiles use nearest rank across completed switches. The two slowest
+completed Xtream switches spent 9,335 ms and 11,282 ms reaching the first bytes,
+followed by 159 ms and 153 ms to render a frame. The wait for bytes includes the
+network path, server response, and any request retries. The timings cannot
+separate those contributions. The control's frame times reflect its own stream
+format and delivery pacing.
+
+Three additional Xtream trials held playback for at least 30 seconds after the
+first frame or the 15-second cutoff. Two reached a frame and logged no completed
+rebuffer during the hold. The other delivered no bytes before the next switch.
+
+The follow-up benchmark traces the start and end of each HTTP open, numeric
+response status, and Media3's retry decisions before the first frame. It uses
+the same Media3 HTTP transport as regular playback. An open duration combines
+connection setup, redirects, and the response wait. Retry delays describe the
+policy decision, while the next open timestamp shows when a new request starts.
+
+In the 24-switch Xtream follow-up, 20 switches reached a frame, with a median of
+455 ms and a completed-switch P95 of 1,447 ms. The slowest completed switch
+took 3,271 ms, including 2,885 ms in its first HTTP open. One switch hit the
+15-second observation cutoff. Its first HTTP open later logged a timeout at
+20,156 ms without a response status. The other three incomplete switches
+received HTTP 403 on the same channel, in 89–129 ms of HTTP open time. That
+channel also completed four switches. The only logged retry decisions declined
+to retry the 403 responses. No retry backoff was observed in this sample.
+
+Automatic live playback now gives the first HTTP transfer six-second connect
+and read timeouts. A socket timeout while opening that transfer gets one
+immediate retry using the regular timeouts. Later opens use the regular
+timeouts, including recovery after a read stall on the first transfer.
+
+On the physical tablet, a loopback fixture withheld the first response for one
+channel. Its first HTTP open timed out after 6,004 ms, and Media3 started the
+retry 1 ms after the zero-delay retry decision. The retry returned HTTP 200 in
+82 ms and the first frame arrived 6,648 ms after selection. Two subsequent
+ordinary switches rendered in 610 and 612 ms. The player entered fullscreen
+and returned to the inline channel list during the control run.
+
+With the fix installed, all 24 Xtream switches reached a first frame. The median
+was 415 ms and the P95 was 2,125 ms. The slowest switch took 11,437 ms. Its first
+HTTP open timed out after 6,158 ms, the retry began 1 ms after the retry decision,
+and the retry took 5,096 ms to open successfully. No HTTP 403 occurred in this
+run. The two Xtream runs sampled intermittent upstream behavior, so their
+completion counts alone cannot establish a change in the long-term error rate.
+
 ### POCO baseline (2026-08-30)
 
 Measured on the configured Android 16 POCO with 89 channels and the real three-day in-app

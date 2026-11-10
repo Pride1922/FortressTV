@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.IOException
+import java.net.SocketTimeoutException
 import androidx.media3.common.Player
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -30,6 +31,14 @@ class PlaybackResilienceTest {
         assertEquals(1_000L, PlaybackRetryRules.retryDelayMs(IOException("timeout"), 1))
         assertEquals(16_000L, PlaybackRetryRules.retryDelayMs(IOException("timeout"), 5))
         assertNull(PlaybackRetryRules.retryDelayMs(IOException("timeout"), 6))
+    }
+
+    @Test
+    fun initialLiveOpenTimeoutRetriesOnceWithoutBackoff() {
+        val error = LiveStartupTimeoutException(SocketTimeoutException())
+        assertEquals(0L, PlaybackRetryRules.retryDelayMs(error, 1))
+        assertEquals(2_000L, PlaybackRetryRules.retryDelayMs(error, 2))
+        assertNull(PlaybackRetryRules.retryDelayMs(error, 6))
     }
 
     @Test

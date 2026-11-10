@@ -526,6 +526,7 @@ internal fun ChannelBrowser(
 
     var searchQuery by remember(playlist) { mutableStateOf("") }
     var selectedChannel by remember(playlist) { mutableStateOf<PlaylistChannel?>(null) }
+    var channelSelectedAtMs by remember(playlist) { mutableLongStateOf(0L) }
     var fullscreenTrigger by remember(playlist) { mutableIntStateOf(0) }
     var showProgrammeGuide by remember(playlist) { mutableStateOf(false) }
     fun selectFilter(filter: String) {
@@ -539,10 +540,12 @@ internal fun ChannelBrowser(
         }
     }
     fun selectChannel(channel: PlaylistChannel) {
+        val selectedAt = if (BuildConfig.BUILD_TYPE == "benchmark") android.os.SystemClock.elapsedRealtime() else 0L
         hideKeyboard()
         if (selectedChannel == channel) {
             fullscreenTrigger++
         } else {
+            channelSelectedAtMs = selectedAt
             selectedChannel = channel
         }
         if (!isLandscapeTablet) {
@@ -618,9 +621,10 @@ internal fun ChannelBrowser(
         else -> 430.dp
     }
     val movablePlayerPanel = remember(playerFocusRequester, effectiveChannelFocusRequester, preferredAudioLanguage, preferredSubtitleLanguage, subtitleFallbackEnglish) {
-        movableContentOf { currentChannel: PlaylistChannel, playerModifier: Modifier, isCompactPreview: Boolean ->
+        movableContentOf { currentChannel: PlaylistChannel, selectedAtMs: Long, playerModifier: Modifier, isCompactPreview: Boolean ->
             PlayerPanel(
                 channel = currentChannel,
+                channelSelectedAtMs = selectedAtMs,
                 epgGuide = epgGuide,
                 epgTimeShiftHours = epgTimeShiftHours,
                 channels = allVisibleChannels,
@@ -677,7 +681,7 @@ internal fun ChannelBrowser(
             dockedPlayer = if (selectedChannel != null) {
                 {
                     selectedChannel?.let { curChannel ->
-                        movablePlayerPanel(curChannel, Modifier.fillMaxSize(), true)
+                        movablePlayerPanel(curChannel, channelSelectedAtMs, Modifier.fillMaxSize(), true)
                     }
                 }
             } else null
@@ -1281,7 +1285,7 @@ internal fun ChannelBrowser(
             if (isCompact && isPortrait) {
                 if (selectedChannel != null) {
                     Column(Modifier.weight(1f).fillMaxWidth()) {
-                        movablePlayerPanel(selectedChannel!!, Modifier.fillMaxWidth().wrapContentHeight(), false)
+                        movablePlayerPanel(selectedChannel!!, channelSelectedAtMs, Modifier.fillMaxWidth().wrapContentHeight(), false)
                         Spacer(Modifier.height(10.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(6.dp))
@@ -1432,7 +1436,7 @@ internal fun ChannelBrowser(
                     }
                     if (selectedChannel != null) {
                         Spacer(Modifier.width(16.dp))
-                        movablePlayerPanel(selectedChannel!!, Modifier.weight(1f).fillMaxHeight(), false)
+                        movablePlayerPanel(selectedChannel!!, channelSelectedAtMs, Modifier.weight(1f).fillMaxHeight(), false)
                     }
                 }
             }

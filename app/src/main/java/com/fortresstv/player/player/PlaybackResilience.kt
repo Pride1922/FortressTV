@@ -22,6 +22,7 @@ import androidx.media3.common.ParserException
 import androidx.media3.common.VideoSize
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
@@ -30,12 +31,15 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
+import com.fortresstv.player.BuildConfig
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 enum class PlaybackMode(val persistedValue: String) {
@@ -274,6 +278,7 @@ object LiveEndedRecoveryPolicy {
 object PlaybackRetryRules {
     fun retryDelayMs(error: IOException, errorCount: Int): Long? {
         if (error is ParserException) return null
+        if (error is LiveStartupTimeoutException && errorCount == 1) return 0L
         val responseCode = (error as? HttpDataSource.InvalidResponseCodeException)?.responseCode
         return retryDelayMs(responseCode, errorCount)
     }
@@ -289,12 +294,15 @@ object PlaybackRetryRules {
 }
 
 @UnstableApi
-class FortressLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(5) {
+private class FortressLoadErrorHandlingPolicy(
+    private val tune: LiveTuneBenchmark?
+) : DefaultLoadErrorHandlingPolicy(5) {
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
-        return PlaybackRetryRules.retryDelayMs(
-            loadErrorInfo.exception,
-            loadErrorInfo.errorCount
-        ) ?: C.TIME_UNSET
+        val error = loadErrorInfo.exception
+        val errorCount = loadErrorInfo.errorCount
+        val delayMs = PlaybackRetryRules.retryDelayMs(error, errorCount) ?: C.TIME_UNSET
+        tune?.recordRetryDecision(error, errorCount, delayMs)
+        return delayMs
     }
 }
 
@@ -326,15 +334,7 @@ object FortressPlayerFactory {
                 profile.rebufferMs
             )
             .build()
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(20_000)
-            .setAllowCrossProtocolRedirects(true)
-            .setUserAgent("FortressTV")
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(dataSourceFactory)
-            .setLoadErrorHandlingPolicy(FortressLoadErrorHandlingPolicy())
+        val mediaSourceFactory = mediaSourceFactory(context)
         val trackSelector = DefaultTrackSelector(context).apply {
             if (profile.maxVideoBitrate != null) {
                 parameters = buildUponParameters()
@@ -356,6 +356,9 @@ object FortressPlayerFactory {
             .build()
             .apply {
                 addAnalyticsListener(PlaybackDiagnosticsListener(type, mode, transferProgress))
+                if (type == PlaybackContentType.LIVE && BuildConfig.BUILD_TYPE == "benchmark") {
+                    addAnalyticsListener(LiveTuneBenchmarkListener())
+                }
                 if (frameProgress != null) {
                     var sampleStartMs = 0L
                     var sampleStartPresentationUs = 0L
@@ -388,6 +391,44 @@ object FortressPlayerFactory {
                 }
             }
     }
+
+    internal fun liveSource(
+        context: Context,
+        item: MediaItem,
+        selectedAtMs: Long,
+        mode: PlaybackMode
+    ): MediaSource {
+        val tune = if (BuildConfig.BUILD_TYPE == "benchmark") {
+            val loopback = item.localConfiguration?.uri?.host in setOf("127.0.0.1", "localhost", "::1", "[::1]")
+            LiveTuneBenchmark(selectedAtMs, mode, loopback)
+        } else null
+        val mediaItem = if (tune != null) item.buildUpon().setTag(tune).build() else item
+        return mediaSourceFactory(context, tune, fastLiveStartup = mode == PlaybackMode.AUTO).createMediaSource(mediaItem)
+    }
+
+    private fun mediaSourceFactory(
+        context: Context,
+        tune: LiveTuneBenchmark? = null,
+        fastLiveStartup: Boolean = false
+    ): DefaultMediaSourceFactory {
+        val httpFactory = httpFactory(15_000, 20_000)
+        val fastFactory = if (fastLiveStartup) httpFactory(6_000, 6_000) else null
+        val firstOpen = AtomicBoolean(true)
+        val upstream = if (fastFactory == null && tune == null) httpFactory else DataSource.Factory {
+            LiveStartupDataSource(httpFactory.createDataSource(), fastFactory?.createDataSource(), firstOpen, tune)
+        }
+        val dataSourceFactory = DefaultDataSource.Factory(context, upstream)
+        if (tune != null) dataSourceFactory.setTransferListener(tune)
+        return DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataSourceFactory)
+            .setLoadErrorHandlingPolicy(FortressLoadErrorHandlingPolicy(tune))
+    }
+
+    private fun httpFactory(connectTimeoutMs: Int, readTimeoutMs: Int) = DefaultHttpDataSource.Factory()
+        .setConnectTimeoutMs(connectTimeoutMs)
+        .setReadTimeoutMs(readTimeoutMs)
+        .setAllowCrossProtocolRedirects(true)
+        .setUserAgent("FortressTV")
 
     fun mediaItem(url: String, type: PlaybackContentType, mode: PlaybackMode): MediaItem {
         val builder = MediaItem.Builder().setUri(url)
