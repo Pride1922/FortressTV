@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC17",
-    "versionCode":  51,
-    "notes":  "FortressTV 2.0.0-RC17\n\nTrakt.tv Features:\n- Two-Way Watched History Sync: Import watched movies and TV series episodes directly from Trakt with fast local catalog matching.\n- Manual Watched/Unwatched Toggle Sync: Marking movies or episodes watched or unwatched in FortressTV updates your Trakt watch history in real time.\n- Trakt Watchlist: Dedicated customizable Home screen shelf featuring items from your Trakt Watchlist matched against your active VOD sources.\n- Series Episodes auto-match: Opening series episodes automatically correlates season and episode progress against Trakt history.\n- Trakt Sync Controls: Dedicated Watchlist and Watched History manual sync triggers and status reporting in Settings.\n- Full English and Portuguese (pt-PT) localization.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC17/fortresstv.apk",
-    "sha256":  "14BC2B09C402B7CA9B311B5A2452136A9FAE259A1344DA70E3EC6858A4114178"
+    "version":  "2.0.0-RC18",
+    "versionCode":  52,
+    "notes":  "FortressTV 2.0.0-RC18 adds personalized Trakt recommendations: Home shelf matched against active catalogues, profile parental filtering, touch/TV D-pad \u0027Hide on Trakt\u0027 dismissal, offline caching, and English/Portuguese (pt-PT) support.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC18/fortresstv.apk",
+    "sha256":  "FCFC7DB03B20F358A7A7A90DA9F0ACBF4EA8CC37FEB037380DA7BBE634CBE704"
 }
