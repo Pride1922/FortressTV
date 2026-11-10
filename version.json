@@ -1,7 +1,7 @@
 {
-  "version": "2.0.0-RC22",
-  "versionCode": 56,
-  "notes": "- Refreshes remote XMLTV guides in the background on launch, resume, and day rollover. Failed or invalid downloads leave the cached guide available.\n- Fixes black video with sound when playing a movie trailer in the app. The shared trailer player now uses a native Android dialog.\n\n- Atualiza os guias XMLTV remotos em segundo plano ao abrir ou retomar a aplicação e na mudança de dia. Se a transferência falhar ou for inválida, o guia em cache continua disponível.\n- Corrige o ecrã preto com som ao reproduzir o trailer de um filme na aplicação. O leitor de trailers utiliza agora uma janela nativa do Android.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC22/fortresstv.apk",
-  "sha256": "1D598E4EC92042FFCD0DAB30D78FCA4D24F882E82CD916E1C1C359DF604577F2"
+  "version": "2.0.0-RC23",
+  "versionCode": 57,
+  "notes": "- Redesigned Home with compact Continue Watching cards, episode labels, and shortcuts to Live TV, Movies, and Series.\n- Customize Home can show, hide, and reorder shelves. The order is saved per profile.\n- Improved movie card button readability and added a way to restore hidden recommendations.\n- Automatic live playback retries a stalled first HTTP open sooner.\n\n- Novo ecrã inicial com cartões compactos em Continuar a ver, identificação de episódios e atalhos para TV em direto, Filmes e Séries.\n- Em Personalizar Início pode mostrar, ocultar e reordenar secções. A ordem é guardada por perfil.\n- Melhorámos a legibilidade dos botões nos cartões de filmes e adicionámos uma opção para restaurar recomendações ocultas.\n- No modo Automático, a reprodução em direto volta a tentar mais cedo se o primeiro pedido HTTP exceder o tempo limite.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC23/fortresstv.apk",
+  "sha256": "2575C7B696B6771957CE18E69CC6FC54DECF457CA9EBB192A0AA37A544FE184C"
 }
