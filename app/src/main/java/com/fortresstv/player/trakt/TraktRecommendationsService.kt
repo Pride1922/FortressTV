@@ -11,13 +11,16 @@ import kotlinx.coroutines.withContext
 
 internal data class TraktMatchedRecommendations(
     val movies: List<CatalogMovie> = emptyList(),
-    val series: List<CatalogSeries> = emptyList()
+    val series: List<CatalogSeries> = emptyList(),
+    val includesTrending: Boolean = false,
+    val seriesAreTrending: Boolean = false
 ) {
     val totalCount: Int get() = movies.size + series.size
     val isEmpty: Boolean get() = movies.isEmpty() && series.isEmpty()
 }
 
 internal object TraktRecommendationsService {
+    private const val CANDIDATE_LIMIT = 100
 
     suspend fun syncRecommendations(
         context: Context,
@@ -32,41 +35,75 @@ internal object TraktRecommendationsService {
 
         val accessToken = traktStore.getValidAccessToken(clientId, client)
             ?: return@withContext Result.failure(IllegalStateException("Unable to obtain valid access token"))
+        val recStore = TraktRecommendationsStore(context, profileNamespace)
 
-        val moviesResult = client.fetchRecommendedMovies(accessToken, clientId, limit = 40)
-        val showsResult = client.fetchRecommendedShows(accessToken, clientId, limit = 40)
-
-        val items = mutableListOf<TraktRecommendationItem>()
-        when (moviesResult) {
-            is TraktAuthResult.Success -> items.addAll(moviesResult.data)
-            is TraktAuthResult.Failure -> {}
-        }
-        when (showsResult) {
-            is TraktAuthResult.Success -> items.addAll(showsResult.data)
-            is TraktAuthResult.Failure -> {}
-        }
-
-        // If personalized recommendations are empty (e.g. brand new Trakt account with no watch history),
-        // fall back to Trakt Trending movies and shows so the shelf is immediately populated.
-        val trendingFallback = items.isEmpty()
-        if (trendingFallback) {
-            val trendingMovies = client.fetchTrendingMovies(clientId = clientId, accessToken = accessToken, limit = 40)
-            if (trendingMovies is TraktAuthResult.Success) {
-                items.addAll(trendingMovies.data)
+        fun refreshCategory(
+            kind: TraktWatchlistKind,
+            personalized: TraktAuthResult<List<TraktRecommendationItem>>,
+            fetchTrending: () -> TraktAuthResult<List<TraktRecommendationItem>>
+        ): TraktAuthResult<List<TraktRecommendationItem>> {
+            val cached = recStore.loadRecommendations().filter { it.kind == kind }
+            // Keep the last usable list when Trakt fails temporarily instead of replacing it.
+            if (personalized is TraktAuthResult.Failure && cached.isNotEmpty()) {
+                return TraktAuthResult.Success(cached)
             }
-            val trendingShows = client.fetchTrendingShows(clientId = clientId, accessToken = accessToken, limit = 40)
-            if (trendingShows is TraktAuthResult.Success) {
-                items.addAll(trendingShows.data)
+            val fallbackResult = withTrendingFallback(personalized, includeBackup = true) {
+                fetchTrending()
+            }
+            return if (fallbackResult is TraktAuthResult.Failure && cached.isNotEmpty()) {
+                TraktAuthResult.Success(cached)
+            } else {
+                fallbackResult
             }
         }
+        val moviesResult = refreshCategory(
+            TraktWatchlistKind.MOVIE,
+            client.fetchRecommendedMovies(accessToken, clientId, limit = CANDIDATE_LIMIT)
+        ) {
+            client.fetchTrendingMovies(clientId = clientId, limit = CANDIDATE_LIMIT)
+        }
+        val showsResult = refreshCategory(
+            TraktWatchlistKind.SHOW,
+            client.fetchRecommendedShows(accessToken, clientId, limit = CANDIDATE_LIMIT)
+        ) {
+            client.fetchTrendingShows(clientId = clientId, limit = CANDIDATE_LIMIT)
+        }
 
-        if (moviesResult is TraktAuthResult.Failure && showsResult is TraktAuthResult.Failure && items.isEmpty()) {
+        if (moviesResult is TraktAuthResult.Failure && showsResult is TraktAuthResult.Failure) {
+            val cached = recStore.loadRecommendations()
+            if (cached.isNotEmpty()) {
+                return@withContext Result.success(cached)
+            }
             return@withContext Result.failure(Exception(moviesResult.message))
         }
 
-        val recStore = TraktRecommendationsStore(context, profileNamespace)
-        recStore.saveRecommendations(items, trendingFallback)
+        val updates = buildMap {
+            if (moviesResult is TraktAuthResult.Success) put(TraktWatchlistKind.MOVIE, moviesResult.data)
+            if (showsResult is TraktAuthResult.Success) put(TraktWatchlistKind.SHOW, showsResult.data)
+        }
+        recStore.saveRecommendations(updates)
         Result.success(recStore.loadRecommendations())
+    }
+
+    internal fun withTrendingFallback(
+        personalized: TraktAuthResult<List<TraktRecommendationItem>>,
+        includeBackup: Boolean = false,
+        fetchTrending: () -> TraktAuthResult<List<TraktRecommendationItem>>
+    ): TraktAuthResult<List<TraktRecommendationItem>> {
+        val items = when (personalized) {
+            is TraktAuthResult.Success -> {
+                if (personalized.data.isNotEmpty() && !includeBackup) return personalized
+                personalized.data
+            }
+            is TraktAuthResult.Failure -> {
+                if (personalized.statusCode == 429) return personalized
+                emptyList()
+            }
+        }
+        return when (val trending = fetchTrending()) {
+            is TraktAuthResult.Success -> TraktAuthResult.Success(items + trending.data.map { it.copy(isTrending = true) })
+            is TraktAuthResult.Failure -> if (items.isNotEmpty()) TraktAuthResult.Success(items) else trending
+        }
     }
 
     suspend fun dismissRecommendation(
@@ -177,17 +214,23 @@ internal object TraktRecommendationsService {
         for (cm in allMovies) {
             cm.movie.tmdbId?.takeIf { it.isNotBlank() }?.let { movieByTmdb.putIfAbsent(it, cm) }
             cm.movie.imdbId?.takeIf { it.isNotBlank() }?.let { movieByImdb.putIfAbsent(it.lowercase(), cm) }
-            val rawKey = normalizeTitle(cm.movie.name) + "_" + (cm.movie.year ?: "")
-            movieByTitleYear.putIfAbsent(rawKey, cm)
+            val normName = normalizeTitle(cm.movie.name)
+            if (normName.isNotBlank()) {
+                val rawKey = normName + "_" + (cm.movie.year ?: "")
+                movieByTitleYear.putIfAbsent(rawKey, cm)
+                movieByTitleYear.putIfAbsent("${normName}_", cm)
+            }
 
             val (cleanTitle, extractedYear) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(cm.movie.name)
             val yr = extractedYear ?: cm.movie.year
-            if (cleanTitle.isNotBlank()) {
-                val cleanKey = normalizeTitle(cleanTitle) + "_" + (yr ?: "")
+            val cleanNorm = normalizeTitle(cleanTitle)
+            if (cleanNorm.isNotBlank()) {
+                val cleanKey = cleanNorm + "_" + (yr ?: "")
                 movieByTitleYear.putIfAbsent(cleanKey, cm)
                 if (yr != null) {
-                    movieByTitleYear.putIfAbsent(normalizeTitle(cleanTitle) + "_$yr", cm)
+                    movieByTitleYear.putIfAbsent("${cleanNorm}_$yr", cm)
                 }
+                movieByTitleYear.putIfAbsent("${cleanNorm}_", cm)
             }
         }
 
@@ -198,17 +241,23 @@ internal object TraktRecommendationsService {
         for (cs in allSeries) {
             cs.series.tmdbId?.takeIf { it.isNotBlank() }?.let { seriesByTmdb.putIfAbsent(it, cs) }
             cs.series.imdbId?.takeIf { it.isNotBlank() }?.let { seriesByImdb.putIfAbsent(it.lowercase(), cs) }
-            val rawKey = normalizeTitle(cs.series.name) + "_" + (cs.series.year ?: "")
-            seriesByTitleYear.putIfAbsent(rawKey, cs)
+            val normName = normalizeTitle(cs.series.name)
+            if (normName.isNotBlank()) {
+                val rawKey = normName + "_" + (cs.series.year ?: "")
+                seriesByTitleYear.putIfAbsent(rawKey, cs)
+                seriesByTitleYear.putIfAbsent("${normName}_", cs)
+            }
 
             val (cleanTitle, extractedYear) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(cs.series.name)
             val yr = extractedYear ?: cs.series.year
-            if (cleanTitle.isNotBlank()) {
-                val cleanKey = normalizeTitle(cleanTitle) + "_" + (yr ?: "")
+            val cleanNorm = normalizeTitle(cleanTitle)
+            if (cleanNorm.isNotBlank()) {
+                val cleanKey = cleanNorm + "_" + (yr ?: "")
                 seriesByTitleYear.putIfAbsent(cleanKey, cs)
                 if (yr != null) {
-                    seriesByTitleYear.putIfAbsent(normalizeTitle(cleanTitle) + "_$yr", cs)
+                    seriesByTitleYear.putIfAbsent("${cleanNorm}_$yr", cs)
                 }
+                seriesByTitleYear.putIfAbsent("${cleanNorm}_", cs)
             }
         }
 
@@ -216,43 +265,65 @@ internal object TraktRecommendationsService {
         val matchedSeries = mutableListOf<CatalogSeries>()
         val matchedMovieIds = mutableSetOf<String>()
         val matchedSeriesIds = mutableSetOf<String>()
+        var includesTrending = false
 
-        for (item in recommendations) {
+        fun matchMovie(item: TraktRecommendationItem) {
             val normTitle = normalizeTitle(item.title)
-            when (item.kind) {
-                TraktWatchlistKind.MOVIE -> {
-                    val match = (item.tmdbId?.let { movieByTmdb[it] })
-                        ?: (item.imdbId?.lowercase()?.let { movieByImdb[it] })
-                        ?: (item.year?.let { movieByTitleYear["${normTitle}_$it"] })
-                        ?: movieByTitleYear["${normTitle}_"]
-
-                    if (match != null) {
-                        val libId = match.movie.libraryId(match.catalog.sourceId)
-                        if (matchedMovieIds.add(libId)) {
-                            matchedMovies.add(match)
-                        }
-                    }
-                }
-                TraktWatchlistKind.SHOW -> {
-                    val match = (item.tmdbId?.let { seriesByTmdb[it] })
-                        ?: (item.imdbId?.lowercase()?.let { seriesByImdb[it] })
-                        ?: (item.year?.let { seriesByTitleYear["${normTitle}_$it"] })
-                        ?: seriesByTitleYear["${normTitle}_"]
-
-                    if (match != null) {
-                        val libId = match.series.libraryId(match.catalog.sourceId)
-                        if (matchedSeriesIds.add(libId)) {
-                            matchedSeries.add(match)
-                        }
-                    }
-                }
+            val match = (item.tmdbId?.let { movieByTmdb[it] })
+                ?: (item.imdbId?.lowercase()?.let { movieByImdb[it] })
+                ?: (item.year?.let { movieByTitleYear["${normTitle}_$it"] })
+                ?: (item.year?.let { movieByTitleYear["${normTitle}_${it - 1}"] })
+                ?: (item.year?.let { movieByTitleYear["${normTitle}_${it + 1}"] })
+                ?: movieByTitleYear["${normTitle}_"]
+                ?: return
+            if (matchedMovieIds.add(match.movie.libraryId(match.catalog.sourceId))) {
+                matchedMovies.add(match)
+                includesTrending = includesTrending || item.isTrending
             }
         }
 
-        return TraktMatchedRecommendations(movies = matchedMovies, series = matchedSeries)
+        fun matchSeries(item: TraktRecommendationItem) {
+            val normTitle = normalizeTitle(item.title)
+            val match = (item.tmdbId?.let { seriesByTmdb[it] })
+                ?: (item.imdbId?.lowercase()?.let { seriesByImdb[it] })
+                ?: (item.year?.let { seriesByTitleYear["${normTitle}_$it"] })
+                ?: (item.year?.let { seriesByTitleYear["${normTitle}_${it - 1}"] })
+                ?: (item.year?.let { seriesByTitleYear["${normTitle}_${it + 1}"] })
+                ?: seriesByTitleYear["${normTitle}_"]
+                ?: return
+            if (matchedSeriesIds.add(match.series.libraryId(match.catalog.sourceId))) {
+                matchedSeries.add(match)
+                includesTrending = includesTrending || item.isTrending
+            }
+        }
+
+        for (item in recommendations) {
+            if (item.isTrending) continue
+            when (item.kind) {
+                TraktWatchlistKind.MOVIE -> matchMovie(item)
+                TraktWatchlistKind.SHOW -> matchSeries(item)
+            }
+        }
+        if (matchedMovies.isEmpty()) {
+            recommendations.filter { it.kind == TraktWatchlistKind.MOVIE && it.isTrending }.forEach(::matchMovie)
+        }
+        val useTrendingSeries = matchedSeries.isEmpty()
+        if (useTrendingSeries) {
+            recommendations.filter { it.kind == TraktWatchlistKind.SHOW && it.isTrending }.forEach(::matchSeries)
+        }
+
+        return TraktMatchedRecommendations(
+            movies = matchedMovies,
+            series = matchedSeries,
+            includesTrending = includesTrending,
+            seriesAreTrending = useTrendingSeries && matchedSeries.isNotEmpty()
+        )
     }
 
     fun normalizeTitle(title: String): String {
-        return title.lowercase().replace(Regex("[^a-z0-9]"), "")
+        return java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
     }
 }

@@ -1575,6 +1575,7 @@ internal fun FortressTVApp(
                 )
             } else key(playbackResetGeneration) {
                 FortressLibrary(
+                    traktNamespace = libraryNamespace,
                     playlist = playlist!!,
                     activeProfile = activeProfile!!,
                     startupDestination = startupDestination,

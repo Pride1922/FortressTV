@@ -632,9 +632,9 @@ internal fun FavoriteLibraryScreen(
             onDismiss = { selectedMovie = null },
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
-            onWatch = {
+            onWatch = { movie ->
                 selectedMovie = null
-                onPlayMovie(entry.catalog, entry.movie)
+                onPlayMovie(entry.catalog, movie)
             }
         )
     }

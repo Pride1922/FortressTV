@@ -405,11 +405,13 @@ data class TraktRecommendationItem(
     val tmdbId: String?,
     val imdbId: String?,
     val traktId: Int?,
-    val slug: String?
+    val slug: String?,
+    val isTrending: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("type", if (kind == TraktWatchlistKind.MOVIE) "movie" else "show")
         put("title", title)
+        if (isTrending) put("trending_fallback", true)
         year?.let { put("year", it) }
         val ids = JSONObject()
         tmdbId?.let { ids.put("tmdb", it) }
@@ -455,7 +457,8 @@ data class TraktRecommendationItem(
                 tmdbId = tmdbId,
                 imdbId = imdbId,
                 traktId = traktId,
-                slug = slug
+                slug = slug,
+                isTrending = json.optBoolean("trending_fallback")
             )
         }
     }

@@ -447,6 +447,7 @@ open class TraktClient(
         val url = "${apiHost.trimEnd('/')}/recommendations/movies?limit=$limit"
         return try {
             val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code == 204) return TraktAuthResult.Success(emptyList())
             if (response.code in 200..299) {
                 val array = org.json.JSONArray(response.body)
                 val list = ArrayList<TraktRecommendationItem>(array.length())
@@ -474,6 +475,7 @@ open class TraktClient(
         val url = "${apiHost.trimEnd('/')}/recommendations/shows?limit=$limit"
         return try {
             val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code == 204) return TraktAuthResult.Success(emptyList())
             if (response.code in 200..299) {
                 val array = org.json.JSONArray(response.body)
                 val list = ArrayList<TraktRecommendationItem>(array.length())

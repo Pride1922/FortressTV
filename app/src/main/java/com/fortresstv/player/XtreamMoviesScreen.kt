@@ -608,9 +608,9 @@ internal fun XtreamMoviesScreen(
             onDismiss = { selectedMovie = null },
             onToggleWatchlist = { onToggleWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
-            onWatch = {
+            onWatch = { movie ->
                 selectedMovie = null
-                onPlay(entry.catalog, entry.movie)
+                onPlay(entry.catalog, movie)
             }
         )
     }

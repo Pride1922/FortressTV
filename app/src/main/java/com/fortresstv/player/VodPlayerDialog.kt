@@ -304,7 +304,6 @@ import com.fortresstv.player.library.VodProgressEntry
 import com.fortresstv.player.library.VodProgressKind
 import com.fortresstv.player.library.VodProgressStore
 import com.fortresstv.player.library.CatchupProgressKey
-import com.fortresstv.player.library.profileProgressNamespace
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.xtream.XtreamCatalog
@@ -429,6 +428,7 @@ internal fun SleepTimerConfirmationDialog(
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 internal fun VodPlayerDialog(
+    traktNamespace: String,
     request: VodPlaybackRequest,
     initialPositionMs: Long,
     preferredAudioLanguage: String = "default",
@@ -458,11 +458,10 @@ internal fun VodPlayerDialog(
     val telemetryStore = remember { com.fortresstv.player.telemetry.TelemetryStore.get(context.applicationContext) }
     val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
-    val playbackNamespace = remember(request.key) { profileProgressNamespace(currentHouseholdId, currentProfileId) }
-    val traktScrobbler = remember(playbackNamespace, request.key) {
+    val traktScrobbler = remember(traktNamespace, request.key) {
         TraktScrobbleService(
             context = context.applicationContext,
-            profileNamespace = playbackNamespace
+            profileNamespace = traktNamespace
         )
     }
     val streamKind = if (request.kind == VodProgressKind.CATCHUP) {

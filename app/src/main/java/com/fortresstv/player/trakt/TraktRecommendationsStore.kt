@@ -3,7 +3,6 @@ package com.fortresstv.player.trakt
 import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONArray
-import org.json.JSONObject
 
 class TraktRecommendationsStore(
     context: Context,
@@ -32,12 +31,17 @@ class TraktRecommendationsStore(
         }
     }
 
-    fun saveRecommendations(items: List<TraktRecommendationItem>, trendingFallback: Boolean) = synchronized(preferences) {
+    fun saveRecommendations(updates: Map<TraktWatchlistKind, List<TraktRecommendationItem>>) = synchronized(preferences) {
         val hidden = loadItems(KEY_HIDDEN)
-        val visible = if (trendingFallback) items.filterNot { item -> hidden.any { it.matches(item) } } else items
-        val stillHidden = if (trendingFallback) hidden else hidden.filterNot { item -> items.any { it.matches(item) } }
+        val items = updates.values.flatten()
+        val visible = items.filterNot { item -> item.isTrending && hidden.any { it.matches(item) } }
+        val refreshedKinds = visible.mapTo(mutableSetOf()) { it.kind }
+        val retained = loadRecommendations().filterNot { item ->
+            item.kind in refreshedKinds || hidden.any { it.matches(item) }
+        }
+        val stillHidden = hidden.filterNot { item -> items.any { !it.isTrending && it.matches(item) } }
         preferences.edit()
-            .putString(KEY_ITEMS, encode(visible))
+            .putString(KEY_ITEMS, encode(retained + visible))
             .putString(KEY_HIDDEN, encode(stillHidden))
             .putLong(KEY_LAST_SYNCED, System.currentTimeMillis())
             .apply()

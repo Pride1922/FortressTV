@@ -399,6 +399,12 @@ internal data class VodPlaybackRequest(
     val imdbId: String? = null
 )
 
+internal fun XtreamMovie.toPlaybackRequest(sourceId: String, streamUrl: String) = VodPlaybackRequest(
+    key = libraryId(sourceId), kind = VodProgressKind.MOVIE, sourceId = sourceId,
+    itemId = id.toString(), title = name, posterUrl = posterUrl, containerExtension = containerExtension,
+    streamUrl = streamUrl, tmdbId = tmdbId, imdbId = imdbId
+)
+
 internal fun resolveVodPlayback(
     entry: VodProgressEntry,
     catalogs: List<XtreamCatalog>,
@@ -408,12 +414,12 @@ internal fun resolveVodPlayback(
 ): VodPlaybackRequest? {
     val source = profiles.firstOrNull { it.id == entry.sourceId }?.source as? ContentSource.Xtream ?: return null
     val client = XtreamClient(context.applicationContext, entry.sourceId, source)
+    val catalog = catalogs.firstOrNull { it.sourceId == entry.sourceId }
+    val movie = if (entry.kind == VodProgressKind.MOVIE) {
+        catalog?.movies?.firstOrNull { it.id.toString() == entry.itemId }
+    } else null
     val streamUrl = when (entry.kind) {
-        VodProgressKind.MOVIE -> {
-            val movie = catalogs.firstOrNull { it.sourceId == entry.sourceId }
-                ?.movies?.firstOrNull { it.id.toString() == entry.itemId } ?: return null
-            client.movieStreamUrl(movie)
-        }
+        VodProgressKind.MOVIE -> client.movieStreamUrl(movie ?: return null)
         VodProgressKind.EPISODE -> client.episodeStreamUrl(
             XtreamEpisode(
                 id = entry.itemId,
@@ -451,14 +457,14 @@ internal fun resolveVodPlayback(
         }
     }
     val series = if (entry.kind == VodProgressKind.EPISODE && entry.seriesId != null) {
-        catalogs.firstOrNull { it.sourceId == entry.sourceId }?.series?.firstOrNull { it.id == entry.seriesId }
+        catalog?.series?.firstOrNull { it.id == entry.seriesId }
     } else null
     val seriesName = series?.name
     return VodPlaybackRequest(
         key = entry.key, kind = entry.kind, sourceId = entry.sourceId, itemId = entry.itemId,
         seriesId = entry.seriesId, seriesName = seriesName, title = entry.title, posterUrl = entry.posterUrl,
         containerExtension = entry.containerExtension, season = entry.season, episode = entry.episode,
-        streamUrl = streamUrl, tmdbId = series?.tmdbId, imdbId = series?.imdbId
+        streamUrl = streamUrl, tmdbId = movie?.tmdbId ?: series?.tmdbId, imdbId = movie?.imdbId ?: series?.imdbId
     )
 }
 
@@ -577,6 +583,7 @@ internal fun FortressLibrary(
     error: String?,
     userLibrary: UserLibraryStore,
     progressStore: VodProgressStore,
+    traktNamespace: String,
     favoriteChannelIds: Set<String>,
     recentChannelIds: List<String>,
     hiddenCategories: Set<String> = emptySet(),
@@ -815,6 +822,7 @@ internal fun FortressLibrary(
             ReportDrawn()
             when (destination) {
                 LibraryDestination.HOME -> HomeScreen(
+                    traktNamespace = traktNamespace,
                     channels = effectivePlaylist.channels,
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
@@ -857,12 +865,8 @@ internal fun FortressLibrary(
                     onPlayMovie = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
-                            vodPlayback = VodPlaybackRequest(
-                                key = movie.libraryId(catalog.sourceId), kind = VodProgressKind.MOVIE,
-                                sourceId = catalog.sourceId, itemId = movie.id.toString(), title = movie.name,
-                                posterUrl = movie.posterUrl, containerExtension = movie.containerExtension,
-                                streamUrl = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
-                            )
+                            val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
                         }
                     },
                     onPlayEpisode = { catalog, series, episode, url ->
@@ -1023,16 +1027,8 @@ internal fun FortressLibrary(
                     onPlay = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
-                            vodPlayback = VodPlaybackRequest(
-                                key = movie.libraryId(catalog.sourceId),
-                                kind = VodProgressKind.MOVIE,
-                                sourceId = catalog.sourceId,
-                                itemId = movie.id.toString(),
-                                title = movie.name,
-                                posterUrl = movie.posterUrl,
-                                containerExtension = movie.containerExtension,
-                                streamUrl = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
-                            )
+                            val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
                         }
                     }
                 )
@@ -1114,12 +1110,8 @@ internal fun FortressLibrary(
                     onPlayMovie = { catalog, movie ->
                         val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
                         if (source != null) {
-                            vodPlayback = VodPlaybackRequest(
-                                key = movie.libraryId(catalog.sourceId), kind = VodProgressKind.MOVIE,
-                                sourceId = catalog.sourceId, itemId = movie.id.toString(), title = movie.name,
-                                posterUrl = movie.posterUrl, containerExtension = movie.containerExtension,
-                                streamUrl = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
-                            )
+                            val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
+                            vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
                         }
                     },
                     onPlayEpisode = { catalog, series, episode, url ->
@@ -1143,6 +1135,7 @@ internal fun FortressLibrary(
         vodPlayback?.let { request ->
             val previous = progressEntries.firstOrNull { it.key == request.key } ?: progressStore.entries().firstOrNull { it.key == request.key }
             VodPlayerDialog(
+                traktNamespace = traktNamespace,
                 request = request,
                 initialPositionMs = previous?.positionMs ?: 0L,
                 preferredAudioLanguage = preferredAudioLanguage,

@@ -387,7 +387,7 @@ internal fun MovieDetailsDialog(
     onDismiss: () -> Unit,
     onToggleWatchlist: () -> Unit,
     onToggleWatched: () -> Unit,
-    onWatch: () -> Unit,
+    onWatch: (XtreamMovie) -> Unit,
     onHideOnTrakt: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -446,6 +446,12 @@ internal fun MovieDetailsDialog(
     val effectiveRating = tmdbMetadata?.rating ?: details?.rating ?: movie.rating
     val effectiveReleaseDate = tmdbMetadata?.releaseDate ?: details?.releaseDate ?: movie.year
     val effectiveTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
+    val watchMovie = {
+        onWatch(movie.copy(
+            tmdbId = movie.tmdbId?.takeIf { it.isNotBlank() } ?: details?.tmdbId,
+            imdbId = movie.imdbId?.takeIf { it.isNotBlank() } ?: details?.imdbId
+        ))
+    }
     var activeTrailer by remember(movie.id) { mutableStateOf<String?>(null) }
     val posterRequest = remember(effectivePoster) {
         effectivePoster?.takeIf(String::isNotBlank)?.let { url ->
@@ -627,7 +633,7 @@ internal fun MovieDetailsDialog(
                             isWatched = isWatched,
                             isWatchlisted = isWatchlisted,
                             watchFocus = watchButtonFocusRequester,
-                            onWatch = onWatch,
+                            onWatch = watchMovie,
                             onTrailer = effectiveTrailer?.takeIf { it.isNotBlank() }?.let { url -> { activeTrailer = url } },
                             onToggleWatchlist = onToggleWatchlist,
                             onToggleWatched = onToggleWatched,
@@ -731,7 +737,7 @@ internal fun MovieDetailsDialog(
                                 isWatched = isWatched,
                                 isWatchlisted = isWatchlisted,
                                 watchFocus = watchButtonFocusRequester,
-                                onWatch = onWatch,
+                                onWatch = watchMovie,
                                 onTrailer = effectiveTrailer?.takeIf { it.isNotBlank() }?.let { url -> { activeTrailer = url } },
                                 onToggleWatchlist = onToggleWatchlist,
                                 onToggleWatched = onToggleWatched,

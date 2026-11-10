@@ -13,6 +13,29 @@ import org.junit.Test
 class TraktRecommendationsServiceTest {
 
     @Test
+    fun emptySeriesRecommendationsFallBackToTrendingSeries() {
+        val series = TraktRecommendationItem(
+            kind = TraktWatchlistKind.SHOW, title = "Sample Series", year = 2024,
+            tmdbId = "456", imdbId = null, traktId = 12, slug = null
+        )
+        val result = TraktRecommendationsService.withTrendingFallback(TraktAuthResult.Success(emptyList())) {
+            TraktAuthResult.Success(listOf(series))
+        } as TraktAuthResult.Success
+
+        val trending = series.copy(isTrending = true)
+        assertEquals(listOf(trending), result.data)
+        assertEquals(trending, TraktRecommendationItem.fromJson(trending.toJson()))
+    }
+
+    @Test
+    fun temporaryRecommendationFailureDoesNotReplaceCachedCategoryWithTrending() {
+        val failure = TraktAuthResult.Failure("Rate limited", statusCode = 429)
+        assertEquals(failure, TraktRecommendationsService.withTrendingFallback(failure) {
+            error("Trending should wait until the next refresh")
+        })
+    }
+
+    @Test
     fun parseRecommendationFromJson() {
         val json = JSONObject("""
             {
@@ -111,6 +134,27 @@ class TraktRecommendationsServiceTest {
         assertEquals(1, matched.series.size)
         assertEquals(501, matched.movies[0].movie.id)
         assertEquals(601, matched.series[0].series.id)
+
+        val trendingSeries = recs[1].copy(isTrending = true)
+        val unavailableSeries = recs[1].copy(title = "Unavailable Series", tmdbId = "999999")
+        val fallback = TraktRecommendationsService.matchRecommendations(
+            listOf(recs[0], unavailableSeries, trendingSeries), listOf(catalog)
+        )
+        assertEquals(matched.movies, fallback.movies)
+        assertEquals(matched.series, fallback.series)
+        assertTrue(fallback.includesTrending)
+        assertTrue(fallback.seriesAreTrending)
+
+        val trendingMovie = recs[0].copy(isTrending = true)
+        val movieFallback = TraktRecommendationsService.matchRecommendations(
+            listOf(recs[2], recs[1], trendingMovie), listOf(catalog)
+        )
+        assertEquals(matched.movies, movieFallback.movies)
+        assertEquals(matched.series, movieFallback.series)
+        assertTrue(movieFallback.includesTrending)
+
+        val preferred = TraktRecommendationsService.matchRecommendations(listOf(trendingSeries) + recs, listOf(catalog))
+        assertEquals(matched, preferred)
     }
 
     @Test
@@ -216,5 +260,83 @@ class TraktRecommendationsServiceTest {
         val matched = TraktRecommendationsService.matchRecommendations(recs, listOf(catalog))
         assertEquals(1, matched.movies.size)
         assertEquals(801, matched.movies[0].movie.id)
+    }
+
+    @Test
+    fun personalizedErrorFallsBackToTrending() {
+        val trendingMovie = TraktRecommendationItem(
+            kind = TraktWatchlistKind.MOVIE, title = "Gladiator II", year = 2024,
+            tmdbId = "123", imdbId = null, traktId = 45, slug = null
+        )
+        // Non-429 failure (e.g. 500, 401, timeout) falls back to trending
+        val failure500 = TraktAuthResult.Failure("Internal server error", statusCode = 500)
+        val result500 = TraktRecommendationsService.withTrendingFallback(failure500) {
+            TraktAuthResult.Success(listOf(trendingMovie))
+        } as TraktAuthResult.Success
+        assertEquals(listOf(trendingMovie.copy(isTrending = true)), result500.data)
+
+        val failureNetwork = TraktAuthResult.Failure("Network timeout")
+        val resultNetwork = TraktRecommendationsService.withTrendingFallback(failureNetwork) {
+            TraktAuthResult.Success(listOf(trendingMovie))
+        } as TraktAuthResult.Success
+        assertEquals(listOf(trendingMovie.copy(isTrending = true)), resultNetwork.data)
+    }
+
+    @Test
+    fun matchingHandlesDiacriticsAndYearTolerance() {
+        val accentedMovie = XtreamMovie(
+            id = 901,
+            name = "Corações de Ferro",
+            categoryId = "1",
+            posterUrl = null,
+            containerExtension = "mp4",
+            rating = "7.6",
+            year = "2024",
+            plot = null,
+            tmdbId = null
+        )
+        val yearDiffMovie = XtreamMovie(
+            id = 902,
+            name = "Dune: Part Two",
+            categoryId = "1",
+            posterUrl = null,
+            containerExtension = "mp4",
+            rating = "8.6",
+            year = "2023", // Catalog lists 2023
+            plot = null,
+            tmdbId = null
+        )
+        val catalog = XtreamCatalog(
+            sourceId = "src1",
+            sourceName = "Source 1",
+            movies = listOf(accentedMovie, yearDiffMovie)
+        )
+
+        val recs = listOf(
+            // Trakt has unaccented title or same accented title
+            TraktRecommendationItem(
+                kind = TraktWatchlistKind.MOVIE,
+                title = "Coracoes de Ferro",
+                year = 2024,
+                tmdbId = "999",
+                imdbId = null,
+                traktId = 1,
+                slug = null
+            ),
+            // Trakt lists 2024 for release
+            TraktRecommendationItem(
+                kind = TraktWatchlistKind.MOVIE,
+                title = "Dune: Part Two",
+                year = 2024,
+                tmdbId = "888",
+                imdbId = null,
+                traktId = 2,
+                slug = null
+            )
+        )
+
+        val matched = TraktRecommendationsService.matchRecommendations(recs, listOf(catalog))
+        assertEquals(2, matched.movies.size)
+        assertEquals(setOf(901, 902), matched.movies.map { it.movie.id }.toSet())
     }
 }

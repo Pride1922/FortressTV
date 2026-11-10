@@ -410,6 +410,9 @@ interface Strings {
     val traktWatchedHistoryEmpty: String
     val traktRecommendations: String
     val traktRecommendationsEmpty: String
+    val traktIncludesTrending: String
+    val traktSeriesRecommendationsEmpty: String
+    val traktTrendingSeries: String
     val traktSyncRecommendations: String
     val traktSyncingRecommendations: String
     val traktRecommendationsSynced: String
@@ -977,12 +980,15 @@ object EnglishStrings : Strings {
     override val traktAddToWatchlist = "Add to Trakt Watchlist"
     override val traktRemoveFromWatchlist = "Remove from Trakt Watchlist"
     override val traktWatchedHistory = "Watched History"
-    override val traktSyncWatchedHistory = "Sync Watched History"
+    override val traktSyncWatchedHistory = "Import from Trakt"
     override val traktSyncingWatchedHistory = "Syncing watched history with Trakt..."
     override val traktWatchedHistorySynced = "Watched history synced (%d items matched)"
     override val traktWatchedHistoryEmpty = "No watched items synced yet."
     override val traktRecommendations = "Recommended for You"
     override val traktRecommendationsEmpty = "No recommendations match your current sources."
+    override val traktIncludesTrending = "Includes trending titles from Trakt"
+    override val traktSeriesRecommendationsEmpty = "Series recommendations appear when a Trakt pick matches your library."
+    override val traktTrendingSeries = "Trending series on Trakt"
     override val traktSyncRecommendations = "Sync Recommendations"
     override val traktSyncingRecommendations = "Syncing recommendations with Trakt..."
     override val traktRecommendationsSynced = "Recommendations synced (%d items)"
@@ -1553,12 +1559,15 @@ object PortugueseStrings : Strings {
     override val traktAddToWatchlist = "Adicionar à Lista do Trakt"
     override val traktRemoveFromWatchlist = "Remover da Lista do Trakt"
     override val traktWatchedHistory = "Histórico de Visualizações"
-    override val traktSyncWatchedHistory = "Sincronizar Histórico"
+    override val traktSyncWatchedHistory = "Importar do Trakt"
     override val traktSyncingWatchedHistory = "A sincronizar histórico com o Trakt..."
     override val traktWatchedHistorySynced = "Histórico sincronizado (%d itens correspondidos)"
     override val traktWatchedHistoryEmpty = "Nenhum item visto sincronizado ainda."
     override val traktRecommendations = "Recomendados para Si"
     override val traktRecommendationsEmpty = "Nenhuma recomendação corresponde às suas fontes atuais."
+    override val traktIncludesTrending = "Inclui títulos em destaque no Trakt"
+    override val traktSeriesRecommendationsEmpty = "As recomendações de séries aparecem quando há títulos do Trakt na sua biblioteca."
+    override val traktTrendingSeries = "Séries em destaque no Trakt"
     override val traktSyncRecommendations = "Sincronizar Recomendações"
     override val traktSyncingRecommendations = "A sincronizar recomendações com o Trakt..."
     override val traktRecommendationsSynced = "Recomendações sincronizadas (%d itens)"

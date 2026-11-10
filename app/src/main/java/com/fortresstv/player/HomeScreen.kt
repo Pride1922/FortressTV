@@ -149,7 +149,6 @@ import com.fortresstv.player.update.UpdateManager
 import com.fortresstv.player.update.AppUpdateInfo
 import com.fortresstv.player.BuildConfig
 import com.fortresstv.player.ui.AppLanguage
-import com.fortresstv.player.account.AccountRepository
 import com.fortresstv.player.account.AccountTab
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.People
@@ -313,7 +312,6 @@ import com.fortresstv.player.library.VodProgressEntry
 import com.fortresstv.player.library.VodProgressKind
 import com.fortresstv.player.library.VodProgressStore
 import com.fortresstv.player.library.CatchupProgressKey
-import com.fortresstv.player.library.profileProgressNamespace
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.xtream.XtreamCatalog
@@ -447,6 +445,7 @@ private fun HomeShortcut(title: String, icon: ImageVector, onClick: () -> Unit, 
 
 @Composable
 internal fun HomeScreen(
+    traktNamespace: String,
     channels: List<PlaylistChannel>,
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
@@ -530,12 +529,10 @@ internal fun HomeScreen(
     }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
 
-    val currentHouseholdId = remember { AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
     val currentProfile by remember(context) {
         ProfileRepository.get(context.applicationContext).activeProfile
     }.collectAsState()
     val currentProfileId = currentProfile.id
-    val traktNamespace = remember(currentHouseholdId, currentProfileId) { profileProgressNamespace(currentHouseholdId, currentProfileId) }
     val traktStore = remember(traktNamespace) { TraktSettingsStore(context.applicationContext, traktNamespace) }
     val traktWatchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
     val traktRecStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace) }
@@ -561,9 +558,9 @@ internal fun HomeScreen(
             }
             traktWatchlistItems = watchlist
             traktRecItems = recommendations
-            val res = TraktWatchlistService.syncWatchlist(context, traktNamespace)
-            if (res.isSuccess) {
-                traktWatchlistItems = res.getOrDefault(emptyList())
+            launch {
+                TraktWatchlistService.syncWatchlist(context, traktNamespace)
+                    .onSuccess { traktWatchlistItems = it }
             }
             recommendationLock.withLock {
                 TraktRecommendationsService.syncRecommendations(context, traktNamespace)
@@ -589,7 +586,7 @@ internal fun HomeScreen(
         mutableStateOf(com.fortresstv.player.trakt.TraktMatchedRecommendations())
     }
     val matchedTraktRecs by matchedRecsState
-    LaunchedEffect(matchedRecsState, traktRecItems) {
+    LaunchedEffect(matchedRecsState, traktRecItems, catalogs) {
         matchedRecsState.value = if (showTraktRecs && traktRecItems.isNotEmpty()) withContext(Dispatchers.Default) {
             com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
                 recommendations = traktRecItems,
@@ -1315,40 +1312,61 @@ internal fun HomeScreen(
                                     Text(strings.traktHiddenRecommendations)
                                 }
                             }
+                            if (matchedTraktRecs.includesTrending) {
+                                Text(strings.traktIncludesTrending, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             Spacer(Modifier.height(10.dp))
-                            val traktRecRowState = rememberLazyListState()
-                            LazyRow(state = traktRecRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(matchedTraktRecs.movies, key = { index, it -> "trakt_rec_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
-                                    val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                    val cachedOmdb = remember(entry.movie.id) {
-                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                            if (matchedTraktRecs.isEmpty) {
+                                Text(strings.traktRecommendationsEmpty, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (matchedTraktRecs.movies.isNotEmpty()) {
+                                Text(strings.navMovies, style = MaterialTheme.typography.titleSmall)
+                                Spacer(Modifier.height(6.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    items(matchedTraktRecs.movies, key = { "trakt_rec_movie:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+                                        val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                        val cachedOmdb = remember(entry.movie.id) {
+                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                        }
+                                        VodPosterCard(
+                                            title = entry.movie.name,
+                                            posterUrl = entry.movie.posterUrl,
+                                            subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                            imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                            rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                            isWatched = libraryId in watchedItemIds,
+                                            progressFraction = progressByKey[libraryId]?.progressFraction,
+                                            onClick = { selectedMovie = entry },
+                                            modifier = Modifier.width(120.dp)
+                                        )
                                     }
-                                    VodPosterCard(
-                                        title = entry.movie.name,
-                                        posterUrl = entry.movie.posterUrl,
-                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
-                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
-                                        isWatched = libraryId in watchedItemIds,
-                                        progressFraction = progressByKey[libraryId]?.progressFraction,
-                                        onClick = { selectedMovie = entry },
-                                        modifier = Modifier.width(120.dp)
-                                    )
                                 }
-                                itemsIndexed(matchedTraktRecs.series, key = { index, it -> "trakt_rec_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
-                                    val cachedOmdb = remember(entry.series.id) {
-                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            if (matchedTraktRecs.series.isNotEmpty()) {
+                                Text(
+                                    if (matchedTraktRecs.seriesAreTrending) strings.traktTrendingSeries else strings.navSeries,
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    items(matchedTraktRecs.series, key = { "trakt_rec_series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                                        val cachedOmdb = remember(entry.series.id) {
+                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                        }
+                                        VodPosterCard(
+                                            title = entry.series.name,
+                                            posterUrl = entry.series.coverUrl,
+                                            subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                            imdbRating = cachedOmdb?.imdbRating,
+                                            rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                            onClick = { selectedSeries = entry },
+                                            modifier = Modifier.width(120.dp)
+                                        )
                                     }
-                                    VodPosterCard(
-                                        title = entry.series.name,
-                                        posterUrl = entry.series.coverUrl,
-                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                        imdbRating = cachedOmdb?.imdbRating,
-                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
-                                        onClick = { selectedSeries = entry },
-                                        modifier = Modifier.width(120.dp)
-                                    )
                                 }
+                            } else if (matchedTraktRecs.movies.isNotEmpty()) {
+                                Text(strings.traktSeriesRecommendationsEmpty, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -1475,9 +1493,9 @@ internal fun HomeScreen(
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
             onHideOnTrakt = matchingRec?.takeIf { canManageHiddenRecommendations }?.let { rec -> { confirmHideRecommendation(rec) } },
-            onWatch = {
+            onWatch = { movie ->
                 selectedMovie = null
-                onPlayMovie(entry.catalog, entry.movie)
+                onPlayMovie(entry.catalog, movie)
             }
         )
     }

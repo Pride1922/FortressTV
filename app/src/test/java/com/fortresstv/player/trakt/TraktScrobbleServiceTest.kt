@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.fortresstv.player.VodPlaybackRequest
 import com.fortresstv.player.library.VodProgressKind
+import com.fortresstv.player.toPlaybackRequest
+import com.fortresstv.player.xtream.XtreamMovie
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,6 +20,20 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class TraktScrobbleServiceTest {
+
+    @Test
+    fun moviePlaybackCarriesExternalIdsIntoScrobblePayload() {
+        val movie = XtreamMovie(
+            id = 7, name = "Example Movie", categoryId = null, posterUrl = null,
+            containerExtension = "mp4", rating = null, year = "2024", plot = null,
+            tmdbId = "123", imdbId = "tt1234567"
+        )
+        val request = movie.toPlaybackRequest("sample-source", "https://example.invalid/movie.mp4")
+        val ids = TraktScrobbleService.buildScrobblePayload(request, 100f).getJSONObject("movie").getJSONObject("ids")
+
+        assertEquals(123, ids.getInt("tmdb"))
+        assertEquals("tt1234567", ids.getString("imdb"))
+    }
 
     private class TestSharedPreferences : SharedPreferences {
         private val values = mutableMapOf<String, Any?>()
