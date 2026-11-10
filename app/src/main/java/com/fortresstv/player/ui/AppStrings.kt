@@ -393,6 +393,7 @@ interface Strings {
     val traktHelp: String
     val traktHelpLink: String
     val sectionTraktWatchlist: String
+    val sectionTraktRecommendations: String
     val traktWatchlist: String
     val traktWatchlistEmpty: String
     val traktSyncWatchlist: String
@@ -405,6 +406,13 @@ interface Strings {
     val traktSyncingWatchedHistory: String
     val traktWatchedHistorySynced: String
     val traktWatchedHistoryEmpty: String
+    val traktRecommendations: String
+    val traktRecommendationsEmpty: String
+    val traktSyncRecommendations: String
+    val traktSyncingRecommendations: String
+    val traktRecommendationsSynced: String
+    val traktHideRecommendation: String
+    val traktHidingRecommendation: String
     val watchTrailer: String
     val genres: String
     val tabAbout: String
@@ -945,6 +953,7 @@ object EnglishStrings : Strings {
     override val traktHelp = "Obtain a free Trakt Client ID at trakt.tv/oauth/applications"
     override val traktHelpLink = "https://trakt.tv/oauth/applications"
     override val sectionTraktWatchlist = "Trakt Watchlist"
+    override val sectionTraktRecommendations = "Recommended for You"
     override val traktWatchlist = "Trakt Watchlist"
     override val traktWatchlistEmpty = "No items in your Trakt watchlist match your current sources."
     override val traktSyncWatchlist = "Sync Watchlist"
@@ -957,6 +966,13 @@ object EnglishStrings : Strings {
     override val traktSyncingWatchedHistory = "Syncing watched history with Trakt..."
     override val traktWatchedHistorySynced = "Watched history synced (%d items matched)"
     override val traktWatchedHistoryEmpty = "No watched items synced yet."
+    override val traktRecommendations = "Recommended for You"
+    override val traktRecommendationsEmpty = "No recommendations match your current sources."
+    override val traktSyncRecommendations = "Sync Recommendations"
+    override val traktSyncingRecommendations = "Syncing recommendations with Trakt..."
+    override val traktRecommendationsSynced = "Recommendations synced (%d items)"
+    override val traktHideRecommendation = "Hide on Trakt"
+    override val traktHidingRecommendation = "Hiding recommendation..."
     override val watchTrailer = "Watch Trailer"
     override val genres = "Genres"
     override val tabAbout = "About"
@@ -1500,6 +1516,7 @@ object PortugueseStrings : Strings {
     override val traktHelp = "Obtenha um ID de Cliente Trakt gratuito em trakt.tv/oauth/applications"
     override val traktHelpLink = "https://trakt.tv/oauth/applications"
     override val sectionTraktWatchlist = "Lista do Trakt"
+    override val sectionTraktRecommendations = "Recomendados para Si"
     override val traktWatchlist = "Lista do Trakt"
     override val traktWatchlistEmpty = "Nenhum item da sua lista do Trakt corresponde às fontes atuais."
     override val traktSyncWatchlist = "Sincronizar Lista"
@@ -1512,6 +1529,13 @@ object PortugueseStrings : Strings {
     override val traktSyncingWatchedHistory = "A sincronizar histórico com o Trakt..."
     override val traktWatchedHistorySynced = "Histórico sincronizado (%d itens correspondidos)"
     override val traktWatchedHistoryEmpty = "Nenhum item visto sincronizado ainda."
+    override val traktRecommendations = "Recomendados para Si"
+    override val traktRecommendationsEmpty = "Nenhuma recomendação corresponde às suas fontes atuais."
+    override val traktSyncRecommendations = "Sincronizar Recomendações"
+    override val traktSyncingRecommendations = "A sincronizar recomendações com o Trakt..."
+    override val traktRecommendationsSynced = "Recomendações sincronizadas (%d itens)"
+    override val traktHideRecommendation = "Ocultar no Trakt"
+    override val traktHidingRecommendation = "A ocultar recomendação..."
     override val watchTrailer = "Ver Trailer"
     override val genres = "Géneros"
     override val tabAbout = "Sobre"

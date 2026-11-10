@@ -431,6 +431,83 @@ open class TraktClient(
         }
     }
 
+    /**
+     * Fetches personalized movie recommendations for the user.
+     */
+    open fun fetchRecommendedMovies(
+        accessToken: String,
+        clientId: String,
+        limit: Int = 40
+    ): TraktAuthResult<List<TraktRecommendationItem>> {
+        val url = "${apiHost.trimEnd('/')}/recommendations/movies?limit=$limit"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktRecommendationItem>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktRecommendationItem.fromJson(obj, TraktWatchlistKind.MOVIE)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch movie recommendations: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching movie recommendations: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Fetches personalized show recommendations for the user.
+     */
+    open fun fetchRecommendedShows(
+        accessToken: String,
+        clientId: String,
+        limit: Int = 40
+    ): TraktAuthResult<List<TraktRecommendationItem>> {
+        val url = "${apiHost.trimEnd('/')}/recommendations/shows?limit=$limit"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktRecommendationItem>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktRecommendationItem.fromJson(obj, TraktWatchlistKind.SHOW)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch show recommendations: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching show recommendations: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Dismisses (hides) a recommendation on Trakt so it will not appear again.
+     */
+    open fun dismissRecommendation(
+        kind: TraktWatchlistKind,
+        traktIdOrSlug: String,
+        accessToken: String,
+        clientId: String
+    ): TraktAuthResult<Boolean> {
+        val path = if (kind == TraktWatchlistKind.MOVIE) "movies" else "shows"
+        val url = "${apiHost.trimEnd('/')}/recommendations/$path/$traktIdOrSlug"
+        return try {
+            val response = executeDelete(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299 || response.code == 204) {
+                TraktAuthResult.Success(true)
+            } else {
+                TraktAuthResult.Failure("Failed to dismiss recommendation: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error dismissing recommendation: ${e.message}", cause = e)
+        }
+    }
+
     // --- HTTP Helpers using HttpURLConnection ---
 
     open fun executePost(
@@ -469,6 +546,28 @@ open class TraktClient(
     ): TraktHttpResponse {
         val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
+            connectTimeout = connectTimeoutMs
+            readTimeout = readTimeoutMs
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("trakt-api-version", TraktEndpoints.API_VERSION)
+            if (!clientId.isNullOrBlank()) {
+                setRequestProperty("trakt-api-key", clientId)
+            }
+            if (!accessToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $accessToken")
+            }
+        }
+
+        return readResponse(connection)
+    }
+
+    open fun executeDelete(
+        urlString: String,
+        accessToken: String? = null,
+        clientId: String? = null
+    ): TraktHttpResponse {
+        val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+            requestMethod = "DELETE"
             connectTimeout = connectTimeoutMs
             readTimeout = readTimeoutMs
             setRequestProperty("Content-Type", "application/json")

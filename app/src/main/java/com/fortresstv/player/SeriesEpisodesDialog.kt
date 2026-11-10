@@ -391,7 +391,8 @@ internal fun SeriesEpisodesDialog(
     onToggleEpisodeWatched: (XtreamEpisode) -> Unit,
     onDismiss: () -> Unit,
     onPlay: (XtreamEpisode, String) -> Unit,
-    traktNamespace: String = "local"
+    traktNamespace: String = "local",
+    onHideOnTrakt: (() -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
     val isTv = LocalFormFactor.current.isTelevision
@@ -737,6 +738,22 @@ internal fun SeriesEpisodesDialog(
                                     tint = if (isFollowed) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            if (onHideOnTrakt != null) {
+                                Spacer(Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = onHideOnTrakt,
+                                    modifier = Modifier.tvFocusHighlight(
+                                        shape = CircleShape,
+                                        scaleOnFocus = if (isTv) 1.12f else 1f
+                                    )
+                                ) {
+                                    Icon(
+                                        Icons.Default.VisibilityOff,
+                                        contentDescription = strings.traktHideRecommendation,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         } else {
                             OutlinedButton(
                                 onClick = onToggleFollow,
@@ -754,6 +771,24 @@ internal fun SeriesEpisodesDialog(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(if (isFollowed) strings.unfollowSeries else strings.followSeries)
+                            }
+                            if (onHideOnTrakt != null) {
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedButton(
+                                    onClick = onHideOnTrakt,
+                                    modifier = Modifier.tvFocusHighlight(
+                                        shape = ButtonDefaults.outlinedShape,
+                                        scaleOnFocus = if (isTv) 1.05f else 1f
+                                    )
+                                ) {
+                                    Icon(
+                                        Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.traktHideRecommendation)
+                                }
                             }
                         }
                     }

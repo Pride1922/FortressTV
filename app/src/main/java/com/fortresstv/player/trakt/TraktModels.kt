@@ -397,3 +397,66 @@ object TraktSyncPayloadBuilder {
         return JSONObject().apply { put("shows", showsArr) }
     }
 }
+
+data class TraktRecommendationItem(
+    val kind: TraktWatchlistKind,
+    val title: String,
+    val year: Int?,
+    val tmdbId: String?,
+    val imdbId: String?,
+    val traktId: Int?,
+    val slug: String?
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("type", if (kind == TraktWatchlistKind.MOVIE) "movie" else "show")
+        put("title", title)
+        year?.let { put("year", it) }
+        val ids = JSONObject()
+        tmdbId?.let { ids.put("tmdb", it) }
+        imdbId?.let { ids.put("imdb", it) }
+        traktId?.let { ids.put("trakt", it) }
+        slug?.let { ids.put("slug", it) }
+        put("ids", ids)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject, forcedKind: TraktWatchlistKind? = null): TraktRecommendationItem? {
+            val typeStr = json.optString("type")
+            val kind = forcedKind ?: when (typeStr) {
+                "movie" -> TraktWatchlistKind.MOVIE
+                "show" -> TraktWatchlistKind.SHOW
+                else -> {
+                    if (json.has("movie")) TraktWatchlistKind.MOVIE
+                    else if (json.has("show")) TraktWatchlistKind.SHOW
+                    else TraktWatchlistKind.MOVIE
+                }
+            }
+            val media = if (kind == TraktWatchlistKind.MOVIE) {
+                json.optJSONObject("movie") ?: json
+            } else {
+                json.optJSONObject("show") ?: json
+            }
+            val title = media.optString("title").ifBlank { return null }
+            val year = media.optInt("year").takeIf { it > 1800 }
+            val ids = media.optJSONObject("ids")
+            val tmdbId = ids?.optInt("tmdb")?.takeIf { it > 0 }?.toString()
+                ?: ids?.optString("tmdb")?.takeIf { it.isNotBlank() && it != "0" }
+                ?: json.optString("tmdb").takeIf { it.isNotBlank() }
+            val imdbId = ids?.optString("imdb")?.takeIf { it.isNotBlank() }
+                ?: json.optString("imdb").takeIf { it.isNotBlank() }
+            val traktId = ids?.optInt("trakt")?.takeIf { it > 0 }
+                ?: json.optInt("trakt").takeIf { it > 0 }
+            val slug = ids?.optString("slug")?.takeIf { it.isNotBlank() }
+
+            return TraktRecommendationItem(
+                kind = kind,
+                title = title,
+                year = year,
+                tmdbId = tmdbId,
+                imdbId = imdbId,
+                traktId = traktId,
+                slug = slug
+            )
+        }
+    }
+}

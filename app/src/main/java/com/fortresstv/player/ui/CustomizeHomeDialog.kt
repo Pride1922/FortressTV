@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -56,6 +57,7 @@ object HomeSectionId {
     const val RECENT_MOVIES = "recent_movies"
     const val FEATURED_SERIES = "featured_series"
     const val TRAKT_WATCHLIST = "trakt_watchlist"
+    const val TRAKT_RECOMMENDATIONS = "trakt_recommendations"
 }
 
 @Composable
@@ -73,6 +75,7 @@ fun CustomizeHomeDialog(
         Triple(HomeSectionId.RECENT_CHANNELS, strings.sectionRecentChannels, Icons.Default.History),
         Triple(HomeSectionId.FOLLOWED_SERIES, strings.sectionFollowedSeries, Icons.Default.Tv),
         Triple(HomeSectionId.TRAKT_WATCHLIST, strings.sectionTraktWatchlist, Icons.Default.Bookmark),
+        Triple(HomeSectionId.TRAKT_RECOMMENDATIONS, strings.sectionTraktRecommendations, Icons.Default.ThumbUp),
         Triple(HomeSectionId.RECENT_MOVIES, strings.sectionRecentMovies, Icons.Default.Movie),
         Triple(HomeSectionId.FEATURED_SERIES, strings.sectionFeaturedSeries, Icons.Default.AutoAwesome)
     )

@@ -867,6 +867,9 @@ internal fun ApiKeysTab(
                             traktStore.clearConnection()
                             traktConnected = false
                             traktProfile = null
+                            TraktWatchlistStore(context.applicationContext, traktNamespace).clear()
+                            com.fortresstv.player.trakt.TraktWatchedStore(context.applicationContext, traktNamespace).clear()
+                            com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace).clear()
                         },
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = MaterialTheme.colorScheme.error
@@ -1025,6 +1028,73 @@ internal fun ApiKeysTab(
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(strings.traktSyncWatchedHistory)
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                var isSyncingRecs by remember { mutableStateOf(false) }
+                var recsSyncStatus by remember { mutableStateOf<String?>(null) }
+                val recStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.traktRecommendations,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        val lastSyncMs = recStore.lastSyncedEpochMs()
+                        val subtitle = if (isSyncingRecs) {
+                            strings.traktSyncingRecommendations
+                        } else if (recsSyncStatus != null) {
+                            recsSyncStatus!!
+                        } else if (lastSyncMs > 0L) {
+                            strings.traktRecommendationsSynced.format(recStore.loadRecommendations().size)
+                        } else {
+                            strings.traktRecommendationsEmpty
+                        }
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            isSyncingRecs = true
+                            recsSyncStatus = null
+                            coroutineScope.launch {
+                                val result = com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context, traktNamespace)
+                                isSyncingRecs = false
+                                recsSyncStatus = if (result.isSuccess) {
+                                    strings.traktRecommendationsSynced.format(result.getOrDefault(emptyList()).size)
+                                } else {
+                                    result.exceptionOrNull()?.message ?: "Sync error"
+                                }
+                            }
+                        },
+                        enabled = !isSyncingRecs
+                    ) {
+                        if (isSyncingRecs) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(strings.traktSyncRecommendations)
                     }
                 }
             } else {

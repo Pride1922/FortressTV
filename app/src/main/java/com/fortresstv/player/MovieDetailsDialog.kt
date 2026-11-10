@@ -389,7 +389,8 @@ internal fun MovieDetailsDialog(
     onDismiss: () -> Unit,
     onToggleWatchlist: () -> Unit,
     onToggleWatched: () -> Unit,
-    onWatch: () -> Unit
+    onWatch: () -> Unit,
+    onHideOnTrakt: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val strings = LocalAppStrings.current
@@ -633,6 +634,16 @@ internal fun MovieDetailsDialog(
                                 Spacer(Modifier.width(8.dp))
                                 Text(strings.watchNow, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             }
+                            if (onHideOnTrakt != null) {
+                                OutlinedButton(
+                                    onClick = onHideOnTrakt,
+                                    modifier = Modifier.fillMaxWidth().height(36.dp)
+                                ) {
+                                    Icon(Icons.Default.VisibilityOff, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(strings.traktHideRecommendation, fontSize = 12.sp)
+                                }
+                            }
                             Row(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -861,6 +872,26 @@ internal fun MovieDetailsDialog(
                                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
                                     Text(strings.watchNow, fontWeight = FontWeight.Bold)
+                                }
+                                if (onHideOnTrakt != null) {
+                                    OutlinedButton(
+                                        onClick = onHideOnTrakt,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(54.dp)
+                                            .tvFocusHighlight(
+                                                shape = ButtonDefaults.outlinedShape,
+                                                scaleOnFocus = if (isTv) 1.04f else 1.0f
+                                            )
+                                    ) {
+                                        Icon(Icons.Default.VisibilityOff, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            strings.traktHideRecommendation,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -138,6 +138,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Bolt
@@ -168,6 +169,7 @@ import com.fortresstv.player.trakt.TraktSettingsStore
 import com.fortresstv.player.trakt.TraktWatchlistStore
 import com.fortresstv.player.trakt.TraktWatchlistService
 import com.fortresstv.player.trakt.TraktMatchedWatchlist
+import com.fortresstv.player.trakt.TraktWatchlistKind
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import androidx.compose.material.icons.filled.Bookmark
 import com.fortresstv.player.ui.LocalAppStrings
@@ -507,9 +509,13 @@ internal fun HomeScreen(
     val traktNamespace = remember(currentHouseholdId, currentProfileId) { profileProgressNamespace(currentHouseholdId, currentProfileId) }
     val traktStore = remember(traktNamespace) { TraktSettingsStore(context.applicationContext, traktNamespace) }
     val traktWatchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
+    val traktRecStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace) }
 
     var traktWatchlistItems by remember(traktNamespace) {
         mutableStateOf(if (traktStore.isConnected()) traktWatchlistStore.loadWatchlist() else emptyList())
+    }
+    var traktRecItems by remember(traktNamespace) {
+        mutableStateOf(if (traktStore.isConnected()) traktRecStore.loadRecommendations() else emptyList())
     }
 
     LaunchedEffect(traktNamespace, traktStore.isConnected()) {
@@ -517,6 +523,10 @@ internal fun HomeScreen(
             val res = TraktWatchlistService.syncWatchlist(context, traktNamespace)
             if (res.isSuccess) {
                 traktWatchlistItems = res.getOrDefault(emptyList())
+            }
+            val recRes = com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context, traktNamespace)
+            if (recRes.isSuccess) {
+                traktRecItems = recRes.getOrDefault(emptyList())
             }
         }
     }
@@ -529,12 +539,27 @@ internal fun HomeScreen(
         }
     }
 
+    val matchedTraktRecs = remember(traktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated) {
+        if (traktStore.isConnected() && traktRecItems.isNotEmpty()) {
+            com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
+                recommendations = traktRecItems,
+                catalogs = catalogs,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated
+            )
+        } else {
+            com.fortresstv.player.trakt.TraktMatchedRecommendations()
+        }
+    }
+
     val hasContent = (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.SPORTS !in homeHiddenSections && sportsFixtures.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS !in homeHiddenSections && favoriteChannels.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST !in homeHiddenSections && traktStore.isConnected() && !matchedTraktWatchlist.isEmpty) ||
+        (com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections && traktStore.isConnected() && !matchedTraktRecs.isEmpty) ||
         (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty())
 
@@ -1215,6 +1240,70 @@ internal fun HomeScreen(
                         }
                     }
 
+                    if (com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections &&
+                        traktStore.isConnected() &&
+                        !matchedTraktRecs.isEmpty
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.ThumbUp,
+                                    contentDescription = null,
+                                    tint = Color(0xFFED1C24),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    strings.traktRecommendations,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "(${matchedTraktRecs.totalCount})",
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            val traktRecRowState = rememberLazyListState()
+                            LazyRow(state = traktRecRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                itemsIndexed(matchedTraktRecs.movies, key = { index, it -> "trakt_rec_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
+                                    val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                    val cachedOmdb = remember(entry.movie.id) {
+                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    }
+                                    VodPosterCard(
+                                        title = entry.movie.name,
+                                        posterUrl = entry.movie.posterUrl,
+                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                        isWatched = libraryId in watchedItemIds,
+                                        progressFraction = progressByKey[libraryId]?.progressFraction,
+                                        onClick = { selectedMovie = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                                itemsIndexed(matchedTraktRecs.series, key = { index, it -> "trakt_rec_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
+                                    val cachedOmdb = remember(entry.series.id) {
+                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                    }
+                                    VodPosterCard(
+                                        title = entry.series.name,
+                                        posterUrl = entry.series.coverUrl,
+                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                        imdbRating = cachedOmdb?.imdbRating,
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                        onClick = { selectedSeries = entry },
+                                        modifier = Modifier.width(120.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     if (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1326,6 +1415,9 @@ internal fun HomeScreen(
 
     selectedMovie?.let { entry ->
         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        val matchingRec = remember(entry.movie.id, traktRecItems) {
+            traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.MOVIE && ((it.tmdbId != null && it.tmdbId == entry.movie.tmdbId) || (it.imdbId != null && it.imdbId.equals(entry.movie.imdbId, ignoreCase = true)) || (it.title.equals(entry.movie.name, ignoreCase = true) && it.year == entry.movie.year?.toIntOrNull())) }
+        }
         val client = source?.let {
             remember(entry.catalog.sourceId, it) {
                 XtreamClient(context.applicationContext, entry.catalog.sourceId, it)
@@ -1341,6 +1433,15 @@ internal fun HomeScreen(
             onDismiss = { selectedMovie = null },
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
+            onHideOnTrakt = matchingRec?.let { rec ->
+                {
+                    selectedMovie = null
+                    coroutineScope.launch {
+                        com.fortresstv.player.trakt.TraktRecommendationsService.dismissRecommendation(context, traktNamespace, rec)
+                        traktRecItems = traktRecStore.loadRecommendations()
+                    }
+                }
+            },
             onWatch = {
                 selectedMovie = null
                 onPlayMovie(entry.catalog, entry.movie)
@@ -1351,6 +1452,9 @@ internal fun HomeScreen(
     selectedSeries?.let { entry ->
         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
         if (source != null) {
+            val matchingRec = remember(entry.series.id, traktRecItems) {
+                traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.SHOW && ((it.tmdbId != null && it.tmdbId == entry.series.tmdbId) || (it.imdbId != null && it.imdbId.equals(entry.series.imdbId, ignoreCase = true)) || (it.title.equals(entry.series.name, ignoreCase = true) && it.year == entry.series.year?.toIntOrNull())) }
+            }
             SeriesEpisodesDialog(
                 series = entry.series,
                 sourceId = entry.catalog.sourceId,
@@ -1363,6 +1467,15 @@ internal fun HomeScreen(
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 traktNamespace = traktNamespace,
+                onHideOnTrakt = matchingRec?.let { rec ->
+                    {
+                        selectedSeries = null
+                        coroutineScope.launch {
+                            com.fortresstv.player.trakt.TraktRecommendationsService.dismissRecommendation(context, traktNamespace, rec)
+                            traktRecItems = traktRecStore.loadRecommendations()
+                        }
+                    }
+                },
                 onDismiss = { selectedSeries = null },
                 onPlay = { episode, url ->
                     selectedSeries = null

@@ -20,6 +20,7 @@ class TraktClientTest {
     ) {
         var postHandler: ((url: String, body: String, clientId: String?) -> TraktHttpResponse)? = null
         var getHandler: ((url: String, accessToken: String?, clientId: String?) -> TraktHttpResponse)? = null
+        var deleteHandler: ((url: String, accessToken: String?, clientId: String?) -> TraktHttpResponse)? = null
 
         var lastPostUrl: String? = null
         var lastPostBody: String? = null
@@ -44,6 +45,15 @@ class TraktClientTest {
             clientId: String?
         ): TraktHttpResponse {
             return getHandler?.invoke(urlString, accessToken, clientId)
+                ?: TraktHttpResponse(500, "No mock handler", emptyMap())
+        }
+
+        override fun executeDelete(
+            urlString: String,
+            accessToken: String?,
+            clientId: String?
+        ): TraktHttpResponse {
+            return deleteHandler?.invoke(urlString, accessToken, clientId)
                 ?: TraktHttpResponse(500, "No mock handler", emptyMap())
         }
     }
@@ -528,5 +538,80 @@ class TraktClientTest {
         val remRes = client.removeFromHistory(payload, "tok", "cid")
         assertTrue(remRes is TraktAuthResult.Success)
         assertTrue(removedCalled)
+    }
+
+    @Test
+    fun fetchRecommendedMoviesParsesList() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertTrue(url.contains("/recommendations/movies"))
+            val json = """
+                [
+                    {
+                        "title": "Challengers",
+                        "year": 2024,
+                        "ids": {
+                            "trakt": 771234,
+                            "imdb": "tt16426418",
+                            "tmdb": 937287
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchRecommendedMovies("tok", "cid")
+        assertTrue(result is TraktAuthResult.Success)
+        val movies = (result as TraktAuthResult.Success).data
+        assertEquals(1, movies.size)
+        assertEquals("Challengers", movies[0].title)
+        assertEquals(2024, movies[0].year)
+        assertEquals("937287", movies[0].tmdbId)
+        assertEquals(TraktWatchlistKind.MOVIE, movies[0].kind)
+    }
+
+    @Test
+    fun fetchRecommendedShowsParsesList() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertTrue(url.contains("/recommendations/shows"))
+            val json = """
+                [
+                    {
+                        "title": "Shogun",
+                        "year": 2024,
+                        "ids": {
+                            "trakt": 139413,
+                            "imdb": "tt2788316",
+                            "tmdb": 126308
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchRecommendedShows("tok", "cid")
+        assertTrue(result is TraktAuthResult.Success)
+        val shows = (result as TraktAuthResult.Success).data
+        assertEquals(1, shows.size)
+        assertEquals("Shogun", shows[0].title)
+        assertEquals("126308", shows[0].tmdbId)
+        assertEquals(TraktWatchlistKind.SHOW, shows[0].kind)
+    }
+
+    @Test
+    fun dismissRecommendationSendsDelete() {
+        val client = MockTraktClient()
+        var deleteCalledUrl: String? = null
+        client.deleteHandler = { url, _, _ ->
+            deleteCalledUrl = url
+            TraktHttpResponse(204, "", emptyMap())
+        }
+
+        val result = client.dismissRecommendation(TraktWatchlistKind.MOVIE, "937287", "tok", "cid")
+        assertTrue(result is TraktAuthResult.Success)
+        assertEquals("https://api.trakt.tv/recommendations/movies/937287", deleteCalledUrl)
     }
 }
