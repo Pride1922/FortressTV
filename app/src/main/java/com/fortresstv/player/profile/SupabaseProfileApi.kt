@@ -193,6 +193,19 @@ internal class SupabaseProfileApi(
         return text.trim() == "true"
     }
 
+    fun setProfileLanguage(
+        profileId: String,
+        language: String,
+        accessToken: String
+    ): Boolean {
+        val body = JSONObject().apply {
+            put("p_profile_id", profileId)
+            put("p_language", language)
+        }
+        val text = transport.request("POST", "/rest/v1/rpc/fortress_set_profile_language", body, accessToken, null)
+        return text.trim() == "true"
+    }
+
     fun setProfileHideAdultContent(
         profileId: String,
         hideAdultContent: Boolean,

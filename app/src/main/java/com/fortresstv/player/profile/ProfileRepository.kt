@@ -726,6 +726,42 @@ class ProfileRepository internal constructor(
         }
     }
 
+    /**
+     * Persists the interface language for a profile. Language is not a parental-control
+     * setting, so this uses a dedicated RPC that does not require adult authorization.
+     */
+    suspend fun setProfileLanguage(profileId: String, language: String): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val target = _profiles.value.find { it.id == profileId } ?: return@withLock false
+            val normalized = if (language.startsWith("pt")) "pt-PT" else "en"
+            val updated = target.copy(language = normalized)
+            val token = accountRepository.getValidAccessToken()
+
+            if (token != null && isUuid(target.id)) {
+                val remoteSuccess = runCatching {
+                    api.setProfileLanguage(profileId, normalized, token)
+                }.onFailure {
+                    android.util.Log.w("ProfileRepository", "Remote language update failed: ${it.message}")
+                }.getOrDefault(false)
+                if (!remoteSuccess) {
+                    runCatching { api.updateProfile(updated, pinStore.currentUnlockToken(), token) }
+                }
+            }
+
+            val updatedList = _profiles.value.toMutableList().apply {
+                val index = indexOfFirst { it.id == profileId }
+                if (index >= 0) set(index, updated)
+            }
+            _profiles.value = updatedList
+            saveProfilesLocally(updatedList)
+
+            if (_activeProfile.value.id == profileId) {
+                _activeProfile.value = updated
+            }
+            true
+        }
+    }
+
     suspend fun deleteProfile(profileId: String): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (_profiles.value.size <= 1) return@withLock false

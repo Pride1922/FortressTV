@@ -883,7 +883,7 @@ internal fun FortressTVApp(
             if (current.id != "restricted_default") {
                 val profileLang = if (newLang == AppLanguage.PORTUGUESE) "pt-PT" else "en"
                 if (current.language != profileLang) {
-                    profileRepository.saveProfile(current.copy(language = profileLang))
+                    profileRepository.setProfileLanguage(current.id, profileLang)
                 }
             }
         }
