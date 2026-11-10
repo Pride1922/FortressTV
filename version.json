@@ -1,7 +1,7 @@
 {
-  "version": "2.0.0-RC21",
-  "versionCode": 55,
-  "notes": "- Faster startup from cached sources. Home and Live TV can open while catalogue refresh, programme guide restoration, and Home shelves continue loading.\n- Cached startup was verified on the tablet with FortressTV network access blocked.\n\n- Arranque mais rápido com fontes em cache. O Início e a TV em direto podem abrir enquanto o catálogo, o guia de programação e as secções do Início continuam a carregar.\n- O arranque com dados em cache foi verificado no tablet com o acesso à rede da FortressTV bloqueado.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC21/fortresstv.apk",
-  "sha256": "0E1972C3B75D6A790FE08395D3794DE4410B330F388374784D91AB009C3CD2A4"
+  "version": "2.0.0-RC22",
+  "versionCode": 56,
+  "notes": "- Refreshes remote XMLTV guides in the background on launch, resume, and day rollover. Failed or invalid downloads leave the cached guide available.\n- Fixes black video with sound when playing a movie trailer in the app. The shared trailer player now uses a native Android dialog.\n\n- Atualiza os guias XMLTV remotos em segundo plano ao abrir ou retomar a aplicação e na mudança de dia. Se a transferência falhar ou for inválida, o guia em cache continua disponível.\n- Corrige o ecrã preto com som ao reproduzir o trailer de um filme na aplicação. O leitor de trailers utiliza agora uma janela nativa do Android.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC22/fortresstv.apk",
+  "sha256": "1D598E4EC92042FFCD0DAB30D78FCA4D24F882E82CD916E1C1C359DF604577F2"
 }
