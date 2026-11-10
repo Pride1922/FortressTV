@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC18",
-    "versionCode":  52,
-    "notes":  "FortressTV 2.0.0-RC18 adds personalized Trakt recommendations: Home shelf matched against active catalogues, profile parental filtering, touch/TV D-pad \u0027Hide on Trakt\u0027 dismissal, offline caching, and English/Portuguese (pt-PT) support.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC18/fortresstv.apk",
-    "sha256":  "FCFC7DB03B20F358A7A7A90DA9F0ACBF4EA8CC37FEB037380DA7BBE634CBE704"
+    "version":  "2.0.0-RC19",
+    "versionCode":  53,
+    "notes":  "FortressTV 2.0.0-RC19 adds in-app cinematic trailer playback, Portuguese-first trailers with English fallback from TMDb, Trakt trending recommendations fallback, and resilient IPTV VOD title matching.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC19/fortresstv.apk",
+    "sha256":  "ED597320E3B99C42C2D02FEC772ED089FD5165389261A3356210CB0813145C75"
 }
