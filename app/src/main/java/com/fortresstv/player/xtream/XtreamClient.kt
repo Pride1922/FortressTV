@@ -1,6 +1,7 @@
 package com.fortresstv.player.xtream
 
 import android.content.Context
+import android.os.Trace
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.source.ContentSource
 import com.fortresstv.player.source.HttpStatusException
@@ -8,14 +9,20 @@ import com.fortresstv.player.source.retryTransientNetwork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import javax.net.ssl.SSLException
 
 class XtreamClient(
@@ -25,6 +32,12 @@ class XtreamClient(
 ) {
     @Volatile
     private var baseUrl = normalizeServerUrl(source.value)
+
+    // Keep live caches from a previous endpoint or login out of an edited source.
+    private val liveCacheKey by lazy {
+        val identity = listOf(source.value, source.username, source.password).joinToString("\u0000")
+        MessageDigest.getInstance("SHA-256").digest(identity.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
 
     fun resolvedServerUrl(): String = baseUrl
 
@@ -38,28 +51,69 @@ class XtreamClient(
         }
     }
 
-    suspend fun loadCatalog(forceRefresh: Boolean = false): XtreamCatalog = coroutineScope {
+    suspend fun loadCatalog(
+        forceRefresh: Boolean = false,
+        onLiveLoaded: suspend (XtreamCatalog) -> Unit = {}
+    ): XtreamCatalog {
+        val cachedLive = if (forceRefresh) null else loadCachedLive()
+        if (cachedLive != null && cachedLive.catalog.liveChannels.isNotEmpty()) {
+            onLiveLoaded(cachedLive.catalog)
+        }
         authenticate()
-        val liveCategoriesDeferred = async { parseCategories(request("get_live_categories", forceRefresh = forceRefresh)) }
-        val movieCategoriesDeferred = async { parseCategories(request("get_vod_categories", forceRefresh = forceRefresh)) }
-        val seriesCategoriesDeferred = async { parseCategories(request("get_series_categories", forceRefresh = forceRefresh)) }
-        val liveStreamsDeferred = async { request("get_live_streams", forceRefresh = forceRefresh) }
-        val moviesDeferred = async { parseMovies(request("get_vod_streams", forceRefresh = forceRefresh)) }
-        val seriesDeferred = async { parseSeries(request("get_series", forceRefresh = forceRefresh)) }
+        val live = if (cachedLive?.fresh == true && cachedLive.streamBaseUrl == baseUrl) cachedLive.catalog else loadLive()
+        if (live !== cachedLive?.catalog && live.liveChannels.isNotEmpty()) onLiveLoaded(live)
 
-        val liveCategories = liveCategoriesDeferred.await()
-        val liveStreamsJson = liveStreamsDeferred.await()
-        val liveChannels = parseLiveChannels(liveStreamsJson, liveCategories)
+        return coroutineScope {
+            val movieCategories = async { parseCategories(request("get_vod_categories", forceRefresh = forceRefresh)) }
+            val seriesCategories = async { parseCategories(request("get_series_categories", forceRefresh = forceRefresh)) }
+            val movies = async { parseMovies(request("get_vod_streams", forceRefresh = forceRefresh)) }
+            val series = async { parseSeries(request("get_series", forceRefresh = forceRefresh)) }
+            live.copy(
+                movieCategories = movieCategories.await(),
+                seriesCategories = seriesCategories.await(),
+                movies = movies.await(),
+                series = series.await()
+            )
+        }
+    }
 
-        XtreamCatalog(
+    private data class CachedLive(val catalog: XtreamCatalog, val streamBaseUrl: String, val fresh: Boolean)
+
+    private suspend fun loadCachedLive(): CachedLive? = withContext(Dispatchers.IO) {
+        val categoriesFile = cacheFile("get_live_categories", emptyMap()) ?: return@withContext null
+        val streamsFile = cacheFile("get_live_streams", emptyMap()) ?: return@withContext null
+        Trace.beginSection("FortressTV.restoreXtreamLive")
+        try {
+            val categories = readCache(categoriesFile, allowStale = true) ?: return@withContext null
+            val response = readCache(streamsFile, allowStale = true) ?: return@withContext null
+            val scheme = response.substringBefore('\n')
+            if (scheme != "http" && scheme != "https") return@withContext null
+            val cachedBaseUrl = "$scheme://${baseUrl.substringAfter("://")}"
+            runCatching {
+                CachedLive(
+                    liveCatalog(categories, response.substringAfter('\n'), cachedBaseUrl),
+                    cachedBaseUrl,
+                    isFresh(categoriesFile) && isFresh(streamsFile)
+                )
+            }.getOrNull()
+        } finally {
+            Trace.endSection()
+        }
+    }
+
+    private suspend fun loadLive(): XtreamCatalog = coroutineScope {
+        val categories = async { request("get_live_categories", forceRefresh = true) }
+        val streams = async { request("get_live_streams", forceRefresh = true) }
+        liveCatalog(categories.await(), streams.await())
+    }
+
+    private fun liveCatalog(categoriesJson: String, streamsJson: String, streamBaseUrl: String = baseUrl): XtreamCatalog {
+        val categories = parseCategories(categoriesJson)
+        return XtreamCatalog(
             sourceId = sourceId,
             sourceName = source.displayName,
-            liveCategories = liveCategories,
-            movieCategories = movieCategoriesDeferred.await(),
-            seriesCategories = seriesCategoriesDeferred.await(),
-            liveChannels = liveChannels,
-            movies = moviesDeferred.await(),
-            series = seriesDeferred.await()
+            liveCategories = categories,
+            liveChannels = parseLiveChannels(streamsJson, categories, streamBaseUrl)
         )
     }
 
@@ -77,9 +131,11 @@ class XtreamClient(
         return parseMovieDetails(json)
     }
 
-    fun liveStreamUrl(streamId: Int, extension: String? = null): String {
+    fun liveStreamUrl(streamId: Int, extension: String? = null): String = liveStreamUrl(baseUrl, streamId, extension)
+
+    private fun liveStreamUrl(streamBaseUrl: String, streamId: Int, extension: String?): String {
         val ext = extension?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) } ?: "ts"
-        return "$baseUrl/live/${path(source.username)}/${path(source.password)}/$streamId.$ext"
+        return "$streamBaseUrl/live/${path(source.username)}/${path(source.password)}/$streamId.$ext"
     }
 
     fun movieStreamUrl(movie: XtreamMovie): String =
@@ -103,16 +159,9 @@ class XtreamClient(
         extra: Map<String, String> = emptyMap(),
         forceRefresh: Boolean = false
     ): String = withContext(Dispatchers.IO) {
-        val cacheFile = if (context != null && action != null) {
-            val suffix = extra.entries.sortedBy { entry -> entry.key }.joinToString("_") { entry -> "${entry.key}_${entry.value}" }
-            java.io.File(context.filesDir, "xtream_${sourceId}_${action}_${suffix}.json")
-        } else null
-        if (!forceRefresh && cacheFile != null && cacheFile.exists() && cacheFile.length() > 0L &&
-            System.currentTimeMillis() - cacheFile.lastModified() < 24 * 60 * 60 * 1000L
-        ) {
-            require(cacheFile.length() <= MAX_RESPONSE_BYTES) { "Cached Xtream response exceeds the 64 MB safety limit" }
-            return@withContext cacheFile.readText()
-        }
+        val cacheFile = action?.let { cacheFile(it, extra) }
+        if (!forceRefresh && cacheFile != null) readCache(cacheFile)?.let { return@withContext it }
+        val requestContext = currentCoroutineContext()
         retryTransientNetwork {
             val parameters = linkedMapOf("username" to source.username, "password" to source.password)
             if (action != null) parameters["action"] = action
@@ -134,11 +183,22 @@ class XtreamClient(
                     }
                     connection.inputStream.use { input -> readUtf8Limited(input, MAX_RESPONSE_BYTES) }.also { response ->
                         if (cacheFile != null) {
+                            requestContext.ensureActive()
                             val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
-                            val temp = java.io.File(cacheFile.parentFile, "${cacheFile.name}.tmp")
-                            temp.writeText(sanitizedResponse)
-                            if (cacheFile.exists()) cacheFile.delete()
-                            temp.renameTo(cacheFile)
+                            runCatching {
+                                val temp = File.createTempFile("xtream_", ".tmp", cacheFile.parentFile)
+                                try {
+                                    temp.bufferedWriter().use { writer ->
+                                        if (action == "get_live_streams") {
+                                            writer.appendLine(targetBaseUrl.substringBefore("://").lowercase())
+                                        }
+                                        writer.write(sanitizedResponse)
+                                    }
+                                    Files.move(temp.toPath(), cacheFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                                } finally {
+                                    temp.delete()
+                                }
+                            }
                         }
                     }
                 } finally {
@@ -158,6 +218,26 @@ class XtreamClient(
                 }
             }
         }
+    }
+
+    private fun cacheFile(action: String, extra: Map<String, String>): File? {
+        val directory = context?.filesDir ?: return null
+        val suffix = if (action == "get_live_categories" || action == "get_live_streams") {
+            liveCacheKey
+        } else {
+            extra.toSortedMap().entries.joinToString("_") { "${it.key}_${it.value}" }
+        }
+        return File(directory, "xtream_${sourceId}_${action}_${suffix}.json")
+    }
+
+    private fun isFresh(file: File): Boolean =
+        System.currentTimeMillis() - file.lastModified() < 24 * 60 * 60 * 1000L
+
+    private fun readCache(file: File, allowStale: Boolean = false): String? {
+        if ((!allowStale && !isFresh(file)) || file.length() !in 1L..MAX_CACHE_BYTES) return null
+        return runCatching {
+            file.inputStream().use { readUtf8Limited(it, MAX_CACHE_BYTES) }
+        }.getOrNull()
     }
 
     private fun readUtf8Limited(input: java.io.InputStream, limit: Long): String {
@@ -201,7 +281,8 @@ class XtreamClient(
 
     internal fun parseLiveChannels(
         json: String,
-        categories: List<XtreamCategory> = emptyList()
+        categories: List<XtreamCategory> = emptyList(),
+        streamBaseUrl: String = baseUrl
     ): List<PlaylistChannel> {
         val categoryMap = categories.associate { it.id to it.name }
         return JSONArray(json).objects().mapIndexedNotNull { index, item ->
@@ -213,7 +294,7 @@ class XtreamClient(
             val logo = item.nullableString("stream_icon")
             val tvgId = item.nullableString("epg_channel_id") ?: item.nullableString("custom_sid")
             val tvgName = item.nullableString("name")
-            val streamUrl = liveStreamUrl(streamId, item.nullableString("container_extension"))
+            val streamUrl = liveStreamUrl(streamBaseUrl, streamId, item.nullableString("container_extension"))
             val tvArchive = item.optInt("tv_archive", 0) == 1 || item.optString("tv_archive") == "1"
             val archiveDuration = item.optInt("tv_archive_duration", item.optString("tv_archive_duration").toIntOrNull() ?: 0)
             PlaylistChannel(
@@ -404,6 +485,7 @@ class XtreamClient(
 
     companion object {
         private const val MAX_RESPONSE_BYTES = 64L * 1024L * 1024L
+        private const val MAX_CACHE_BYTES = MAX_RESPONSE_BYTES + 6 // Live streams include a protocol line.
 
         fun normalizeServerUrl(value: String): String {
             val trimmed = value.trim().substringBefore('?').removeSuffix("/player_api.php").trimEnd('/')

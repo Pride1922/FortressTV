@@ -94,8 +94,7 @@ class SourceSettingsStore internal constructor(
         list
     }.getOrElse { emptyList() }
 
-    @Synchronized
-    fun savePlaylistProfile(profile: PlaylistProfile) {
+    fun savePlaylistProfile(profile: PlaylistProfile) = synchronized(preferences) {
         val current = getPlaylists().toMutableList()
         val index = current.indexOfFirst { it.id == profile.id }
         if (index >= 0) {
@@ -109,13 +108,23 @@ class SourceSettingsStore internal constructor(
         }
     }
 
-    fun replacePlaylists(profiles: List<PlaylistProfile>) {
+    fun updatePlaylistStats(profile: PlaylistProfile, lastUpdated: Long, channelCount: Int) = synchronized(preferences) {
+        val current = getPlaylists()
+        val index = current.indexOfFirst { it.id == profile.id && it.enabled && it.source == profile.source }
+        if (index >= 0) {
+            val updated = current.toMutableList()
+            updated[index] = current[index].copy(lastUpdated = lastUpdated, channelCount = channelCount)
+            savePlaylistsList(updated)
+        }
+    }
+
+    fun replacePlaylists(profiles: List<PlaylistProfile>) = synchronized(preferences) {
         savePlaylistsList(profiles)
         clearSource("playlist")
         preferences.edit().remove("active_playlist_id").apply()
     }
 
-    fun deletePlaylistProfile(id: String) {
+    fun deletePlaylistProfile(id: String) = synchronized(preferences) {
         val current = getPlaylists().filter { it.id != id }
         savePlaylistsList(current)
         if (getActivePlaylistId() == id) {
@@ -165,7 +174,7 @@ class SourceSettingsStore internal constructor(
         return playlists.find { it.id == activeId } ?: playlists.firstOrNull()
     }
 
-    fun getEnabledPlaylists(): List<PlaylistProfile> = getPlaylists()
+    fun getEnabledPlaylists(profiles: List<PlaylistProfile> = getPlaylists()): List<PlaylistProfile> = profiles
         .filter { it.enabled }
         .sortedWith(compareBy<PlaylistProfile> { it.order }.thenBy { it.name.lowercase() })
 

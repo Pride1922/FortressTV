@@ -11,6 +11,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
+import android.os.Trace
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -65,6 +66,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
@@ -350,10 +352,16 @@ import androidx.media3.common.MimeTypes
 import com.fortresstv.player.ui.theme.FortressTVTheme
 import com.fortresstv.player.ui.theme.FortressBackgroundBrush
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import android.content.ContentValues
@@ -393,6 +401,7 @@ internal fun FortressTVApp(
     val initialProfileId: String = remember { ProfileRepository.get(context).activeProfile.value.id }
     val initialUserId: String? = remember { com.fortresstv.player.account.AccountRepository.get(context).currentUserId() }
     val initialNs: String = remember(initialUserId, initialProfileId) { profileProgressNamespace(initialUserId, initialProfileId) }
+    var libraryNamespace by remember { mutableStateOf(initialNs) }
     val userLibrary = remember { UserLibraryStore(context.applicationContext, initialNs) }
     val vodProgressStore = remember { VodProgressStore(context.applicationContext, initialNs) }
     val sourceSyncWorkflow = remember(context, settings, userLibrary, vodProgressStore, scope) {
@@ -409,7 +418,7 @@ internal fun FortressTVApp(
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
-    var startupDestination by remember { mutableStateOf(settings.startupDestination()) }
+    var startupDestination by remember { mutableStateOf(settings.startupDestination(initialProfileId)) }
     var homeHiddenSections by remember { mutableStateOf(settings.homeHiddenSections(initialProfileId)) }
     var showCustomizeHomeDialog by remember { mutableStateOf(false) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
@@ -422,10 +431,29 @@ internal fun FortressTVApp(
     val strings = getStringsFor(appLanguage)
 
     var activeProfile by remember { mutableStateOf<PlaylistProfile?>(null) }
-    var playlist by remember { mutableStateOf<Playlist?>(null) }
     val loadedPlaylists = remember { mutableStateMapOf<String, Playlist>() }
     val playlistRetryJobs = remember { mutableMapOf<String, Job>() }
     val xtreamCatalogs = remember { mutableStateMapOf<String, XtreamCatalog>() }
+    val xtreamLoadJobs = remember { mutableStateMapOf<String, Job>() }
+    val playlist by produceState<Playlist?>(null) {
+        snapshotFlow {
+            val live = loadedPlaylists.toMap()
+            val enabled = playlists.filter { it.enabled }
+            if (enabled.none { it.id in live || it.id in xtreamCatalogs }) null
+            else enabled.map { it.copy(lastUpdated = 0L, channelCount = 0) } to live
+        }.collectLatest { inputs ->
+            value = inputs?.let { (profiles, live) ->
+                withContext(Dispatchers.Default) {
+                    Trace.beginSection("FortressTV.mergeLivePlaylists")
+                    try {
+                        mergeLivePlaylists(profiles, live)
+                    } finally {
+                        Trace.endSection()
+                    }
+                }
+            }
+        }
+    }
     var favoriteChannelIds by remember { mutableStateOf(userLibrary.favoriteChannelIds()) }
     var recentChannelIds by remember { mutableStateOf(userLibrary.recentChannelIds()) }
     var movieWatchlistIds by remember { mutableStateOf(userLibrary.movieWatchlistIds()) }
@@ -436,9 +464,8 @@ internal fun FortressTVApp(
     var categoryOrder by remember { mutableStateOf<List<String>>(emptyList()) }
 
     var epgGuide by remember { mutableStateOf<EpgGuide?>(null) }
-    val initialEpgSource = remember { settings.epgSource() }
-    var epgSource by remember { mutableStateOf<ContentSource?>(initialEpgSource) }
-    var epgSourceName by remember { mutableStateOf<String?>(initialEpgSource?.displayName) }
+    var epgSource by remember { mutableStateOf<ContentSource?>(null) }
+    var epgSourceName by remember { mutableStateOf<String?>(null) }
     var epgLastUpdate by remember { mutableLongStateOf(0L) }
     var epgScheduleCorrectionMinutes by remember { mutableIntStateOf(settings.epgScheduleCorrectionMinutes()) }
     val epgTimeShiftHours = epgScheduleCorrectionMinutes / 60
@@ -456,7 +483,6 @@ internal fun FortressTVApp(
     var error by remember { mutableStateOf<String?>(null) }
     var retryLoad by remember { mutableStateOf<(() -> Unit)?>(null) }
     var loading by remember { mutableStateOf(false) }
-    var restoring by remember { mutableStateOf(true) }
 
     var showSettings by remember { mutableStateOf(false) }
     var playbackResetGeneration by remember { mutableIntStateOf(0) }
@@ -544,15 +570,27 @@ internal fun FortressTVApp(
         }
     }
 
-    suspend fun reconnectFavouritesAndProgress(sourceId: String, catalog: XtreamCatalog) =
-        sourceSyncWorkflow.reconnectFavouritesAndProgress(sourceId, catalog, playlists) {
-            favoriteChannelIds = userLibrary.favoriteChannelIds()
-            recentChannelIds = userLibrary.recentChannelIds()
-            movieWatchlistIds = userLibrary.movieWatchlistIds()
-            followedSeriesIds = userLibrary.followedSeriesIds()
-            watchedItemIds = userLibrary.watchedItemIds()
-            progressRefreshTrigger++
+    val reconciliationLock = remember { Mutex() }
+
+    suspend fun reconnectFavouritesAndProgress(sourceId: String, catalog: XtreamCatalog) {
+        val namespace = libraryNamespace
+        val generation = playbackResetGeneration
+        reconciliationLock.withLock {
+            val stillCurrent = {
+                libraryNamespace == namespace && playbackResetGeneration == generation &&
+                    xtreamCatalogs[sourceId] === catalog
+            }
+            if (!stillCurrent()) return@withLock
+            sourceSyncWorkflow.reconnectFavouritesAndProgress(sourceId, catalog, playlists, stillCurrent) {
+                favoriteChannelIds = userLibrary.favoriteChannelIds()
+                recentChannelIds = userLibrary.recentChannelIds()
+                movieWatchlistIds = userLibrary.movieWatchlistIds()
+                followedSeriesIds = userLibrary.followedSeriesIds()
+                watchedItemIds = userLibrary.watchedItemIds()
+                progressRefreshTrigger++
+            }
         }
+    }
 
     LaunchedEffect(activeHouseholdProfile.id, currentUserId) {
         playbackResetGeneration++
@@ -576,6 +614,7 @@ internal fun FortressTVApp(
         startupDestination = settings.startupDestination(targetProfileId)
         homeHiddenSections = settings.homeHiddenSections(targetProfileId)
         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
+        libraryNamespace = ns
 
         val activeSourceId = activeProfile?.id
         if (activeSourceId != null) {
@@ -729,7 +768,7 @@ internal fun FortressTVApp(
                 onUpdated = {
                     if (activeHouseholdProfile.id == targetProfileId) {
                         scope.launch(Dispatchers.Default) {
-                            xtreamCatalogs.forEach { (sourceId, catalog) ->
+                            xtreamCatalogs.toMap().forEach { (sourceId, catalog) ->
                                 reconnectFavouritesAndProgress(sourceId, catalog)
                             }
                             withContext(Dispatchers.Main) {
@@ -903,11 +942,15 @@ internal fun FortressTVApp(
         onPartialGuideLoaded = { epgGuide = it }
     )
 
-    fun loadPlaylistProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
+    fun loadPlaylistProfile(
+        profile: PlaylistProfile,
+        forceRefresh: Boolean = false,
+        startupScope: CoroutineScope? = null
+    ): Job {
         loading = true
         error = null
         retryLoad = null
-        scope.launch(Dispatchers.IO) {
+        return (startupScope ?: scope).launch(Dispatchers.IO) {
             runCatching {
                 val cacheKey = "playlist_${profile.id}"
                 val hasCache = SourceReader.hasCache(context, cacheKey) || SourceReader.hasCache(context, "playlist")
@@ -926,16 +969,27 @@ internal fun FortressTVApp(
                 )
                 val now = if (forceRefresh || !hasCache) System.currentTimeMillis() else profile.lastUpdated
                 val updatedProfile = profile.copy(lastUpdated = now, channelCount = parsed.channels.size)
-                settings.savePlaylistProfile(updatedProfile)
-                val allPlaylists = settings.getPlaylists()
+                val allPlaylists = if (startupScope == null) {
+                    settings.savePlaylistProfile(updatedProfile)
+                    settings.getPlaylists()
+                } else {
+                    settings.updatePlaylistStats(profile, now, parsed.channels.size)
+                    null
+                }
                 withContext(Dispatchers.Main) {
+                    if (startupScope != null && playlists.none { it.id == profile.id && it.enabled && it.source == profile.source }) {
+                        return@withContext
+                    }
                     loadedPlaylists[updatedProfile.id] = parsed
-                    playlists = allPlaylists
-                    val enabled = allPlaylists.filter { it.enabled }
-                    playlist = mergeLivePlaylists(allPlaylists, loadedPlaylists)
+                    playlists = allPlaylists ?: playlists.map {
+                        if (it.id == profile.id) it.copy(lastUpdated = now, channelCount = parsed.channels.size) else it
+                    }
+                    val enabled = playlists.filter { it.enabled }
                     activeProfile = enabled.minByOrNull { it.order }
 
+                    if (startupScope != null) return@withContext
                     val favs = userLibrary.favoriteChannelIds().toMutableSet()
+                    if (favs.none { it.startsWith("channel:${updatedProfile.id}:") }) return@withContext
                     var changed = false
                     for (ch in parsed.channels) {
                         val hash = com.fortresstv.player.library.CloudIdentityHasher.hashItemId(ch.sourceItemId)
@@ -950,6 +1004,7 @@ internal fun FortressTVApp(
                     }
                 }
             }.onFailure { err ->
+                if (err is CancellationException) throw err
                 withContext(Dispatchers.Main) {
                     error = err.message ?: "Could not load playlist."
                     retryLoad = {
@@ -970,7 +1025,6 @@ internal fun FortressTVApp(
             }
             withContext(Dispatchers.Main) {
                 loading = false
-                restoring = false
             }
         }
     }
@@ -979,53 +1033,69 @@ internal fun FortressTVApp(
 
     fun loadXtreamProfile(profile: PlaylistProfile, forceRefresh: Boolean = false) {
         val source = profile.source as? ContentSource.Xtream ?: return
-        settings.savePlaylistProfile(profile)
-        playlists = settings.getPlaylists()
-        loading = true
-        error = null
-        retryLoad = null
-        scope.launch(Dispatchers.IO) {
-            runCatching {
+        if (forceRefresh) xtreamLoadJobs.remove(profile.id)?.cancel()
+        else if (profile.id in xtreamLoadJobs) return
+        if (playlists.none { it.id == profile.id }) {
+            settings.savePlaylistProfile(profile)
+            playlists = settings.getPlaylists()
+        }
+
+        fun currentProfile() = playlists.firstOrNull { it.id == profile.id && it.enabled && it.source == source }
+
+        xtreamLoadJobs[profile.id] = scope.launch(Dispatchers.IO) {
+            try {
                 val client = XtreamClient(context.applicationContext, profile.id, source)
-                client.loadCatalog(forceRefresh)
-            }.onSuccess { catalog ->
-                val totalCount = catalog.liveChannels.size + catalog.movies.size + catalog.series.size
-                val updated = profile.copy(
-                    lastUpdated = System.currentTimeMillis(),
-                    channelCount = if (catalog.liveChannels.isNotEmpty()) catalog.liveChannels.size else totalCount
-                )
-                settings.savePlaylistProfile(updated)
-                val all = settings.getPlaylists()
-                reconnectFavouritesAndProgress(profile.id, catalog)
-                withContext(Dispatchers.Main) {
+                var livePlaylist: Playlist? = null
+                val catalog = client.loadCatalog(forceRefresh) { live ->
+                    val partial = Playlist(live.liveChannels)
+                    livePlaylist = partial
+                    withContext(Dispatchers.Main) {
+                        if (currentProfile()?.role?.contributesLiveTv() == true) {
+                            loadedPlaylists[profile.id] = partial
+                            if (activeProfile == null) activeProfile = currentProfile()
+                        }
+                    }
+                }
+                val count = catalog.liveChannels.size.takeIf { it > 0 } ?: (catalog.movies.size + catalog.series.size)
+                val updatedAt = System.currentTimeMillis()
+                val live = livePlaylist?.takeIf { it.channels === catalog.liveChannels } ?: Playlist(catalog.liveChannels)
+                settings.updatePlaylistStats(profile, updatedAt, count)
+                val published = withContext(Dispatchers.Main) {
+                    val current = currentProfile() ?: return@withContext false
+                    val updated = current.copy(lastUpdated = updatedAt, channelCount = count)
                     xtreamCatalogs[profile.id] = catalog
-                    if (catalog.liveChannels.isNotEmpty()) {
-                        loadedPlaylists[profile.id] = Playlist(catalog.liveChannels)
-                    }
-                    playlists = all
-                    playlist = mergeLivePlaylists(all, loadedPlaylists)
-                    if (activeProfile == null) {
-                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
-                    }
+                    if (catalog.liveChannels.isEmpty()) loadedPlaylists.remove(profile.id)
+                    else loadedPlaylists[profile.id] = live
+                    playlists = playlists.map { if (it.id == profile.id) updated else it }
+                    if (activeProfile?.id == profile.id || activeProfile == null) activeProfile = updated
+                    true
                 }
-            }.onFailure { failure ->
+                if (published) reconnectFavouritesAndProgress(profile.id, catalog)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
                 withContext(Dispatchers.Main) {
-                    error = "${profile.name}: ${failure.message ?: "could not load Xtream catalogue"}"
-                    retryLoad = { loadXtreamProfile(profile, forceRefresh = true) }
+                    currentProfile()?.let { current ->
+                        error = "${current.name}: ${failure.message ?: "could not load Xtream catalogue"}"
+                        retryLoad = { loadXtreamProfile(current, forceRefresh = true) }
+                    }
                 }
-            }
-            withContext(Dispatchers.Main) {
-                loading = false
-                restoring = false
+            } finally {
+                val job = coroutineContext.job
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    if (xtreamLoadJobs[profile.id] === job) xtreamLoadJobs.remove(profile.id)
+                }
             }
         }
     }
 
-    fun loadEpg(source: ContentSource, save: Boolean, forceRefresh: Boolean = false) {
-        loading = true
-        error = null
-        retryLoad = null
-        scope.launch(Dispatchers.IO) {
+    fun loadEpg(source: ContentSource, save: Boolean, forceRefresh: Boolean = false, background: Boolean = false): Job {
+        if (!background) {
+            loading = true
+            error = null
+            retryLoad = null
+        }
+        return scope.launch(Dispatchers.IO) {
             runCatching {
                 val stream = if (forceRefresh || !SourceReader.hasCache(context, "epg")) {
                     SourceReader.fetchAndCache(context, source, "epg").also {
@@ -1039,6 +1109,7 @@ internal fun FortressTVApp(
                 parseEpgWithCache(source, stream, allowCachedResult = !forceRefresh)
             }.onSuccess { guide ->
                 withContext(Dispatchers.Main) {
+                    if (background && epgSource != source) return@withContext
                     epgGuide = guide
                     epgSource = source
                     epgSourceName = source.displayName
@@ -1053,12 +1124,12 @@ internal fun FortressTVApp(
                     }
                 }
             }.onFailure { err ->
-                withContext(Dispatchers.Main) {
+                if (!background) withContext(Dispatchers.Main) {
                     error = err.message ?: "Could not load EPG source."
                     retryLoad = { loadEpg(source, save = save, forceRefresh = true) }
                 }
             }
-            withContext(Dispatchers.Main) {
+            if (!background) withContext(Dispatchers.Main) {
                 loading = false
             }
         }
@@ -1112,226 +1183,140 @@ internal fun FortressTVApp(
         }
     }
 
-    LaunchedEffect(Unit) {
-        val savedLangCode = withContext(Dispatchers.IO) { settings.getLanguage() }
-        val correction = withContext(Dispatchers.IO) { settings.epgScheduleCorrectionMinutes() }
-        val sourceTz = withContext(Dispatchers.IO) { settings.epgSourceTimezone().orEmpty() }
-        val days = withContext(Dispatchers.IO) { settings.epgLoadedDays() }
-        val epgUpdate = withContext(Dispatchers.IO) { settings.lastEpgUpdate() }
-        val savedFullscreenPreference = withContext(Dispatchers.IO) { settings.playChannelsFullscreen() }
-        val savedPictureInPicturePreference = withContext(Dispatchers.IO) { settings.autoPictureInPicture() }
-        val savedTelemetryPreference = withContext(Dispatchers.IO) { settings.telemetryEnabled() }
-        val savedPlaybackMode = withContext(Dispatchers.IO) { settings.playbackMode() }
-        appLanguage = AppLanguage.fromCode(savedLangCode)
-        epgScheduleCorrectionMinutes = correction
-        epgSourceTimezone = sourceTz
-        epgLoadedDays = days
-        epgLastUpdate = epgUpdate
-        playChannelsFullscreen = savedFullscreenPreference
-        autoPictureInPicture = savedPictureInPicturePreference
-        telemetryEnabled = savedTelemetryPreference
-        playbackMode = savedPlaybackMode
+    var startupSourcesLoading by remember { mutableStateOf(true) }
 
-        val (savedPlaylists, enabledPlaylists) = withContext(Dispatchers.IO) {
-            val all = settings.getPlaylists()
-            all to settings.getEnabledPlaylists()
-        }
-        playlists = savedPlaylists
-        activeProfile = enabledPlaylists.firstOrNull()
-    }
-
-    var sourcesLoadedForSession by rememberSaveable { mutableStateOf(false) }
-    var isProfileLoadingScreenVisible by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isProfileLoadingScreenVisible, playlist, activeProfile) {
-        if (isProfileLoadingScreenVisible && playlist != null && activeProfile != null) {
-            isProfileLoadingScreenVisible = false
-        }
-    }
-
-    LaunchedEffect(shouldGateWithProfilePicker, playbackResetGeneration) {
+    LaunchedEffect(shouldGateWithProfilePicker, activeHouseholdProfile.id, currentUserId) {
         if (shouldGateWithProfilePicker) return@LaunchedEffect
-        if (sourcesLoadedForSession && playbackResetGeneration == 0) {
-            isProfileLoadingScreenVisible = false
-            return@LaunchedEffect
-        }
-        sourcesLoadedForSession = true
-        isProfileLoadingScreenVisible = true
 
-        try {
-            val (savedPlaylists, enabledPlaylists) = withContext(Dispatchers.IO) {
-                val all = settings.getPlaylists()
-                all to settings.getEnabledPlaylists()
-            }
-            playlists = savedPlaylists
-            activeProfile = enabledPlaylists.firstOrNull()
+        data class StartupSettings(
+            val playlists: List<PlaylistProfile>,
+            val legacyActiveId: String?,
+            val epg: ContentSource?,
+            val language: AppLanguage,
+            val epgCorrection: Int,
+            val epgTimezone: String,
+            val epgDays: Int,
+            val epgLastUpdate: Long,
+            val fullscreen: Boolean,
+            val pictureInPicture: Boolean,
+            val telemetry: Boolean,
+            val playbackMode: PlaybackMode
+        )
 
-            var hasFastLoadedPlaylist = false
-        val fastLoadedSourceIds = mutableSetOf<String>()
-        val startupSourceErrors = mutableListOf<String>()
-
-        withContext(Dispatchers.IO) {
-            for (profile in enabledPlaylists) {
-                val cacheKey = "playlist_${profile.id}"
-                if (profile.source is ContentSource.LocalFile) {
-                    runCatching {
-                        parsePlaylistWithCache(
-                            profile,
-                            cacheKey,
-                            SourceReader.open(context, profile.source),
-                            allowCachedResult = true
-                        )
-                    }.onSuccess { parsed ->
-                        if (parsed.channels.isNotEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                loadedPlaylists[profile.id] = parsed
-                                playlist = mergeLivePlaylists(savedPlaylists, loadedPlaylists)
-                            }
-                            hasFastLoadedPlaylist = true
-                            fastLoadedSourceIds += profile.id
-                        }
-                    }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
-                } else if (SourceReader.hasCache(context, cacheKey)) {
-                    runCatching {
-                        parsePlaylistWithCache(
-                            profile,
-                            cacheKey,
-                            SourceReader.openCached(context, cacheKey),
-                            allowCachedResult = true
-                        )
-                    }.onSuccess { parsed ->
-                        if (parsed.channels.isNotEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                loadedPlaylists[profile.id] = parsed
-                                playlist = mergeLivePlaylists(savedPlaylists, loadedPlaylists)
-                            }
-                            hasFastLoadedPlaylist = true
-                            fastLoadedSourceIds += profile.id
-                        }
-                    }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
-                } else if (profile.id == settings.getActivePlaylistId() && SourceReader.hasCache(context, "playlist")) {
-                    runCatching {
-                        parsePlaylistWithCache(
-                            profile,
-                            "playlist",
-                            SourceReader.openCached(context, "playlist"),
-                            allowCachedResult = true
-                        )
-                    }.onSuccess { parsed ->
-                        if (parsed.channels.isNotEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                loadedPlaylists[profile.id] = parsed
-                                playlist = mergeLivePlaylists(savedPlaylists, loadedPlaylists)
-                            }
-                            hasFastLoadedPlaylist = true
-                            fastLoadedSourceIds += profile.id
-                        }
-                    }.onFailure { startupSourceErrors += "${profile.name}: ${it.message ?: "could not be loaded"}" }
-                }
-            }
-
-            val savedEpgSource = settings.epgSource()
-            if (savedEpgSource != null) {
-                withContext(Dispatchers.Main) {
-                    epgSource = savedEpgSource
-                    epgSourceName = savedEpgSource.displayName
-                }
-                if (savedEpgSource is ContentSource.LocalFile) {
-                    runCatching {
-                        parseEpgWithCache(
-                            savedEpgSource,
-                            SourceReader.open(context, savedEpgSource),
-                            allowCachedResult = true
-                        )
-                    }.onSuccess { parsedGuide ->
-                        withContext(Dispatchers.Main) { epgGuide = parsedGuide }
-                    }
-                } else if (SourceReader.hasCache(context, "epg")) {
-                    runCatching {
-                        parseEpgWithCache(
-                            savedEpgSource,
-                            SourceReader.openCached(context, "epg"),
-                            allowCachedResult = true
-                        )
-                    }.onSuccess { parsedGuide ->
-                        withContext(Dispatchers.Main) { epgGuide = parsedGuide }
-                    }
-                }
+        startupSourcesLoading = true
+        val startupProfileId = activeHouseholdProfile.id
+        val saved = withContext(Dispatchers.IO) {
+            Trace.beginSection("FortressTV.readStartupSettings")
+            try {
+                StartupSettings(
+                    playlists = settings.getPlaylists(),
+                    legacyActiveId = settings.getActivePlaylistId(),
+                    epg = settings.epgSource(),
+                    language = AppLanguage.fromCode(settings.getLanguage()),
+                    epgCorrection = settings.epgScheduleCorrectionMinutes(startupProfileId),
+                    epgTimezone = settings.epgSourceTimezone().orEmpty(),
+                    epgDays = settings.epgLoadedDays(),
+                    epgLastUpdate = settings.lastEpgUpdate(),
+                    fullscreen = settings.playChannelsFullscreen(),
+                    pictureInPicture = settings.autoPictureInPicture(),
+                    telemetry = settings.telemetryEnabled(),
+                    playbackMode = settings.playbackMode()
+                )
+            } finally {
+                Trace.endSection()
             }
         }
+        val enabledPlaylists = settings.getEnabledPlaylists(saved.playlists)
+        playlists = saved.playlists
+        activeProfile = enabledPlaylists.firstOrNull()
+        appLanguage = saved.language
+        epgScheduleCorrectionMinutes = saved.epgCorrection
+        epgSourceTimezone = saved.epgTimezone
+        epgLoadedDays = saved.epgDays
+        epgLastUpdate = saved.epgLastUpdate
+        playChannelsFullscreen = saved.fullscreen
+        autoPictureInPicture = saved.pictureInPicture
+        telemetryEnabled = saved.telemetry
+        playbackMode = saved.playbackMode
+        val savedEpg = saved.epg
+        epgSource = savedEpg
+        epgSourceName = savedEpg?.displayName
 
-        if (hasFastLoadedPlaylist || enabledPlaylists.isEmpty() || enabledPlaylists.all { it.source is ContentSource.LocalFile }) {
-            restoring = false
-            if (!hasFastLoadedPlaylist && startupSourceErrors.isNotEmpty()) {
-                error = startupSourceErrors.joinToString("\n")
-            }
-        }
+        enabledPlaylists.filter { it.source is ContentSource.Xtream }.forEach { loadXtreamProfile(it) }
 
-        enabledPlaylists.filter { it.source is ContentSource.RemoteUrl }.forEach { profile ->
-            val cacheKey = "playlist_${profile.id}"
-            val isFresh = fastLoadedSourceIds.contains(profile.id) && (
-                    SourceReader.isCacheFresh(context, cacheKey, profile.lastUpdated) ||
-                    (profile.id == settings.getActivePlaylistId() && SourceReader.isCacheFresh(context, "playlist", profile.lastUpdated))
-                    )
-            if (!isFresh) {
-                if (!hasFastLoadedPlaylist) loading = true
-                scope.launch(Dispatchers.IO) {
-                    runCatching {
-                        val stream = SourceReader.fetchAndCache(context, profile.source, cacheKey)
-                        val now = System.currentTimeMillis()
-                        val parsed = parsePlaylistWithCache(
-                            profile,
-                            cacheKey,
-                            stream,
-                            allowCachedResult = false
-                        )
-                        val updated = profile.copy(lastUpdated = now, channelCount = parsed.channels.size)
-                        settings.savePlaylistProfile(updated)
-                        val all = settings.getPlaylists()
-                        withContext(Dispatchers.Main) {
-                            loadedPlaylists[updated.id] = parsed
-                            playlists = all
-                            playlist = mergeLivePlaylists(all, loadedPlaylists)
-                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
-                        }
-                    }.onFailure { err ->
-                        withContext(Dispatchers.Main) {
-                            if (!hasFastLoadedPlaylist) {
-                                error = "${profile.name}: ${err.message ?: "could not be loaded"}"
-                                retryLoad = {
-                                    playlistRetryJobs.remove(profile.id)?.cancel()
-                                    loadPlaylistProfile(profile, forceRefresh = true)
+        launch {
+            try {
+                coroutineScope {
+                    for (profile in enabledPlaylists) {
+                        if (profile.source is ContentSource.Xtream) continue
+                        val cacheKey = "playlist_${profile.id}"
+                        val cached = try {
+                            withContext(Dispatchers.IO) {
+                                if (profile.source is ContentSource.LocalFile) {
+                                    val stream = SourceReader.open(context, profile.source)
+                                    return@withContext parsePlaylistWithCache(profile, cacheKey, stream, true) to true
                                 }
-                            }
-                            if (err.isTransientNetworkFailure() && playlistRetryJobs[profile.id]?.isActive != true) {
-                                playlistRetryJobs[profile.id] = scope.launch {
-                                    delay(15_000)
-                                    playlistRetryJobs.remove(profile.id)
-                                    val current = withContext(Dispatchers.IO) {
-                                        settings.getPlaylists().firstOrNull { it.id == profile.id && it.enabled }
-                                    }
-                                    if (current != null) loadPlaylistProfile(current, forceRefresh = true)
+                                val existingKey = when {
+                                    SourceReader.hasCache(context, cacheKey) -> cacheKey
+                                    profile.id == saved.legacyActiveId && SourceReader.hasCache(context, "playlist") -> "playlist"
+                                    else -> return@withContext null
                                 }
+                                val stream = SourceReader.openCached(context, existingKey)
+                                val parsed = parsePlaylistWithCache(profile, existingKey, stream, true)
+                                parsed to SourceReader.isCacheFresh(context, existingKey, profile.lastUpdated)
                             }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            if (profile.source is ContentSource.LocalFile) {
+                                error = "${profile.name}: ${failure.message ?: "could not be loaded"}"
+                            }
+                            null
+                        }
+                        if (playlists.none { it.id == profile.id && it.enabled && it.source == profile.source }) continue
+                        if (cached != null && cached.first.channels.isNotEmpty()) {
+                            loadedPlaylists[profile.id] = cached.first
+                        }
+                        if (profile.source is ContentSource.RemoteUrl && (cached?.second != true || cached.first.channels.isEmpty())) {
+                            loadPlaylistProfile(profile, forceRefresh = true, startupScope = this)
                         }
                     }
-                    withContext(Dispatchers.Main) {
-                        loading = false
-                        restoring = false
-                    }
                 }
+            } finally {
+                startupSourcesLoading = false
             }
         }
 
-        enabledPlaylists.filter { it.source is ContentSource.Xtream }.forEach { profile ->
-            loadXtreamProfile(profile)
-        }
+        val startupEpgJob = if (savedEpg != null) {
+            launch {
+                try {
+                    val cachedGuide = withContext(Dispatchers.IO) {
+                        val stream = when {
+                            savedEpg is ContentSource.LocalFile -> SourceReader.open(context, savedEpg)
+                            SourceReader.hasCache(context, "epg") -> SourceReader.openCached(context, "epg")
+                            else -> return@withContext null
+                        }
+                        parseEpgWithCache(savedEpg, stream, allowCachedResult = true)
+                    }
+                    if (epgSource == savedEpg && cachedGuide != null) epgGuide = cachedGuide
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Keep source restoration independent of a missing or corrupt guide.
+                }
+                if (savedEpg is ContentSource.RemoteUrl && epgSource == savedEpg &&
+                    (epgGuide == null || epgGuide?.programmes.isNullOrEmpty())
+                ) {
+                    loadEpg(savedEpg, save = false, background = true).join()
+                }
+            }
+        } else null
 
         // Restore cloud sources for authenticated households
         val cloudSourceService = CloudSourceSyncService.get(context)
         val authenticatedUid = currentUserId ?: AccountRepository.get(context).currentUserId()
         if (authenticatedUid != null) {
-            scope.launch(Dispatchers.IO) {
+            launch(Dispatchers.IO) {
                 val restoredResult = cloudSourceService.restoreSourcesFromCloud(profileRepository.currentUnlockToken())
                 val restored = restoredResult.getOrDefault(emptyList())
                 if (restored.isNotEmpty()) {
@@ -1344,6 +1329,7 @@ internal fun FortressTVApp(
                 }
                 val restoredEpg = settings.epgSource()
                 if (restoredEpg != null) {
+                    startupEpgJob?.join()
                     withContext(Dispatchers.Main) {
                         val needsLoad = epgSource != restoredEpg || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()
                         epgSource = restoredEpg
@@ -1351,7 +1337,7 @@ internal fun FortressTVApp(
                         epgSourceTimezone = settings.epgSourceTimezone().orEmpty()
                         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes()
                         if (needsLoad) {
-                            loadEpg(restoredEpg, save = false, forceRefresh = false)
+                            loadEpg(restoredEpg, save = false, background = true)
                         }
                     }
                 }
@@ -1392,19 +1378,6 @@ internal fun FortressTVApp(
             }
         }
 
-        val savedEpg = settings.epgSource()
-        if (savedEpg is ContentSource.RemoteUrl) {
-            val isEpgFresh = SourceReader.isCacheFresh(context, "epg", settings.lastEpgUpdate())
-            if (!isEpgFresh || epgGuide == null || epgGuide?.programmes.isNullOrEmpty()) {
-                loadEpg(savedEpg, save = false, forceRefresh = false)
-            }
-        }
-        } finally {
-            withContext(Dispatchers.Main) {
-                delay(300)
-                isProfileLoadingScreenVisible = false
-            }
-        }
     }
 
     val addPlaylistFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -1526,13 +1499,15 @@ internal fun FortressTVApp(
                         isMandatory = true,
                         onProfileSelected = {
                             requireProfileSelection = false
-                            isProfileLoadingScreenVisible = true
                             playbackResetGeneration++
                         },
                         onDismiss = {}
                     )
                 }
-            } else if (isProfileLoadingScreenVisible || (playlist == null && (loading || restoring || !sourcesLoadedForSession))) {
+            } else if (libraryNamespace != profileProgressNamespace(currentUserId, activeHouseholdProfile.id) ||
+                (playlist == null && (startupSourcesLoading || xtreamLoadJobs.isNotEmpty() || loading ||
+                    playlists.any { it.enabled && (it.id in loadedPlaylists || it.id in xtreamCatalogs) }))
+            ) {
                 ProfileLoadingScreen(
                     profile = activeHouseholdProfile,
                     statusText = strings.loadingPlaylistAndSettings
@@ -1558,7 +1533,7 @@ internal fun FortressTVApp(
                         }
                     }
                 )
-            } else {
+            } else key(playbackResetGeneration) {
                 FortressLibrary(
                     playlist = playlist!!,
                     activeProfile = activeProfile!!,
@@ -2002,9 +1977,9 @@ internal fun FortressTVApp(
                             if (updated.source is ContentSource.Xtream) loadXtreamProfile(updated)
                             else loadPlaylistProfile(updated)
                         } else {
+                            xtreamLoadJobs.remove(updated.id)?.cancel()
                             loadedPlaylists.remove(updated.id)
                             xtreamCatalogs.remove(updated.id)
-                            playlist = mergeLivePlaylists(all, loadedPlaylists)
                             activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                         }
                     }
@@ -2017,7 +1992,6 @@ internal fun FortressTVApp(
                     if (updated.source is ContentSource.Xtream && (loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv())) {
                         loadXtreamProfile(updated)
                     } else {
-                        playlist = mergeLivePlaylists(all, loadedPlaylists)
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
                 },
@@ -2032,7 +2006,6 @@ internal fun FortressTVApp(
                         settings.savePlaylistProfile(second.copy(order = first.order))
                         val all = settings.getPlaylists()
                         playlists = all
-                        playlist = mergeLivePlaylists(all, loadedPlaylists)
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
                 },
@@ -2174,9 +2147,9 @@ internal fun FortressTVApp(
                     PlaylistDiskCache.clear(context, profile.id)
                     loadedPlaylists.remove(profile.id)
                     xtreamCatalogs.remove(profile.id)
+                    xtreamLoadJobs.remove(profile.id)?.cancel()
                     val remaining = settings.getPlaylists()
                     playlists = remaining
-                    playlist = mergeLivePlaylists(remaining, loadedPlaylists)
                     activeProfile = remaining.filter { it.enabled }.minByOrNull { it.order }
                     if (remaining.isEmpty()) {
                         showSettings = false
@@ -2349,6 +2322,11 @@ internal fun FortressTVApp(
                 onConfirm = { newName, newSource, newRole ->
                     editingProfile = null
                     val sourceChanged = profile.source != newSource
+                    if (sourceChanged) {
+                        xtreamLoadJobs.remove(profile.id)?.cancel()
+                        loadedPlaylists.remove(profile.id)
+                        xtreamCatalogs.remove(profile.id)
+                    }
                     val updated = profile.copy(name = newName, source = newSource, role = newRole)
                     settings.savePlaylistProfile(updated)
                     val all = settings.getPlaylists()
@@ -2360,13 +2338,11 @@ internal fun FortressTVApp(
                         if (sourceChanged || loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv()) {
                             loadXtreamProfile(updated, forceRefresh = sourceChanged)
                         } else {
-                            playlist = mergeLivePlaylists(all, loadedPlaylists)
                             activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                         }
-                    } else if (updated.source is ContentSource.RemoteUrl && sourceChanged) {
+                    } else if (sourceChanged) {
                         loadPlaylistProfile(updated, forceRefresh = true)
                     } else {
-                        playlist = mergeLivePlaylists(all, loadedPlaylists)
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
                 }

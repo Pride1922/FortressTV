@@ -131,6 +131,41 @@ in English and pt-PT; elapsed buffering time does not diagnose an unstable link.
 The `macrobenchmark` module measures cold/warm startup and frame timing for channel and EPG
 scrolling on the physical tablet. See `macrobenchmark/README.md` for prerequisites and commands.
 
+### RC19 startup baseline (2026-11-10)
+
+The Android 16 tablet running RC19 drew its first frame in **503 ms median**
+across seven process-cold launches (437–650 ms). Home was visible by the first
+accessibility sample in three separate launches (5.32–5.35 s from the ADB
+launch command). The sampler waits for UI idle and adds overhead, so those
+observations give an upper bound for Home readiness.
+
+The updated startup benchmarks report initial and full display time. Full display
+marks the first frame with the configured library destination available for input.
+Home shelves and EPG can populate after that frame. Compare populated-cache runs
+online and offline. For Xtream, allow one successful Live TV load after upgrading
+to populate the endpoint-bound cache before measuring cache restoration.
+
+### RC20 startup changes on the same tablet (2026-11-10)
+
+The local RC20 benchmark build drew its first frame in **449 ms median**
+across seven process-cold ADB launches (403–556 ms). With the same launch
+command, RC19 took 503 ms median. The median was 54 ms lower (10.7%).
+
+The configured Home destination passed all three Macrobenchmark scenarios
+with the populated caches. Each scenario ran five iterations. Thermal status
+was normal after every run.
+
+| Scenario | First frame median | Home ready median | Home ready range |
+| --- | ---: | ---: | ---: |
+| Cold online, no precompilation | 686.6 ms | 1,235.3 ms | 1,184.9–1,290.8 ms |
+| Warm online, full compilation | 281.7 ms | 760.4 ms | 620.0–1,082.0 ms |
+| Cold with app networking blocked, no precompilation | 657.4 ms | 1,194.3 ms | 1,170.5–1,297.9 ms |
+
+The network-blocked run used Android's per-app debug firewall while Wi-Fi and
+ADB remained available. The prior firewall state was restored afterward.
+The RC19 accessibility sample provides only an upper bound, so there is no
+direct before-and-after comparison for Home readiness.
+
 ### POCO baseline (2026-08-30)
 
 Measured on the configured Android 16 POCO with 89 channels and the real three-day in-app

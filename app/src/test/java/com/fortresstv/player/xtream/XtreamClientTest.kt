@@ -1,12 +1,54 @@
 package com.fortresstv.player.xtream
 
 import com.fortresstv.player.source.ContentSource
+import com.fortresstv.player.source.HttpStatusException
+import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.net.InetAddress
+import java.net.InetSocketAddress
 
 class XtreamClientTest {
+    @Test
+    fun publishesLiveChannelsEvenWhenVodFails() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+        server.createContext("/player_api.php") { exchange ->
+            val action = exchange.requestURI.rawQuery.split('&')
+                .firstOrNull { it.startsWith("action=") }
+                ?.substringAfter('=')
+            val (status, body) = when (action) {
+                null -> 200 to """{"user_info":{"auth":1}}"""
+                "get_live_streams" -> 200 to """[{"stream_id":1,"name":"Test channel","category_id":"1"}]"""
+                "get_live_categories" -> 200 to """[{"category_id":"1","category_name":"Test category"}]"""
+                "get_vod_streams" -> 400 to ""
+                else -> 200 to "[]"
+            }
+            val bytes = body.toByteArray()
+            exchange.sendResponseHeaders(status, if (bytes.isEmpty()) -1L else bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val client = XtreamClient(
+                sourceId = "test-source",
+                source = ContentSource.Xtream("http://127.0.0.1:${server.address.port}", "Test", "", "")
+            )
+            val published = mutableListOf<XtreamCatalog>()
+
+            val result = runCatching { client.loadCatalog(onLiveLoaded = { published += it }) }
+
+            assertEquals(HttpStatusException::class.java, result.exceptionOrNull()?.javaClass)
+            val channel = published.single().liveChannels.single()
+            assertEquals("Test category", channel.group)
+            assertEquals("test-source", channel.sourceId)
+        } finally {
+            server.stop(0)
+        }
+    }
+
     @Test
     fun sanitizesCatalogCacheWithoutDroppingEpgFallbackId() {
         val client = XtreamClient(

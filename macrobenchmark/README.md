@@ -47,3 +47,8 @@ The suite measures cold startup, warm startup, channel-list frame timing, progra
 frame timing, Movies/Series opening, and Movies/Series grid flinging. The catalogue tests
 require an enabled Xtream source with non-empty Movies and Series catalogues. Compare median
 and high-percentile frame times between commits; do not judge a change from a single run.
+
+The startup tests require a configured library and an unlocked profile. They wait for
+the configured Home or Live TV destination and collect both initial and full display
+time. To compare cached startup, populate the cache once on the same build, then run
+`coldStartup` online and offline with the same sources and startup destination.

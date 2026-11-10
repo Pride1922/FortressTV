@@ -2,6 +2,7 @@ package com.fortresstv.player.macrobenchmark
 
 import androidx.benchmark.macro.CompilationMode
 import androidx.benchmark.macro.FrameTimingMetric
+import androidx.benchmark.macro.MacrobenchmarkScope
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
@@ -30,6 +31,7 @@ class FortressTvBenchmark {
         setupBlock = { pressHome() }
     ) {
         startActivityAndWait()
+        waitForStartupDestination()
     }
 
     @Test
@@ -42,6 +44,14 @@ class FortressTvBenchmark {
         setupBlock = { pressHome() }
     ) {
         startActivityAndWait()
+        waitForStartupDestination()
+    }
+
+    private fun MacrobenchmarkScope.waitForStartupDestination() {
+        assertNotNull(
+            "The configured startup destination did not become ready",
+            device.wait(Until.findObject(By.res("startup_destination_ready")), UI_TIMEOUT)
+        )
     }
 
     @Test

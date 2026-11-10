@@ -20,6 +20,7 @@ import kotlin.math.roundToInt
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawn
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.movableContentOf
@@ -540,6 +541,15 @@ internal suspend fun resolveAllSeriesEpisodesPlayback(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
+private fun <T> loadHomeShelf(visible: Boolean, vararg inputs: Any?, load: () -> List<T>): List<T> {
+    val shelf = remember(visible, *inputs) { mutableStateOf(emptyList<T>()) }
+    LaunchedEffect(shelf) {
+        if (visible) shelf.value = withContext(Dispatchers.Default) { load() }
+    }
+    return shelf.value
+}
+
+@Composable
 internal fun FortressLibrary(
     playlist: Playlist,
     activeProfile: PlaylistProfile,
@@ -600,7 +610,7 @@ internal fun FortressLibrary(
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var progressEntries by remember { mutableStateOf(progressStore.entries()) }
+    var progressEntries by remember { mutableStateOf(emptyList<VodProgressEntry>()) }
     LaunchedEffect(activeHouseholdProfile?.id, progressRefreshTrigger) {
         withContext(Dispatchers.IO) {
             progressStore.entries()
@@ -705,7 +715,13 @@ internal fun FortressLibrary(
             }
         }
 
-        val homeFavoriteChannels = remember(effectivePlaylist.channels, favoriteChannelIds) {
+        fun showHomeSection(section: String): Boolean =
+            destination == LibraryDestination.HOME && section !in homeHiddenSections
+
+        val homeFavoriteChannels = loadHomeShelf(
+            showHomeSection(com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS),
+            effectivePlaylist.channels, favoriteChannelIds
+        ) {
             if (favoriteChannelIds.isEmpty()) emptyList()
             else {
                 val matcher = com.fortresstv.player.library.FastIdMatcher(favoriteChannelIds)
@@ -713,7 +729,10 @@ internal fun FortressLibrary(
             }
         }
 
-        val homeRecentChannels = remember(effectivePlaylist.channels, recentChannelIds) {
+        val homeRecentChannels = loadHomeShelf(
+            showHomeSection(com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS),
+            effectivePlaylist.channels, recentChannelIds
+        ) {
             if (recentChannelIds.isEmpty()) emptyList()
             else {
                 recentChannelIds.mapNotNull { id ->
@@ -725,7 +744,10 @@ internal fun FortressLibrary(
             }
         }
 
-        val homeFollowedSeries = remember(xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
+        val homeFollowedSeries = loadHomeShelf(
+            showHomeSection(com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES),
+            xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated
+        ) {
             if (followedSeriesIds.isEmpty()) emptyList()
             else {
                 val matcher = com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
@@ -740,7 +762,10 @@ internal fun FortressLibrary(
             }
         }
 
-        val homeRecentMovies = remember(xtreamCatalogs, hideAdultContent, maximumAge, blockUnrated) {
+        val homeRecentMovies = loadHomeShelf(
+            showHomeSection(com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES),
+            xtreamCatalogs, hideAdultContent, maximumAge, blockUnrated
+        ) {
             xtreamCatalogs.flatMap { catalog ->
                 val categoryNames = catalog.movieCategories.associate { it.id to it.name }
                 catalog.movies.asReversed().asSequence().filter {
@@ -750,7 +775,10 @@ internal fun FortressLibrary(
             }.take(25)
         }
 
-        val homeFeaturedSeries = remember(xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated) {
+        val homeFeaturedSeries = loadHomeShelf(
+            showHomeSection(com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES),
+            xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated
+        ) {
             xtreamCatalogs.flatMap { catalog ->
                 val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
                 catalog.series.asSequence().filter {
@@ -762,8 +790,8 @@ internal fun FortressLibrary(
         }
 
         val homeOmdbSettings = LocalOmdbSettings.current
-        LaunchedEffect(progressEntries, homeFollowedSeries, homeRecentMovies, homeOmdbSettings) {
-            if (homeOmdbSettings.enabled && homeOmdbSettings.apiKey.isNotBlank()) {
+        LaunchedEffect(destination, progressEntries, homeFollowedSeries, homeRecentMovies, homeOmdbSettings) {
+            if (destination == LibraryDestination.HOME && homeOmdbSettings.enabled && homeOmdbSettings.apiKey.isNotBlank()) {
                 val targets = mutableListOf<com.fortresstv.player.omdb.OmdbPreFetchTarget>()
                 // 1. Continue watching items (most recent first)
                 progressEntries.take(20).forEach { entry ->
@@ -782,7 +810,8 @@ internal fun FortressLibrary(
             }
         }
 
-        Box(Modifier.weight(1f).fillMaxHeight()) {
+        Box(Modifier.weight(1f).fillMaxHeight().testTag("startup_destination_ready")) {
+            ReportDrawn()
             when (destination) {
                 LibraryDestination.HOME -> HomeScreen(
                     channels = effectivePlaylist.channels,

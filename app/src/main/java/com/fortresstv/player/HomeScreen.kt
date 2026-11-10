@@ -169,6 +169,8 @@ import com.fortresstv.player.trakt.TraktSettingsStore
 import com.fortresstv.player.trakt.TraktWatchlistStore
 import com.fortresstv.player.trakt.TraktWatchlistService
 import com.fortresstv.player.trakt.TraktMatchedWatchlist
+import com.fortresstv.player.trakt.TraktRecommendationItem
+import com.fortresstv.player.trakt.TraktWatchlistItem
 import com.fortresstv.player.trakt.TraktWatchlistKind
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import androidx.compose.material.icons.filled.Bookmark
@@ -511,15 +513,17 @@ internal fun HomeScreen(
     val traktWatchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
     val traktRecStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace) }
 
-    var traktWatchlistItems by remember(traktNamespace) {
-        mutableStateOf(if (traktStore.isConnected()) traktWatchlistStore.loadWatchlist() else emptyList())
-    }
-    var traktRecItems by remember(traktNamespace) {
-        mutableStateOf(if (traktStore.isConnected()) traktRecStore.loadRecommendations() else emptyList())
-    }
+    val traktConnected = traktStore.isConnected()
+    var traktWatchlistItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktWatchlistItem>()) }
+    var traktRecItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
 
-    LaunchedEffect(traktNamespace, traktStore.isConnected()) {
-        if (traktStore.isConnected()) {
+    LaunchedEffect(traktNamespace, traktConnected) {
+        if (traktConnected) {
+            val (watchlist, recommendations) = withContext(Dispatchers.IO) {
+                traktWatchlistStore.loadWatchlist() to traktRecStore.loadRecommendations()
+            }
+            traktWatchlistItems = watchlist
+            traktRecItems = recommendations
             val res = TraktWatchlistService.syncWatchlist(context, traktNamespace)
             if (res.isSuccess) {
                 traktWatchlistItems = res.getOrDefault(emptyList())
@@ -531,16 +535,24 @@ internal fun HomeScreen(
         }
     }
 
-    val matchedTraktWatchlist = remember(traktWatchlistItems, catalogs) {
-        if (traktStore.isConnected() && traktWatchlistItems.isNotEmpty()) {
-            TraktWatchlistService.matchWatchlist(traktWatchlistItems, catalogs)
-        } else {
-            TraktMatchedWatchlist()
-        }
+    val showTraktWatchlist = traktConnected && com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST !in homeHiddenSections
+    val showTraktRecs = traktConnected && com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections
+    val matchedWatchlistState = remember(traktNamespace, showTraktWatchlist, catalogs) {
+        mutableStateOf(TraktMatchedWatchlist())
+    }
+    val matchedTraktWatchlist by matchedWatchlistState
+    LaunchedEffect(matchedWatchlistState, traktWatchlistItems) {
+        matchedWatchlistState.value = if (showTraktWatchlist && traktWatchlistItems.isNotEmpty()) {
+            withContext(Dispatchers.Default) { TraktWatchlistService.matchWatchlist(traktWatchlistItems, catalogs) }
+        } else TraktMatchedWatchlist()
     }
 
-    val matchedTraktRecs = remember(traktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated) {
-        if (traktStore.isConnected() && traktRecItems.isNotEmpty()) {
+    val matchedRecsState = remember(traktNamespace, showTraktRecs, catalogs, hideAdultContent, maximumAge, blockUnrated) {
+        mutableStateOf(com.fortresstv.player.trakt.TraktMatchedRecommendations())
+    }
+    val matchedTraktRecs by matchedRecsState
+    LaunchedEffect(matchedRecsState, traktRecItems) {
+        matchedRecsState.value = if (showTraktRecs && traktRecItems.isNotEmpty()) withContext(Dispatchers.Default) {
             com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
                 recommendations = traktRecItems,
                 catalogs = catalogs,
@@ -548,9 +560,7 @@ internal fun HomeScreen(
                 maximumAge = maximumAge,
                 blockUnrated = blockUnrated
             )
-        } else {
-            com.fortresstv.player.trakt.TraktMatchedRecommendations()
-        }
+        } else com.fortresstv.player.trakt.TraktMatchedRecommendations()
     }
 
     val hasContent = (com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING !in homeHiddenSections && progressEntries.isNotEmpty()) ||
@@ -558,8 +568,8 @@ internal fun HomeScreen(
         (com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS !in homeHiddenSections && favoriteChannels.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS !in homeHiddenSections && recentChannelsList.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES !in homeHiddenSections && followedSeries.isNotEmpty()) ||
-        (com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST !in homeHiddenSections && traktStore.isConnected() && !matchedTraktWatchlist.isEmpty) ||
-        (com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections && traktStore.isConnected() && !matchedTraktRecs.isEmpty) ||
+        (showTraktWatchlist && !matchedTraktWatchlist.isEmpty) ||
+        (showTraktRecs && !matchedTraktRecs.isEmpty) ||
         (com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections && recentMovies.isNotEmpty()) ||
         (com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections && featuredSeries.isNotEmpty())
 
@@ -1176,8 +1186,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST !in homeHiddenSections &&
-                        traktStore.isConnected() &&
+                    if (showTraktWatchlist &&
                         !matchedTraktWatchlist.isEmpty
                     ) {
                         Column {
@@ -1240,8 +1249,7 @@ internal fun HomeScreen(
                         }
                     }
 
-                    if (com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections &&
-                        traktStore.isConnected() &&
+                    if (showTraktRecs &&
                         !matchedTraktRecs.isEmpty
                     ) {
                         Column {

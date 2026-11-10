@@ -196,8 +196,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -211,7 +209,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -564,33 +561,29 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         FormFactorDetector.detect(this)
 
-        val imageLoader = ImageLoader.Builder(this)
-            .components {
-                add(coil.decode.SvgDecoder.Factory())
-            }
-            .memoryCache {
-                MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
-                    .build()
-            }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
-                    .maxSizePercent(0.05)
-                    .build()
-            }
-            .bitmapFactoryMaxParallelism(4)
-            .crossfade(false)
-            .build()
-        Coil.setImageLoader(imageLoader)
+        val appContext = applicationContext
+        Coil.setImageLoader {
+            ImageLoader.Builder(appContext)
+                .components {
+                    add(coil.decode.SvgDecoder.Factory())
+                }
+                .memoryCache {
+                    MemoryCache.Builder(appContext)
+                        .maxSizePercent(0.25)
+                        .build()
+                }
+                .diskCache {
+                    DiskCache.Builder()
+                        .directory(appContext.cacheDir.resolve("image_cache"))
+                        .maxSizePercent(0.05)
+                        .build()
+                }
+                .bitmapFactoryMaxParallelism(4)
+                .crossfade(false)
+                .build()
+        }
 
         setContent {
-            val focusManager = LocalFocusManager.current
-            val keyboardController = LocalSoftwareKeyboardController.current
-            val view = LocalView.current
-
-            val isTvDevice = FormFactorDetector.detectFromConfiguration(resources.configuration).isTelevision
-
             FortressTVTheme {
                 Box(
                     Modifier

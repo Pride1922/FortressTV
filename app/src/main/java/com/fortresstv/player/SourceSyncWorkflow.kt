@@ -1,6 +1,7 @@
 package com.fortresstv.player
 
 import android.content.Context
+import android.os.Trace
 import com.fortresstv.player.library.CloudIdentityHasher
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
@@ -57,7 +58,13 @@ internal class SourceSyncWorkflow(
     ): Playlist = withContext(Dispatchers.IO) {
         val fingerprint = SourceReader.fingerprint(context, profile.source, cacheType)
         if (allowCachedResult) {
-            PlaylistDiskCache.load(context, profile.id, fingerprint)?.let { cached ->
+            Trace.beginSection("FortressTV.restoreM3u")
+            val cached = try {
+                PlaylistDiskCache.load(context, profile.id, fingerprint)
+            } finally {
+                Trace.endSection()
+            }
+            if (cached != null) {
                 stream.close()
                 return@withContext cached
             }
@@ -71,12 +78,17 @@ internal class SourceSyncWorkflow(
         sourceId: String,
         catalog: XtreamCatalog,
         playlists: List<PlaylistProfile>,
+        shouldApply: () -> Boolean,
         onStateUpdated: () -> Unit = {}
     ) = withContext(Dispatchers.Default) {
-        val favs = userLibrary.favoriteChannelIds().toMutableSet()
-        val watchlist = userLibrary.movieWatchlistIds().toMutableSet()
-        val followed = userLibrary.followedSeriesIds().toMutableSet()
-        val watched = userLibrary.watchedItemIds().toMutableSet()
+        val originalFavs = userLibrary.favoriteChannelIds()
+        val originalWatchlist = userLibrary.movieWatchlistIds()
+        val originalFollowed = userLibrary.followedSeriesIds()
+        val originalWatched = userLibrary.watchedItemIds()
+        val favs = originalFavs.toMutableSet()
+        val watchlist = originalWatchlist.toMutableSet()
+        val followed = originalFollowed.toMutableSet()
+        val watched = originalWatched.toMutableSet()
 
         val channelPrefix = "channel:$sourceId:"
         val moviePrefix = "movie:$sourceId:"
@@ -90,7 +102,6 @@ internal class SourceSyncWorkflow(
                     favs.add("$channelPrefix${channel.sourceItemId}")
                 }
             }
-            userLibrary.setFavoriteChannelIds(favs)
         }
 
         val hasHashedMovies = watchlist.any { it.startsWith("movie:") && it.length > 38 } ||
@@ -106,8 +117,6 @@ internal class SourceSyncWorkflow(
                     watched.add("$moviePrefix${movie.id}")
                 }
             }
-            userLibrary.setMovieWatchlistIds(watchlist)
-            userLibrary.setWatchedItemIds(watched)
         }
 
         val hasHashedSeries = followed.any { it.startsWith("series:") && it.length > 39 }
@@ -118,10 +127,10 @@ internal class SourceSyncWorkflow(
                     followed.add("$seriesPrefix${series.id}")
                 }
             }
-            userLibrary.setFollowedSeriesIds(followed)
         }
 
-        val currentEntries = vodProgressStore.entries().toMutableList()
+        val originalEntries = vodProgressStore.entries()
+        val currentEntries = originalEntries.toMutableList()
         val movieMap = mutableMapOf<String, XtreamMovie>()
         for (movie in catalog.movies) {
             movieMap[movie.id.toString()] = movie
@@ -182,7 +191,8 @@ internal class SourceSyncWorkflow(
         val xtreamSource = playlists.firstOrNull { it.id == sourceId }?.source as? ContentSource.Xtream
         val client = XtreamClient(context.applicationContext, sourceId, xtreamSource ?: ContentSource.Xtream("", "", "", ""))
 
-        for (series in catalog.series) {
+        val seriesToCheck = if (watched.any { it.startsWith("episode:$sourceId:") }) catalog.series else emptyList()
+        for (series in seriesToCheck) {
             if (series.id in seriesWithProgress) continue
             if (vodProgressStore.isDismissed("episode:$sourceId:${series.id}", series.id.toString())) continue
 
@@ -232,11 +242,23 @@ internal class SourceSyncWorkflow(
             progressChanged = true
         }
 
-        if (progressChanged) {
-            vodProgressStore.setAll(currentEntries)
-        }
-
         withContext(Dispatchers.Main) {
+            if (!shouldApply()) return@withContext
+            if (favs != originalFavs && userLibrary.favoriteChannelIds() == originalFavs) {
+                userLibrary.setFavoriteChannelIds(favs)
+            }
+            if (watchlist != originalWatchlist && userLibrary.movieWatchlistIds() == originalWatchlist) {
+                userLibrary.setMovieWatchlistIds(watchlist)
+            }
+            if (followed != originalFollowed && userLibrary.followedSeriesIds() == originalFollowed) {
+                userLibrary.setFollowedSeriesIds(followed)
+            }
+            if (watched != originalWatched && userLibrary.watchedItemIds() == originalWatched) {
+                userLibrary.setWatchedItemIds(watched)
+            }
+            if (progressChanged && userLibrary.watchedItemIds() == watched && vodProgressStore.entries() == originalEntries) {
+                vodProgressStore.setAll(currentEntries)
+            }
             onStateUpdated()
         }
     }
