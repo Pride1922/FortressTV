@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC19",
-    "versionCode":  53,
-    "notes":  "FortressTV 2.0.0-RC19 adds in-app cinematic trailer playback, Portuguese-first trailers with English fallback from TMDb, Trakt trending recommendations fallback, and resilient IPTV VOD title matching.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC19/fortresstv.apk",
-    "sha256":  "ED597320E3B99C42C2D02FEC772ED089FD5165389261A3356210CB0813145C75"
+    "version":  "2.0.0-RC20",
+    "versionCode":  54,
+    "notes":  "FortressTV 2.0.0-RC20 prioritizes the active profile\u0027s language for trailer resolution with automatic English fallback, in-app cinematic trailer playback, Trakt trending fallback, and resilient VOD catalogue matching.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC20/fortresstv.apk",
+    "sha256":  "49A23F78F07CC5B01A3D285D009AEBF497158C2EF210BB6C04BBF80CDEF0BA05"
 }
