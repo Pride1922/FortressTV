@@ -4,11 +4,9 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.content.res.Configuration
-import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
 import android.os.Build
@@ -410,6 +408,8 @@ internal fun SeriesEpisodesDialog(
     var loadError by remember(series.id) { mutableStateOf(false) }
     var retryKey by remember(series.id) { mutableIntStateOf(0) }
     var tmdbMetadata by remember(series.id, tmdbSettings) { mutableStateOf<TmdbMetadata?>(null) }
+    val seriesTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
+    var activeTrailer by remember(series.id) { mutableStateOf<String?>(null) }
     var omdbMetadata by remember(series.id, omdbSettings) { mutableStateOf<OmdbMetadata?>(null) }
 
     LaunchedEffect(series.id, tmdbSettings) {
@@ -706,14 +706,9 @@ internal fun SeriesEpisodesDialog(
                             }
                         }
 
-                        val seriesTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
                         if (!seriesTrailer.isNullOrBlank()) {
                             IconButton(
-                                onClick = {
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(seriesTrailer)))
-                                    }
-                                },
+                                onClick = { activeTrailer = seriesTrailer },
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = strings.watchTrailer, tint = MaterialTheme.colorScheme.primary)
@@ -1167,6 +1162,14 @@ internal fun SeriesEpisodesDialog(
                 }
             }
         }
+    }
+
+    activeTrailer?.let { trailer ->
+        TrailerPlayerDialog(
+            title = series.name,
+            trailerUrl = trailer,
+            onDismiss = { activeTrailer = null }
+        )
     }
 }
 

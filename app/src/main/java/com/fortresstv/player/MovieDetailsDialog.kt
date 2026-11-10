@@ -4,11 +4,9 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.content.res.Configuration
-import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
 import android.os.Build
@@ -448,6 +446,7 @@ internal fun MovieDetailsDialog(
     val effectiveRating = tmdbMetadata?.rating ?: details?.rating ?: movie.rating
     val effectiveReleaseDate = tmdbMetadata?.releaseDate ?: details?.releaseDate ?: movie.year
     val effectiveTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
+    var activeTrailer by remember(movie.id) { mutableStateOf<String?>(null) }
     val posterRequest = remember(effectivePoster) {
         effectivePoster?.takeIf(String::isNotBlank)?.let { url ->
             ImageRequest.Builder(context)
@@ -668,11 +667,7 @@ internal fun MovieDetailsDialog(
                                 }
                                 if (!effectiveTrailer.isNullOrBlank()) {
                                     OutlinedButton(
-                                        onClick = {
-                                            runCatching {
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveTrailer)))
-                                            }
-                                        },
+                                        onClick = { activeTrailer = effectiveTrailer },
                                         modifier = Modifier.weight(1f).height(44.dp),
                                         contentPadding = PaddingValues(horizontal = 6.dp)
                                     ) {
@@ -802,11 +797,7 @@ internal fun MovieDetailsDialog(
                             ) {
                                 if (!effectiveTrailer.isNullOrBlank()) {
                                     OutlinedButton(
-                                        onClick = {
-                                            runCatching {
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(effectiveTrailer)))
-                                            }
-                                        },
+                                        onClick = { activeTrailer = effectiveTrailer },
                                         modifier = Modifier.weight(1f).height(54.dp),
                                         contentPadding = PaddingValues(horizontal = 10.dp)
                                     ) {
@@ -915,6 +906,14 @@ internal fun MovieDetailsDialog(
                 }
             }
         }
+    }
+
+    activeTrailer?.let { trailer ->
+        TrailerPlayerDialog(
+            title = movie.name,
+            trailerUrl = trailer,
+            onDismiss = { activeTrailer = null }
+        )
     }
 }
 

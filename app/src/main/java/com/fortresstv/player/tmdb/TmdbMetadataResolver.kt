@@ -17,6 +17,7 @@ object TmdbMetadataResolver {
     private val memoryCache = ConcurrentHashMap<String, TmdbMetadata>()
     private val seasonMemoryCache = ConcurrentHashMap<String, TmdbSeasonMetadata>()
     private const val CACHE_DIR_NAME = "tmdb_cache"
+    private const val TRAILER_SELECTION_VERSION = 1
     private const val CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000L // 14 days
 
     fun clearMemoryCache() {
@@ -181,6 +182,7 @@ object TmdbMetadataResolver {
             return null
         }
         val json = JSONObject(file.readText())
+        if (json.optInt("trailer_selection_version") != TRAILER_SELECTION_VERSION) return null
         val genresJson = json.optJSONArray("genres")
         val genres = mutableListOf<String>()
         if (genresJson != null) {
@@ -229,6 +231,7 @@ object TmdbMetadataResolver {
             put("director", metadata.director.orEmpty())
             put("cast", JSONArray(metadata.cast))
             put("trailer_url", metadata.trailerUrl.orEmpty())
+            put("trailer_selection_version", TRAILER_SELECTION_VERSION)
             put("cached_at", System.currentTimeMillis())
         }
 

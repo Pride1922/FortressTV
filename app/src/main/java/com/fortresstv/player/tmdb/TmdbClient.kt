@@ -1,5 +1,6 @@
 package com.fortresstv.player.tmdb
 
+import com.fortresstv.player.youTubeVideoIdPattern
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -37,7 +38,8 @@ class TmdbClient(
             val endpoint = "/3/movie/$tmdbId"
             val queryParams = mapOf(
                 "language" to language,
-                "append_to_response" to "credits,videos"
+                "append_to_response" to "credits,videos",
+                "include_video_language" to "pt,en,null"
             )
             val raw = executeRequest(endpoint, queryParams)
             val json = JSONObject(raw)
@@ -57,7 +59,8 @@ class TmdbClient(
             val endpoint = "/3/tv/$tmdbId"
             val queryParams = mapOf(
                 "language" to language,
-                "append_to_response" to "credits,videos"
+                "append_to_response" to "credits,videos",
+                "include_video_language" to "pt,en,null"
             )
             val raw = executeRequest(endpoint, queryParams)
             val json = JSONObject(raw)
@@ -368,22 +371,38 @@ class TmdbClient(
         return list
     }
 
-    private fun parseTrailerUrl(videos: JSONArray?): String? {
+    internal fun parseTrailerUrl(videos: JSONArray?): String? {
         if (videos == null) return null
-        var teaserKey: String? = null
+
+        var selectedKey: String? = null
+        var highestPriority = 0
+
         for (i in 0 until videos.length()) {
             val video = videos.optJSONObject(i) ?: continue
             if (!video.optString("site").equals("YouTube", ignoreCase = true)) continue
-            val type = video.optString("type")
+            if (!video.optString("type").equals("Trailer", ignoreCase = true)) continue
             val key = video.optString("key").trim()
-            if (key.isBlank()) continue
-            if (type.equals("Trailer", ignoreCase = true)) {
-                return "https://www.youtube.com/watch?v=$key"
-            } else if (type.equals("Teaser", ignoreCase = true) && teaserKey == null) {
-                teaserKey = key
+            if (!youTubeVideoIdPattern.matches(key)) continue
+
+            val language = video.optString("iso_639_1").trim().lowercase()
+            val languagePriority = when (language.substringBefore('-')) {
+                "pt" -> 4
+                "en" -> 1
+                else -> continue
+            }
+            val officialPriority = if (video.optBoolean("official")) 2 else 0
+            val portugalPriority = if (
+                language == "pt-pt" ||
+                (language == "pt" && video.optString("iso_3166_1").equals("PT", ignoreCase = true))
+            ) 1 else 0
+            val priority = languagePriority + officialPriority + portugalPriority
+            if (priority > highestPriority) {
+                selectedKey = key
+                highestPriority = priority
             }
         }
-        return teaserKey?.let { "https://www.youtube.com/watch?v=$it" }
+
+        return selectedKey?.let { "https://www.youtube.com/watch?v=$it" }
     }
 
     private fun executeRequest(endpoint: String, params: Map<String, String> = emptyMap()): String {

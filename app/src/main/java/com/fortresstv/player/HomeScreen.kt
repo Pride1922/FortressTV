@@ -1416,7 +1416,13 @@ internal fun HomeScreen(
     selectedMovie?.let { entry ->
         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
         val matchingRec = remember(entry.movie.id, traktRecItems) {
-            traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.MOVIE && ((it.tmdbId != null && it.tmdbId == entry.movie.tmdbId) || (it.imdbId != null && it.imdbId.equals(entry.movie.imdbId, ignoreCase = true)) || (it.title.equals(entry.movie.name, ignoreCase = true) && it.year == entry.movie.year?.toIntOrNull())) }
+            val normName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(entry.movie.name)
+            val cleanName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(entry.movie.name).first)
+            traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.MOVIE && (
+                (it.tmdbId != null && it.tmdbId == entry.movie.tmdbId) ||
+                (it.imdbId != null && it.imdbId.equals(entry.movie.imdbId, ignoreCase = true)) ||
+                (com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(it.title).let { t -> t == normName || t == cleanName })
+            ) }
         }
         val client = source?.let {
             remember(entry.catalog.sourceId, it) {
@@ -1453,7 +1459,13 @@ internal fun HomeScreen(
         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
         if (source != null) {
             val matchingRec = remember(entry.series.id, traktRecItems) {
-                traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.SHOW && ((it.tmdbId != null && it.tmdbId == entry.series.tmdbId) || (it.imdbId != null && it.imdbId.equals(entry.series.imdbId, ignoreCase = true)) || (it.title.equals(entry.series.name, ignoreCase = true) && it.year == entry.series.year?.toIntOrNull())) }
+                val normName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(entry.series.name)
+                val cleanName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(entry.series.name).first)
+                traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.SHOW && (
+                    (it.tmdbId != null && it.tmdbId == entry.series.tmdbId) ||
+                    (it.imdbId != null && it.imdbId.equals(entry.series.imdbId, ignoreCase = true)) ||
+                    (com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(it.title).let { t -> t == normName || t == cleanName })
+                ) }
             }
             SeriesEpisodesDialog(
                 series = entry.series,

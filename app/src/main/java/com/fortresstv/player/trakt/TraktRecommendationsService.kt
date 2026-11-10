@@ -46,7 +46,20 @@ internal object TraktRecommendationsService {
             is TraktAuthResult.Failure -> {}
         }
 
-        if (moviesResult is TraktAuthResult.Failure && showsResult is TraktAuthResult.Failure) {
+        // If personalized recommendations are empty (e.g. brand new Trakt account with no watch history),
+        // fall back to Trakt Trending movies and shows so the shelf is immediately populated.
+        if (items.isEmpty()) {
+            val trendingMovies = client.fetchTrendingMovies(clientId = clientId, accessToken = accessToken, limit = 40)
+            if (trendingMovies is TraktAuthResult.Success) {
+                items.addAll(trendingMovies.data)
+            }
+            val trendingShows = client.fetchTrendingShows(clientId = clientId, accessToken = accessToken, limit = 40)
+            if (trendingShows is TraktAuthResult.Success) {
+                items.addAll(trendingShows.data)
+            }
+        }
+
+        if (moviesResult is TraktAuthResult.Failure && showsResult is TraktAuthResult.Failure && items.isEmpty()) {
             return@withContext Result.failure(Exception(moviesResult.message))
         }
 
@@ -141,8 +154,18 @@ internal object TraktRecommendationsService {
         for (cm in allMovies) {
             cm.movie.tmdbId?.takeIf { it.isNotBlank() }?.let { movieByTmdb.putIfAbsent(it, cm) }
             cm.movie.imdbId?.takeIf { it.isNotBlank() }?.let { movieByImdb.putIfAbsent(it.lowercase(), cm) }
-            val key = normalizeTitle(cm.movie.name) + "_" + (cm.movie.year ?: "")
-            movieByTitleYear.putIfAbsent(key, cm)
+            val rawKey = normalizeTitle(cm.movie.name) + "_" + (cm.movie.year ?: "")
+            movieByTitleYear.putIfAbsent(rawKey, cm)
+
+            val (cleanTitle, extractedYear) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(cm.movie.name)
+            val yr = extractedYear ?: cm.movie.year
+            if (cleanTitle.isNotBlank()) {
+                val cleanKey = normalizeTitle(cleanTitle) + "_" + (yr ?: "")
+                movieByTitleYear.putIfAbsent(cleanKey, cm)
+                if (yr != null) {
+                    movieByTitleYear.putIfAbsent(normalizeTitle(cleanTitle) + "_$yr", cm)
+                }
+            }
         }
 
         val seriesByTmdb = mutableMapOf<String, CatalogSeries>()
@@ -152,8 +175,18 @@ internal object TraktRecommendationsService {
         for (cs in allSeries) {
             cs.series.tmdbId?.takeIf { it.isNotBlank() }?.let { seriesByTmdb.putIfAbsent(it, cs) }
             cs.series.imdbId?.takeIf { it.isNotBlank() }?.let { seriesByImdb.putIfAbsent(it.lowercase(), cs) }
-            val key = normalizeTitle(cs.series.name) + "_" + (cs.series.year ?: "")
-            seriesByTitleYear.putIfAbsent(key, cs)
+            val rawKey = normalizeTitle(cs.series.name) + "_" + (cs.series.year ?: "")
+            seriesByTitleYear.putIfAbsent(rawKey, cs)
+
+            val (cleanTitle, extractedYear) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(cs.series.name)
+            val yr = extractedYear ?: cs.series.year
+            if (cleanTitle.isNotBlank()) {
+                val cleanKey = normalizeTitle(cleanTitle) + "_" + (yr ?: "")
+                seriesByTitleYear.putIfAbsent(cleanKey, cs)
+                if (yr != null) {
+                    seriesByTitleYear.putIfAbsent(normalizeTitle(cleanTitle) + "_$yr", cs)
+                }
+            }
         }
 
         val matchedMovies = mutableListOf<CatalogMovie>()
@@ -162,11 +195,13 @@ internal object TraktRecommendationsService {
         val matchedSeriesIds = mutableSetOf<String>()
 
         for (item in recommendations) {
+            val normTitle = normalizeTitle(item.title)
             when (item.kind) {
                 TraktWatchlistKind.MOVIE -> {
                     val match = (item.tmdbId?.let { movieByTmdb[it] })
                         ?: (item.imdbId?.lowercase()?.let { movieByImdb[it] })
-                        ?: (item.year?.let { movieByTitleYear[normalizeTitle(item.title) + "_$it"] })
+                        ?: (item.year?.let { movieByTitleYear["${normTitle}_$it"] })
+                        ?: movieByTitleYear["${normTitle}_"]
 
                     if (match != null) {
                         val libId = match.movie.libraryId(match.catalog.sourceId)
@@ -178,7 +213,8 @@ internal object TraktRecommendationsService {
                 TraktWatchlistKind.SHOW -> {
                     val match = (item.tmdbId?.let { seriesByTmdb[it] })
                         ?: (item.imdbId?.lowercase()?.let { seriesByImdb[it] })
-                        ?: (item.year?.let { seriesByTitleYear[normalizeTitle(item.title) + "_$it"] })
+                        ?: (item.year?.let { seriesByTitleYear["${normTitle}_$it"] })
+                        ?: seriesByTitleYear["${normTitle}_"]
 
                     if (match != null) {
                         val libId = match.series.libraryId(match.catalog.sourceId)

@@ -614,4 +614,71 @@ class TraktClientTest {
         assertTrue(result is TraktAuthResult.Success)
         assertEquals("https://api.trakt.tv/recommendations/movies/937287", deleteCalledUrl)
     }
+
+    @Test
+    fun fetchTrendingMoviesParsesWrappedObjects() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/movies/trending?limit=40", url)
+            val json = """
+                [
+                    {
+                        "watchers": 1500,
+                        "movie": {
+                            "title": "Challengers",
+                            "year": 2024,
+                            "ids": {
+                                "trakt": 937287,
+                                "imdb": "tt16426418",
+                                "tmdb": 937287
+                            }
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchTrendingMovies("cid", "tok")
+        assertTrue(result is TraktAuthResult.Success)
+        val movies = (result as TraktAuthResult.Success).data
+        assertEquals(1, movies.size)
+        assertEquals("Challengers", movies[0].title)
+        assertEquals(2024, movies[0].year)
+        assertEquals("937287", movies[0].tmdbId)
+        assertEquals(TraktWatchlistKind.MOVIE, movies[0].kind)
+    }
+
+    @Test
+    fun fetchTrendingShowsParsesWrappedObjects() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/shows/trending?limit=40", url)
+            val json = """
+                [
+                    {
+                        "watchers": 890,
+                        "show": {
+                            "title": "Severance",
+                            "year": 2022,
+                            "ids": {
+                                "trakt": 154432,
+                                "imdb": "tt11280740",
+                                "tmdb": 95396
+                            }
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchTrendingShows("cid", "tok")
+        assertTrue(result is TraktAuthResult.Success)
+        val shows = (result as TraktAuthResult.Success).data
+        assertEquals(1, shows.size)
+        assertEquals("Severance", shows[0].title)
+        assertEquals("95396", shows[0].tmdbId)
+        assertEquals(TraktWatchlistKind.SHOW, shows[0].kind)
+    }
 }

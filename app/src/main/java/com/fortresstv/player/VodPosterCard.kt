@@ -428,7 +428,8 @@ internal fun VodPosterCard(
         }
     }
     val isTv = LocalFormFactor.current.isTelevision
-    val hasRatingPill = (!imdbRating.isNullOrBlank() && imdbRating != "N/A") ||
+    val formattedImdbRating = remember(imdbRating) { formatVodRating(imdbRating) }
+    val hasRatingPill = formattedImdbRating != null ||
         (!rottenTomatoes.isNullOrBlank() && rottenTomatoes != "N/A")
 
     // The "two sources on the same card" fix:
@@ -467,7 +468,7 @@ internal fun VodPosterCard(
                 }
 
                 // Frosted Rating Badge on Top-Left (IMDb is primary, Rotten Tomatoes exception)
-                if (!imdbRating.isNullOrBlank() && imdbRating != "N/A") {
+                if (formattedImdbRating != null) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = Color(0xDE1A1605),
@@ -486,7 +487,7 @@ internal fun VodPosterCard(
                             )
                             Spacer(Modifier.width(2.dp))
                             Text(
-                                text = imdbRating,
+                                text = formattedImdbRating,
                                 color = Color(0xFFFFFAEB),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp
@@ -556,13 +557,16 @@ internal fun VodPosterCard(
 }
 
 internal fun formatVodMetadata(year: String?, rating: String?): String {
-    val formattedRating = rating
+    val formattedRating = formatVodRating(rating)?.let { "★ $it/10" }
+    return listOfNotNull(year?.trim()?.takeIf(String::isNotEmpty), formattedRating).joinToString("  ")
+}
+
+internal fun formatVodRating(rating: String?): String? =
+    rating
         ?.trim()
         ?.substringBefore('/')
         ?.replace(',', '.')
         ?.toDoubleOrNull()
         ?.takeIf { it.isFinite() }
-        ?.let { value -> "★ ${String.format(Locale.ROOT, "%.1f", value)}/10" }
-    return listOfNotNull(year?.trim()?.takeIf(String::isNotEmpty), formattedRating).joinToString("  ")
-}
+        ?.let { value -> String.format(Locale.ROOT, "%.1f", value) }
 

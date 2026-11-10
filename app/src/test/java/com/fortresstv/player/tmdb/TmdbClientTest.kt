@@ -1,5 +1,6 @@
 package com.fortresstv.player.tmdb
 
+import com.fortresstv.player.extractYouTubeVideoId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -131,5 +132,100 @@ class TmdbClientTest {
         assertEquals("Uma nova pista surge...", ep2?.overview)
         assertEquals("https://image.tmdb.org/t/p/w500/still2.jpg", ep2?.stillUrl)
         assertEquals("7.8", ep2?.rating)
+    }
+
+    @Test
+    fun testParseTrailerUrlPrioritizesPortuguese() {
+        val client = TmdbClient("dummy-key")
+        val videosJson = org.json.JSONArray("""[
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "enTrailer01",
+                "iso_639_1": "en",
+                "official": true
+            },
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "brTrailer01",
+                "iso_639_1": "pt",
+                "iso_3166_1": "BR",
+                "official": true
+            },
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "ptTrailer01",
+                "iso_639_1": "pt",
+                "iso_3166_1": "PT",
+                "official": true
+            }
+        ]""")
+
+        val url = client.parseTrailerUrl(videosJson)
+        assertEquals("https://www.youtube.com/watch?v=ptTrailer01", url)
+    }
+
+    @Test
+    fun testParseTrailerUrlFallsBackToEnglishWhenNoPortuguese() {
+        val client = TmdbClient("dummy-key")
+        val videosJson = org.json.JSONArray("""[
+            {
+                "site": "YouTube",
+                "type": "Teaser",
+                "key": "ptTeaser001",
+                "iso_639_1": "pt",
+                "official": true
+            },
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "invalid-key-length",
+                "iso_639_1": "pt",
+                "official": true
+            },
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "enTrailer02",
+                "iso_639_1": "en"
+            },
+            {
+                "site": "YouTube",
+                "type": "Trailer",
+                "key": "enTrailer01",
+                "iso_639_1": "en",
+                "official": true
+            }
+        ]""")
+
+        val url = client.parseTrailerUrl(videosJson)
+        assertEquals("https://www.youtube.com/watch?v=enTrailer01", url)
+    }
+
+    @Test
+    fun testParseTrailerUrlReturnsNullWithoutPortugueseOrEnglishTrailer() {
+        val client = TmdbClient("dummy-key")
+        val videosJson = org.json.JSONArray("""[
+            {"site":"YouTube","type":"Trailer","key":"frTrailer01","iso_639_1":"fr"},
+            {"site":"YouTube","type":"Teaser","key":"ptTeaser001","iso_639_1":"pt"}
+        ]""")
+
+        assertNull(client.parseTrailerUrl(videosJson))
+    }
+
+    @Test
+    fun testExtractYouTubeVideoId() {
+        val id = "abcDEfg12_-"
+        assertEquals(id, extractYouTubeVideoId(id))
+        assertEquals(id, extractYouTubeVideoId("https://www.youtube.com/watch?feature=shared&v=$id&t=10s"))
+        assertEquals(id, extractYouTubeVideoId("https://youtu.be/$id"))
+        assertEquals(id, extractYouTubeVideoId("https://www.youtube-nocookie.com/embed/$id"))
+        assertEquals(id, extractYouTubeVideoId("https://www.youtube.com/shorts/$id"))
+        assertNull(extractYouTubeVideoId(""))
+        assertNull(extractYouTubeVideoId(null))
+        assertNull(extractYouTubeVideoId("https://example.com/watch?v=$id"))
+        assertNull(extractYouTubeVideoId("https://www.youtube.com/watch?v=${id}extra"))
     }
 }

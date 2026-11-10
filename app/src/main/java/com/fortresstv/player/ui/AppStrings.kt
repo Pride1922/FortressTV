@@ -414,6 +414,10 @@ interface Strings {
     val traktHideRecommendation: String
     val traktHidingRecommendation: String
     val watchTrailer: String
+    val openInYouTube: String
+    val openTrailerExternally: String
+    val trailerUnavailableInApp: String
+    val trailerLinkOpenFailed: String
     val genres: String
     val tabAbout: String
     val language: String
@@ -974,6 +978,10 @@ object EnglishStrings : Strings {
     override val traktHideRecommendation = "Hide on Trakt"
     override val traktHidingRecommendation = "Hiding recommendation..."
     override val watchTrailer = "Watch Trailer"
+    override val openInYouTube = "Open in YouTube"
+    override val openTrailerExternally = "Open trailer externally"
+    override val trailerUnavailableInApp = "This trailer can’t play in FortressTV."
+    override val trailerLinkOpenFailed = "Couldn’t open the trailer link."
     override val genres = "Genres"
     override val tabAbout = "About"
     override val language = "Language"
@@ -1537,6 +1545,10 @@ object PortugueseStrings : Strings {
     override val traktHideRecommendation = "Ocultar no Trakt"
     override val traktHidingRecommendation = "A ocultar recomendação..."
     override val watchTrailer = "Ver Trailer"
+    override val openInYouTube = "Abrir no YouTube"
+    override val openTrailerExternally = "Abrir trailer noutra aplicação"
+    override val trailerUnavailableInApp = "Não é possível reproduzir este trailer no FortressTV."
+    override val trailerLinkOpenFailed = "Não foi possível abrir a ligação do trailer."
     override val genres = "Géneros"
     override val tabAbout = "Sobre"
     override val language = "Idioma"

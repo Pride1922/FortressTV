@@ -486,6 +486,60 @@ open class TraktClient(
     }
 
     /**
+     * Fetches currently trending movies on Trakt (used as fallback when personalized recommendations are empty).
+     */
+    open fun fetchTrendingMovies(
+        clientId: String,
+        accessToken: String? = null,
+        limit: Int = 40
+    ): TraktAuthResult<List<TraktRecommendationItem>> {
+        val url = "${apiHost.trimEnd('/')}/movies/trending?limit=$limit"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktRecommendationItem>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktRecommendationItem.fromJson(obj, TraktWatchlistKind.MOVIE)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch trending movies: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching trending movies: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Fetches currently trending shows on Trakt (used as fallback when personalized recommendations are empty).
+     */
+    open fun fetchTrendingShows(
+        clientId: String,
+        accessToken: String? = null,
+        limit: Int = 40
+    ): TraktAuthResult<List<TraktRecommendationItem>> {
+        val url = "${apiHost.trimEnd('/')}/shows/trending?limit=$limit"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktRecommendationItem>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktRecommendationItem.fromJson(obj, TraktWatchlistKind.SHOW)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch trending shows: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching trending shows: ${e.message}", cause = e)
+        }
+    }
+
+    /**
      * Dismisses (hides) a recommendation on Trakt so it will not appear again.
      */
     open fun dismissRecommendation(

@@ -1,9 +1,17 @@
 package com.fortresstv.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VodMetadataTest {
+    @Test
+    fun formatVodRatingRoundsToOneDecimal() {
+        assertEquals("8.7", formatVodRating("8.661"))
+        assertEquals("8.0", formatVodRating("8"))
+        assertNull(formatVodRating("N/A"))
+    }
+
     @Test
     fun formatsRatingsToOneDecimalPlace() {
         assertEquals("2022  ★ 7.4/10", formatVodMetadata("2022", "7.446"))

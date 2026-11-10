@@ -180,4 +180,41 @@ class TraktRecommendationsServiceTest {
         assertEquals(1, matchedForChild.movies.size)
         assertEquals(703, matchedForChild.movies[0].movie.id)
     }
+
+    @Test
+    fun matchesTaggedVODTitlesWithCleanMediaTitle() {
+        val taggedMovie = XtreamMovie(
+            id = 801,
+            name = "[EN] Top Gun: Maverick (2022) 4K UHD",
+            categoryId = "1",
+            posterUrl = null,
+            containerExtension = "mp4",
+            rating = "8.3",
+            year = null, // Xtream often omits the year field when in the title
+            plot = null,
+            tmdbId = null // and often has no tmdb id
+        )
+
+        val catalog = XtreamCatalog(
+            sourceId = "src1",
+            sourceName = "Source 1",
+            movies = listOf(taggedMovie)
+        )
+
+        val recs = listOf(
+            TraktRecommendationItem(
+                kind = TraktWatchlistKind.MOVIE,
+                title = "Top Gun: Maverick",
+                year = 2022,
+                tmdbId = "361743",
+                imdbId = "tt1745960",
+                traktId = 555,
+                slug = "top-gun-maverick-2022"
+            )
+        )
+
+        val matched = TraktRecommendationsService.matchRecommendations(recs, listOf(catalog))
+        assertEquals(1, matched.movies.size)
+        assertEquals(801, matched.movies[0].movie.id)
+    }
 }
