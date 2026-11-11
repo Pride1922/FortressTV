@@ -1,7 +1,7 @@
 {
-  "version": "2.0.0-RC23",
-  "versionCode": 57,
-  "notes": "- Redesigned Home with compact Continue Watching cards, episode labels, and shortcuts to Live TV, Movies, and Series.\n- Customize Home can show, hide, and reorder shelves. The order is saved per profile.\n- Improved movie card button readability and added a way to restore hidden recommendations.\n- Automatic live playback retries a stalled first HTTP open sooner.\n\n- Novo ecrã inicial com cartões compactos em Continuar a ver, identificação de episódios e atalhos para TV em direto, Filmes e Séries.\n- Em Personalizar Início pode mostrar, ocultar e reordenar secções. A ordem é guardada por perfil.\n- Melhorámos a legibilidade dos botões nos cartões de filmes e adicionámos uma opção para restaurar recomendações ocultas.\n- No modo Automático, a reprodução em direto volta a tentar mais cedo se o primeiro pedido HTTP exceder o tempo limite.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC23/fortresstv.apk",
-  "sha256": "2575C7B696B6771957CE18E69CC6FC54DECF457CA9EBB192A0AA37A544FE184C"
+    "version":  "2.0.0",
+    "versionCode":  58,
+    "notes":  "FortressTV 2.0.0\n\n- Fixed: the interface language now stays saved on profiles protected by a parental PIN instead of reverting to Portuguese.\n- Trakt: recommendations now include series and trending titles, and \u0027Import from Trakt\u0027 replaces \u0027Sync Watched History\u0027.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0/fortresstv.apk",
+    "sha256":  "552A9A8E4A31EA414BD345B66224A6D593BA70AE0E91FC099294691AB8869C73"
 }
