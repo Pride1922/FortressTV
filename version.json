@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0",
-    "versionCode":  58,
-    "notes":  "FortressTV 2.0.0\n\n- Fixed: the interface language now stays saved on profiles protected by a parental PIN instead of reverting to Portuguese.\n- Trakt: recommendations now include series and trending titles, and \u0027Import from Trakt\u0027 replaces \u0027Sync Watched History\u0027.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0/fortresstv.apk",
-    "sha256":  "552A9A8E4A31EA414BD345B66224A6D593BA70AE0E91FC099294691AB8869C73"
+  "version": "2.0.1",
+  "versionCode": 59,
+  "notes": "- Replaced the library sidebar with a Home icon, search, and a profile menu.\n- Refined Home, Settings, and the profile picker for phones.\n- Fixed audio and subtitle preference sync between devices. The app uploads these settings independently and checks for updates when it returns to the foreground.\n\n- Substituímos a barra lateral da biblioteca por um ícone de Início, pesquisa e um menu de perfil.\n- Melhorámos o ecrã inicial, as definições e a seleção de perfis em telemóveis.\n- Corrigimos a sincronização das preferências de áudio e legendas entre dispositivos. A aplicação envia estas definições de forma independente e procura atualizações quando volta ao primeiro plano.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.1/fortresstv.apk",
+  "sha256": "4C800AAF68917DF7FBEE004FC744B7743174EF54CFB3B07E6BC43294968C2955"
 }
