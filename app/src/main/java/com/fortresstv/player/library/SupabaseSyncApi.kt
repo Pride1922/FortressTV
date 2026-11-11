@@ -30,7 +30,10 @@ data class CloudWatchProgressItem(
     val completed: Boolean = false,
     val clientUpdatedAtMs: Long = System.currentTimeMillis(),
     val deletedAt: String? = null,
-    val updatedAt: String? = null
+    val updatedAt: String? = null,
+    val seriesId: Int? = null,
+    val season: Int? = null,
+    val episode: Int? = null
 )
 
 data class CloudCategoryCustomization(
@@ -199,6 +202,9 @@ internal class SupabaseSyncApi(
                     positionMs = obj.optLong("position_ms", 0L),
                     durationMs = obj.optLong("duration_ms", 0L),
                     completed = obj.optBoolean("completed", false),
+                    seriesId = obj.optInt("series_id").takeUnless { obj.isNull("series_id") },
+                    season = obj.optInt("season_number").takeUnless { obj.isNull("season_number") },
+                    episode = obj.optInt("episode_number").takeUnless { obj.isNull("episode_number") },
                     clientUpdatedAtMs = obj.optLong("client_updated_at_ms", 0L),
                     deletedAt = obj.optString("deleted_at").takeIf { it.isNotBlank() && it != "null" },
                     updatedAt = obj.optString("updated_at").takeIf { it.isNotBlank() && it != "null" }
@@ -242,10 +248,17 @@ internal class SupabaseSyncApi(
             "Prefer" to "return=minimal"
         )
         for (item in items) {
+            val hasSeriesIdentity = item.itemKind == "episode" && item.seriesId != null
             val rpcBody = JSONObject().apply {
                 put("p_profile_id", item.profileId)
                 put("p_source_id", item.sourceId)
-                put("p_item_kind", item.itemKind)
+                if (hasSeriesIdentity) {
+                    put("p_series_id", item.seriesId)
+                    put("p_season_number", item.season ?: JSONObject.NULL)
+                    put("p_episode_number", item.episode ?: JSONObject.NULL)
+                } else {
+                    put("p_item_kind", item.itemKind)
+                }
                 put("p_item_id", item.itemId)
                 put("p_position_ms", item.positionMs)
                 put("p_duration_ms", item.durationMs)
@@ -253,8 +266,21 @@ internal class SupabaseSyncApi(
                 put("p_client_updated_at_ms", item.clientUpdatedAtMs)
                 if (item.deletedAt != null) put("p_deleted_at", item.deletedAt) else put("p_deleted_at", JSONObject.NULL)
             }
-            transport.request("POST", "/rest/v1/rpc/fortress_sync_profile_watch_progress", rpcBody, accessToken, headers)
+            val rpc = if (hasSeriesIdentity) "fortress_sync_episode_progress" else "fortress_sync_profile_watch_progress"
+            transport.request("POST", "/rest/v1/rpc/$rpc", rpcBody, accessToken, headers)
         }
+    }
+
+    fun backfillEpisodeIdentity(item: CloudWatchProgressItem, local: VodProgressEntry, sessionToken: String, accessToken: String) {
+        val body = JSONObject().apply {
+            put("p_profile_id", item.profileId)
+            put("p_source_id", item.sourceId)
+            put("p_item_id", item.itemId)
+            put("p_series_id", local.seriesId)
+            put("p_season_number", local.season ?: JSONObject.NULL)
+            put("p_episode_number", local.episode ?: JSONObject.NULL)
+        }
+        transport.request("POST", "/rest/v1/rpc/fortress_sync_episode_progress", body, accessToken, mapOf("x-profile-session" to sessionToken))
     }
 
     fun saveProfileCategories(

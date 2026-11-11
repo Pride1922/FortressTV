@@ -103,8 +103,8 @@ internal class SupabaseSourceApi(
             unlockToken?.let { put("p_unlock_token", it) }
         }
         val text = transport.request("POST", "/rest/v1/rpc/fortress_get_tmdb", body, accessToken, null)
-        val json = JSONObject(text.ifBlank { "{}" })
-        if (!json.optBoolean("configured", false)) return null
+        val json = JSONObject(text)
+        if (!json.getBoolean("configured")) return null
         return com.fortresstv.player.tmdb.TmdbSettings(
             enabled = json.optBoolean("enabled", false),
             apiKey = json.optString("api_key", ""),
@@ -121,6 +121,17 @@ internal class SupabaseSourceApi(
         }
         val text = transport.request("POST", "/rest/v1/rpc/fortress_delete_tmdb", body, accessToken, null)
         return text.trim() == "true"
+    }
+
+    fun getTraktClientId(profileId: String, accessToken: String): String? {
+        val body = JSONObject().put("p_profile_id", profileId)
+        val response = transport.request("POST", "/rest/v1/rpc/fortress_get_trakt_client_id", body, accessToken, null)
+        return JSONObject(response).optString("client_id").takeIf { it.isNotBlank() }
+    }
+
+    fun saveTraktClientId(profileId: String, clientId: String, accessToken: String) {
+        val body = JSONObject().put("p_profile_id", profileId).put("p_client_id", clientId)
+        transport.request("POST", "/rest/v1/rpc/fortress_save_trakt_client_id", body, accessToken, null)
     }
 
     fun saveOmdb(

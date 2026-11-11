@@ -79,6 +79,7 @@ internal class SourceSyncWorkflow(
         catalog: XtreamCatalog,
         playlists: List<PlaylistProfile>,
         shouldApply: () -> Boolean,
+        inferNextEpisodes: Boolean,
         onStateUpdated: () -> Unit = {}
     ) = withContext(Dispatchers.Default) {
         val originalFavs = userLibrary.favoriteChannelIds()
@@ -143,6 +144,7 @@ internal class SourceSyncWorkflow(
         var progressChanged = false
         for (i in currentEntries.indices) {
             val entry = currentEntries[i]
+            if (entry.sourceId != sourceId) continue
             if (entry.kind == VodProgressKind.MOVIE && (entry.title.isBlank() || entry.posterUrl.isNullOrBlank())) {
                 var matchingMovie = movieMap[entry.itemId]
                 if (matchingMovie == null) {
@@ -163,13 +165,6 @@ internal class SourceSyncWorkflow(
                 }
             } else if (entry.kind == VodProgressKind.EPISODE && (entry.title.isBlank() || entry.posterUrl.isNullOrBlank())) {
                 val matchingSeries = entry.seriesId?.let { sId -> seriesMap[sId.toString()] }
-                    ?: catalog.series.firstOrNull {
-                        val sIdStr = it.id.toString()
-                        val sHash = CloudIdentityHasher.hashItemId(sIdStr)
-                        it.id == entry.seriesId ||
-                            sIdStr == entry.itemId ||
-                            sHash == entry.itemId
-                    }
                 if (matchingSeries != null) {
                     currentEntries[i] = entry.copy(
                         sourceId = sourceId,
@@ -182,16 +177,45 @@ internal class SourceSyncWorkflow(
             }
         }
 
+        val filesDir = context.applicationContext.filesDir
+        val xtreamSource = playlists.firstOrNull { it.id == sourceId }?.source as? ContentSource.Xtream
+        val client = XtreamClient(context.applicationContext, sourceId, xtreamSource ?: ContentSource.Xtream("", "", "", ""))
+
+        val unresolvedEpisodes = currentEntries.indices.filter { index ->
+            val entry = currentEntries[index]
+            entry.kind == VodProgressKind.EPISODE && entry.sourceId == sourceId && entry.seriesId == null
+        }.associateBy { index -> currentEntries[index].itemId }.toMutableMap()
+        val cachePrefix = "xtream_${sourceId}_get_series_info_series_id_"
+        if (unresolvedEpisodes.isNotEmpty()) {
+            for (file in filesDir.listFiles { _, name -> name.startsWith(cachePrefix) && name.endsWith(".json") }.orEmpty()) {
+                if (unresolvedEpisodes.isEmpty()) break
+                val seriesId = file.name.removePrefix(cachePrefix).removeSuffix(".json")
+                val series = seriesMap[seriesId] ?: continue
+                val details = runCatching { client.parseSeriesDetails(file.readText()) }.getOrNull() ?: continue
+                for (episode in details.episodes) {
+                    val index = unresolvedEpisodes.remove(episode.id)
+                        ?: unresolvedEpisodes.remove(CloudIdentityHasher.hashItemId(episode.id))
+                        ?: continue
+                    val entry = currentEntries[index]
+                    currentEntries[index] = entry.copy(
+                        seriesId = series.id,
+                        title = entry.title.ifBlank { series.name },
+                        posterUrl = entry.posterUrl ?: episode.posterUrl ?: series.coverUrl,
+                        season = episode.season,
+                        episode = episode.episodeNumber
+                    )
+                    progressChanged = true
+                }
+            }
+        }
         val seriesWithProgress = currentEntries
             .filter { it.kind == VodProgressKind.EPISODE && it.sourceId == sourceId }
             .mapNotNull { it.seriesId }
             .toSet()
 
-        val filesDir = context.applicationContext.filesDir
-        val xtreamSource = playlists.firstOrNull { it.id == sourceId }?.source as? ContentSource.Xtream
-        val client = XtreamClient(context.applicationContext, sourceId, xtreamSource ?: ContentSource.Xtream("", "", "", ""))
-
-        val seriesToCheck = if (watched.any { it.startsWith("episode:$sourceId:") }) catalog.series else emptyList()
+        val seriesToCheck = if (inferNextEpisodes && watched.any { it.startsWith("episode:$sourceId:") }) {
+            catalog.series
+        } else emptyList()
         for (series in seriesToCheck) {
             if (series.id in seriesWithProgress) continue
             if (vodProgressStore.isDismissed("episode:$sourceId:${series.id}", series.id.toString())) continue

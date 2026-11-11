@@ -419,6 +419,7 @@ internal fun FortressTVApp(
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
     var startupDestination by remember { mutableStateOf(settings.startupDestination(initialProfileId)) }
+    var startupNavigationRequest by remember { mutableStateOf<StartupDestination?>(null) }
     var homeHiddenSections by remember { mutableStateOf(settings.homeHiddenSections(initialProfileId)) }
     var homeSectionOrder by remember { mutableStateOf(settings.homeSectionOrder(initialProfileId)) }
     var showCustomizeHomeDialog by remember { mutableStateOf(false) }
@@ -582,7 +583,9 @@ internal fun FortressTVApp(
                     xtreamCatalogs[sourceId] === catalog
             }
             if (!stillCurrent()) return@withLock
-            sourceSyncWorkflow.reconnectFavouritesAndProgress(sourceId, catalog, playlists, stillCurrent) {
+            sourceSyncWorkflow.reconnectFavouritesAndProgress(
+                sourceId, catalog, playlists, stillCurrent, inferNextEpisodes = currentUserId == null
+            ) {
                 favoriteChannelIds = userLibrary.favoriteChannelIds()
                 recentChannelIds = userLibrary.recentChannelIds()
                 movieWatchlistIds = userLibrary.movieWatchlistIds()
@@ -699,7 +702,10 @@ internal fun FortressTVApp(
                         itemId = entry.itemId,
                         positionMs = entry.positionMs,
                         durationMs = entry.durationMs,
-                        completed = entry.progressFraction >= 0.95f
+                        completed = entry.progressFraction >= 0.95f,
+                        seriesId = entry.seriesId,
+                        season = entry.season,
+                        episode = entry.episode
                     )
                 }
             }
@@ -738,24 +744,6 @@ internal fun FortressTVApp(
                         isFavourite = true,
                         isWatchlisted = true,
                         isWatched = false
-                    )
-                }
-            }
-            val currentProgress = vodProgressStore.entries()
-            for (entry in currentProgress) {
-                if (entry.itemId.length < 64) {
-                    cloudLibrarySyncService.enqueueProgressMutation(
-                        profileId = targetProfileId,
-                        sourceId = entry.sourceId,
-                        itemKind = when (entry.kind) {
-                            VodProgressKind.MOVIE -> "movie"
-                            VodProgressKind.EPISODE -> "episode"
-                            VodProgressKind.CATCHUP -> "catchup"
-                        },
-                        itemId = entry.itemId,
-                        positionMs = entry.positionMs,
-                        durationMs = entry.durationMs,
-                        completed = entry.progressFraction >= 0.95f
                     )
                 }
             }
@@ -1201,9 +1189,54 @@ internal fun FortressTVApp(
         currentAppEpochDay = LocalDate.now().toEpochDay()
     }
 
+    LaunchedEffect(foregroundGeneration, currentUserId) {
+        val userId = currentUserId ?: return@LaunchedEffect
+        launch {
+            val local = tmdbSettings
+            val remote = cloudSourceSyncService.reconcileTmdb(local)
+            if (remote != null && remote.apiKey.isNotBlank() && tmdbSettings == local && currentUserId == userId) {
+                tmdbStore.saveSettings(remote)
+                tmdbSettings = remote
+            }
+        }
+        launch {
+            val local = omdbSettings
+            val remote = cloudSourceSyncService.reconcileOmdb(local)
+            if (remote != null && remote.apiKey.isNotBlank() && omdbSettings == local && currentUserId == userId) {
+                omdbStore.saveSettings(remote)
+                omdbSettings = remote
+            }
+        }
+    }
+
+    LaunchedEffect(foregroundGeneration, activeHouseholdProfile.id, currentUserId) {
+        val userId = currentUserId ?: return@LaunchedEffect
+        val profileId = activeHouseholdProfile.id
+        if (profileId == "restricted_default") return@LaunchedEffect
+        val store = com.fortresstv.player.trakt.TraktSettingsStore(context.applicationContext, profileProgressNamespace(userId, profileId))
+        val localClientId = store.loadClientId()
+        val remoteClientId = cloudSourceSyncService.reconcileTraktClientId(profileId, localClientId)
+        if (remoteClientId != null && store.loadClientId().isBlank()) store.saveClientId(remoteClientId)
+    }
+
     LaunchedEffect(foregroundGeneration, activeHouseholdProfile.id, currentUserId) {
         val profileId = activeHouseholdProfile.id
         if (currentUserId == null || profileId == "restricted_default") return@LaunchedEffect
+        val progress = VodProgressStore(context.applicationContext, profileProgressNamespace(currentUserId, profileId))
+        launch {
+            cloudLibrarySyncService.refreshProgress(profileId, progress)
+            if (activeHouseholdProfile.id == profileId) {
+                val unresolved = progress.entries().filter { it.kind == VodProgressKind.EPISODE && it.seriesId == null }
+                    .mapTo(mutableSetOf()) { it.key }
+                xtreamCatalogs.toMap().forEach { (sourceId, catalog) ->
+                    reconnectFavouritesAndProgress(sourceId, catalog)
+                }
+                if (progress.entries().any { it.key in unresolved && it.seriesId != null }) {
+                    cloudLibrarySyncService.refreshProgress(profileId, progress)
+                }
+                progressRefreshTrigger++
+            }
+        }
         fun localPreferences() = listOf(
             settings.preferredAudioLanguage(profileId), settings.preferredSubtitleLanguage(profileId),
             settings.subtitleFallbackEnglish(profileId), settings.startupDestination(profileId),
@@ -1417,15 +1450,6 @@ internal fun FortressTVApp(
                 } else if (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank()) {
                     cloudSourceService.syncOpenSubtitlesToCloud(openSubtitlesSettings, profileRepository.currentUnlockToken())
                 }
-                val restoredTmdb = cloudSourceService.restoreTmdbFromCloud(profileRepository.currentUnlockToken())
-                if (restoredTmdb != null && restoredTmdb.apiKey.isNotBlank()) {
-                    tmdbStore.saveSettings(restoredTmdb)
-                    withContext(Dispatchers.Main) {
-                        tmdbSettings = restoredTmdb
-                    }
-                } else if (tmdbSettings.apiKey.isNotBlank()) {
-                    cloudSourceService.syncTmdbToCloud(tmdbSettings, profileRepository.currentUnlockToken())
-                }
                 val restoredOmdb = cloudSourceService.restoreOmdbFromCloud(profileRepository.currentUnlockToken())
                 if (restoredOmdb != null && restoredOmdb.apiKey.isNotBlank()) {
                     omdbStore.saveSettings(restoredOmdb)
@@ -1599,6 +1623,8 @@ internal fun FortressTVApp(
                     playlist = playlist!!,
                     activeProfile = activeProfile!!,
                     startupDestination = startupDestination,
+                    startupNavigationRequest = startupNavigationRequest,
+                    onStartupNavigationHandled = { startupNavigationRequest = null },
                     enabledSourceCount = playlists.count { it.enabled && it.role.contributesLiveTv() },
                     enabledSources = playlists
                         .filter { it.enabled && it.role.contributesLiveTv() }
@@ -1867,15 +1893,6 @@ internal fun FortressTVApp(
                         } else if (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank()) {
                             cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings, token)
                         }
-                        val restoredTmdb = cloudSourceSyncService.restoreTmdbFromCloud(token)
-                        if (restoredTmdb != null && restoredTmdb.apiKey.isNotBlank()) {
-                            tmdbStore.saveSettings(restoredTmdb)
-                            withContext(Dispatchers.Main) {
-                                tmdbSettings = restoredTmdb
-                            }
-                        } else if (tmdbSettings.apiKey.isNotBlank()) {
-                            cloudSourceSyncService.syncTmdbToCloud(tmdbSettings, token)
-                        }
                         val restoredOmdb = cloudSourceSyncService.restoreOmdbFromCloud(token)
                         if (restoredOmdb != null && restoredOmdb.apiKey.isNotBlank()) {
                             omdbStore.saveSettings(restoredOmdb)
@@ -1894,7 +1911,8 @@ internal fun FortressTVApp(
                 startupDestination = startupDestination,
                 onStartupDestinationChanged = { destination ->
                     startupDestination = destination
-                    scope.launch(Dispatchers.IO) { settings.setStartupDestination(destination, activeHouseholdProfile.id) }
+                    settings.setStartupDestination(destination, activeHouseholdProfile.id)
+                    startupNavigationRequest = destination
                     if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                         cloudLibrarySyncService.recordPreferencesMutation(
                             profileId = activeHouseholdProfile.id,
@@ -1957,12 +1975,12 @@ internal fun FortressTVApp(
                 },
                 tmdbSettings = tmdbSettings,
                 onTmdbSettingsChanged = { newTmdb ->
-                    tmdbSettings = newTmdb
-                    scope.launch(Dispatchers.IO) {
+                    val userId = currentUserId
+                    scope.launch {
+                        if (userId != null && cloudSourceSyncService.syncTmdbToCloud(newTmdb).isFailure) return@launch
+                        if (currentUserId != userId) return@launch
                         tmdbStore.saveSettings(newTmdb)
-                        if (currentUserId != null && newTmdb.apiKey.isNotBlank()) {
-                            cloudSourceSyncService.syncTmdbToCloud(newTmdb)
-                        }
+                        tmdbSettings = newTmdb
                     }
                 },
                 introDbSettings = introDbSettings,
@@ -1972,12 +1990,12 @@ internal fun FortressTVApp(
                 },
                 omdbSettings = omdbSettings,
                 onOmdbSettingsChanged = { newOmdb ->
-                    omdbSettings = newOmdb
-                    scope.launch(Dispatchers.IO) {
+                    val userId = currentUserId
+                    scope.launch {
+                        if (userId != null && cloudSourceSyncService.syncOmdbToCloud(newOmdb).isFailure) return@launch
+                        if (currentUserId != userId) return@launch
                         omdbStore.saveSettings(newOmdb)
-                        if (currentUserId != null && newOmdb.apiKey.isNotBlank()) {
-                            cloudSourceSyncService.syncOmdbToCloud(newOmdb)
-                        }
+                        omdbSettings = newOmdb
                     }
                 },
                 hideAdultContent = hideAdultContent,
@@ -2016,16 +2034,6 @@ internal fun FortressTVApp(
                     if (currentUserId != null && (openSubtitlesSettings.apiKey.isNotBlank() || openSubtitlesSettings.username.isNotBlank())) {
                         scope.launch(Dispatchers.IO) {
                             cloudSourceSyncService.syncOpenSubtitlesToCloud(openSubtitlesSettings)
-                        }
-                    }
-                    if (currentUserId != null && tmdbSettings.apiKey.isNotBlank()) {
-                        scope.launch(Dispatchers.IO) {
-                            cloudSourceSyncService.syncTmdbToCloud(tmdbSettings)
-                        }
-                    }
-                    if (currentUserId != null && omdbSettings.apiKey.isNotBlank()) {
-                        scope.launch(Dispatchers.IO) {
-                            cloudSourceSyncService.syncOmdbToCloud(omdbSettings)
                         }
                     }
                 },

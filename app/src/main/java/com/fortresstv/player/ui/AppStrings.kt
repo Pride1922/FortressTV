@@ -225,6 +225,7 @@ interface Strings {
     val resume: String
     val restartPlayback: String
     val continueWatching: String
+    val continueWatchingUnavailable: String
     val removeFromContinueWatching: String
     val catchup: String
     val watchCatchup: String
@@ -381,6 +382,9 @@ interface Strings {
     val traktConnect: String
     val traktDisconnect: String
     val traktConnectedAs: String
+    val apiServiceConnected: String
+    val apiServiceDisconnected: String
+    val apiServiceConnect: String
     val traktVipBadge: String
     val traktScrobble: String
     val traktScrobbleDesc: String
@@ -803,6 +807,7 @@ object EnglishStrings : Strings {
     override val resume = "Resume"
     override val restartPlayback = "Restart"
     override val continueWatching = "Continue watching"
+    override val continueWatchingUnavailable = "This item is unavailable from its source."
     override val removeFromContinueWatching = "Remove from Continue watching"
     override val catchup = "Catch-up"
     override val watchCatchup = "Watch Catch-up"
@@ -959,6 +964,9 @@ object EnglishStrings : Strings {
     override val traktConnect = "Connect with Trakt"
     override val traktDisconnect = "Disconnect"
     override val traktConnectedAs = "Connected as"
+    override val apiServiceConnected = "Connected"
+    override val apiServiceDisconnected = "Disconnected"
+    override val apiServiceConnect = "Connect"
     override val traktVipBadge = "VIP"
     override val traktScrobble = "Scrobble VOD Playback"
     override val traktScrobbleDesc = "Automatically update your Trakt watch status when watching movies and series"
@@ -1384,6 +1392,7 @@ object PortugueseStrings : Strings {
     override val resume = "Continuar"
     override val restartPlayback = "Recomeçar"
     override val continueWatching = "Continuar a ver"
+    override val continueWatchingUnavailable = "Este item não está disponível na respetiva fonte."
     override val removeFromContinueWatching = "Remover de Continuar a ver"
     override val catchup = "Gravações"
     override val watchCatchup = "Ver gravação"
@@ -1540,6 +1549,9 @@ object PortugueseStrings : Strings {
     override val traktConnect = "Ligar ao Trakt"
     override val traktDisconnect = "Desligar"
     override val traktConnectedAs = "Ligado como"
+    override val apiServiceConnected = "Ligado"
+    override val apiServiceDisconnected = "Desligado"
+    override val apiServiceConnect = "Ligar"
     override val traktVipBadge = "VIP"
     override val traktScrobble = "Scrobble de Reprodução VOD"
     override val traktScrobbleDesc = "Atualiza automaticamente o estado de visualização no Trakt ao ver filmes e séries"

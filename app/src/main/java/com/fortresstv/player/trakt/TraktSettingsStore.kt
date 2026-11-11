@@ -42,6 +42,15 @@ class TraktSettingsStore(
         }
     }
 
+    fun observeClientId(onChanged: (String) -> Unit): () -> Unit {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_CLIENT_ID) onChanged(loadClientId())
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onChanged(loadClientId())
+        return { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
     fun isScrobbleEnabled(): Boolean {
         return preferences.getBoolean(KEY_SCROBBLE_ENABLED, true)
     }

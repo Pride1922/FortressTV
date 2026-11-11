@@ -416,6 +416,11 @@ internal fun ApiKeysTab(
     var traktAuthErrorMessage by remember { mutableStateOf<String?>(null) }
     val isTelevision = LocalFormFactor.current.isTelevision
 
+    androidx.compose.runtime.DisposableEffect(traktStore) {
+        val unsubscribe = traktStore.observeClientId { traktClientId = it }
+        onDispose { unsubscribe() }
+    }
+
     LaunchedEffect(traktNamespace) {
         com.fortresstv.player.trakt.TraktAuthBridge.authEvents.collect { result ->
             when (result) {
@@ -439,17 +444,25 @@ internal fun ApiKeysTab(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         SettingsGroup(title = strings.tmdbHeader) {
-            SettingsToggleRow(
-                title = strings.tmdbEnabled,
-                subtitle = "",
-                icon = Icons.Default.Movie,
-                checked = tmdbSettings.enabled,
-                onCheckedChange = { checked ->
-                    onTmdbSettingsChanged(tmdbSettings.copy(enabled = checked))
-                }
+            val connected = tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()
+            Text(
+                if (connected) strings.apiServiceConnected else strings.apiServiceDisconnected,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
             )
-
-            if (tmdbSettings.enabled) {
+            if (connected) {
+                SettingsDropdownPickerRow(
+                    title = strings.tmdbLanguage,
+                    subtitle = strings.tmdbLanguageDesc,
+                    icon = Icons.Default.Translate,
+                    selectedValue = tmdbSettings.language,
+                    options = TmdbLanguages.supported.map { (code, label) ->
+                        code to if (code == TmdbLanguages.AUTO) strings.tmdbLanguageAuto else label
+                    },
+                    onValueSelected = { newLang ->
+                        onTmdbSettingsChanged(tmdbSettings.copy(language = newLang))
+                    }
+                )
+            } else {
                 HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
 
                 Column(
@@ -466,7 +479,6 @@ internal fun ApiKeysTab(
                         onValueChange = {
                             apiKeyText = it
                             connectionTestResult = null
-                            onTmdbSettingsChanged(tmdbSettings.copy(apiKey = it))
                         },
                         label = { Text(strings.tmdbApiKey) },
                         supportingText = { Text(strings.tmdbApiKeyHint, fontSize = 11.sp) },
@@ -483,19 +495,6 @@ internal fun ApiKeysTab(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    SettingsDropdownPickerRow(
-                        title = strings.tmdbLanguage,
-                        subtitle = strings.tmdbLanguageDesc,
-                        icon = Icons.Default.Translate,
-                        selectedValue = tmdbSettings.language,
-                        options = TmdbLanguages.supported.map { (code, label) ->
-                            code to if (code == TmdbLanguages.AUTO) strings.tmdbLanguageAuto else label
-                        },
-                        onValueSelected = { newLang ->
-                            onTmdbSettingsChanged(tmdbSettings.copy(language = newLang))
-                        }
-                    )
-
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -507,8 +506,12 @@ internal fun ApiKeysTab(
                                     isTestingConnection = true
                                     connectionTestResult = null
                                     coroutineScope.launch {
-                                        val res = TmdbClient(apiKeyText.trim()).validateApiKey()
+                                        val key = apiKeyText.trim()
+                                        val res = TmdbClient(key).validateApiKey()
                                         connectionTestResult = res
+                                        if (res.getOrNull() == true) {
+                                            onTmdbSettingsChanged(tmdbSettings.copy(enabled = true, apiKey = key))
+                                        }
                                         isTestingConnection = false
                                     }
                                 }
@@ -519,7 +522,7 @@ internal fun ApiKeysTab(
                                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
                             }
-                            Text(strings.tmdbTestConnection, fontSize = 13.sp)
+                            Text(strings.apiServiceConnect, fontSize = 13.sp)
                         }
 
                         connectionTestResult?.let { result ->
@@ -603,17 +606,12 @@ internal fun ApiKeysTab(
         }
 
         SettingsGroup(title = strings.omdbHeader) {
-            SettingsToggleRow(
-                title = strings.omdbEnabled,
-                subtitle = "",
-                icon = Icons.Default.Star,
-                checked = omdbSettings.enabled,
-                onCheckedChange = { checked ->
-                    onOmdbSettingsChanged(omdbSettings.copy(enabled = checked))
-                }
+            val connected = omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()
+            Text(
+                if (connected) strings.apiServiceConnected else strings.apiServiceDisconnected,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
             )
-
-            if (omdbSettings.enabled) {
+            if (!connected) {
                 HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
 
                 Column(
@@ -630,7 +628,6 @@ internal fun ApiKeysTab(
                         onValueChange = {
                             omdbKeyText = it
                             omdbConnectionTestResult = null
-                            onOmdbSettingsChanged(omdbSettings.copy(apiKey = it))
                         },
                         label = { Text(strings.omdbApiKey) },
                         supportingText = { Text(strings.omdbApiKeyHint, fontSize = 11.sp) },
@@ -658,8 +655,12 @@ internal fun ApiKeysTab(
                                     isTestingOmdbConnection = true
                                     omdbConnectionTestResult = null
                                     coroutineScope.launch {
-                                        val res = OmdbClient(omdbKeyText.trim()).validateApiKey()
+                                        val key = omdbKeyText.trim()
+                                        val res = OmdbClient(key).validateApiKey()
                                         omdbConnectionTestResult = res
+                                        if (res.getOrNull() == true) {
+                                            onOmdbSettingsChanged(omdbSettings.copy(enabled = true, apiKey = key))
+                                        }
                                         isTestingOmdbConnection = false
                                     }
                                 }
@@ -670,7 +671,7 @@ internal fun ApiKeysTab(
                                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
                             }
-                            Text(strings.omdbTestConnection, fontSize = 13.sp)
+                            Text(strings.apiServiceConnect, fontSize = 13.sp)
                         }
 
                         omdbConnectionTestResult?.let { result ->

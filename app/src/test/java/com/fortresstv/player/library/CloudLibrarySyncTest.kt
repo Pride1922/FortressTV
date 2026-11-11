@@ -278,6 +278,35 @@ class CloudLibrarySyncTest {
     }
 
     @Test
+    fun episodeIdentityBackfillLeavesPlaybackFieldsUntouched() {
+        val transport = FakeSyncTransport()
+        val api = SupabaseSyncApi(transport)
+        val remote = CloudWatchProgressItem(
+            householdId = "house", profileId = "profile", sourceId = "source",
+            itemKind = "episode", itemId = CloudIdentityHasher.hashItemId("42")
+        )
+        val local = VodProgressEntry(
+            key = "episode:source:42", kind = VodProgressKind.EPISODE, sourceId = "source",
+            itemId = "42", seriesId = 18, title = "Sample episode", posterUrl = null,
+            containerExtension = "mp4", season = 2, episode = 3,
+            positionMs = 20_000, durationMs = 60_000, updatedAtMs = 100
+        )
+
+        api.backfillEpisodeIdentity(remote, local, "session", "jwt")
+
+        val (path, request) = transport.postRequests.single()
+        val body = requireNotNull(request)
+        assertEquals("/rest/v1/rpc/fortress_sync_episode_progress", path)
+        assertEquals(remote.itemId, body.getString("p_item_id"))
+        assertEquals(18, body.getInt("p_series_id"))
+        assertEquals(2, body.getInt("p_season_number"))
+        assertEquals(3, body.getInt("p_episode_number"))
+        assertFalse(body.has("p_position_ms"))
+        assertFalse(body.has("p_client_updated_at_ms"))
+        assertFalse(body.has("p_deleted_at"))
+    }
+
+    @Test
     fun insertProgressCallsRpcWithAllItemKindsMatchingSchemaConstraints() {
         val transport = FakeSyncTransport()
         val api = SupabaseSyncApi(transport)

@@ -224,7 +224,7 @@ class VodProgressStore internal constructor(
     }
 
     fun setAll(entries: List<VodProgressEntry>): List<VodProgressEntry> = synchronized(lock) {
-        val limited = entries.distinctBy(VodProgressEntry::key).sortedByDescending(VodProgressEntry::updatedAtMs).take(MAX_ENTRIES)
+        val limited = distinctResumeEntries(entries).take(MAX_ENTRIES)
         preferences.edit().putString(KEY_ENTRIES, encode(limited)).apply()
         limited
     }
@@ -240,6 +240,24 @@ class VodProgressStore internal constructor(
         private const val MINIMUM_PROGRESS_MS = 10_000L
         private const val COMPLETED_FRACTION = 0.95
         private const val MAX_ENTRIES = 100
+        private val CLOUD_ITEM_ID = Regex("[0-9a-f]{64}")
+
+        private fun distinctResumeEntries(entries: List<VodProgressEntry>): List<VodProgressEntry> {
+            val items = mutableSetOf<Triple<VodProgressKind, String, String>>()
+            val series = mutableSetOf<Pair<String, Int>>()
+            return entries.sortedByDescending(VodProgressEntry::updatedAtMs).filter { entry ->
+                val itemId = entry.itemId
+                val canonicalId = when {
+                    itemId.isBlank() -> entry.key
+                    CLOUD_ITEM_ID.matches(itemId) -> itemId
+                    else -> CloudIdentityHasher.hashItemId(itemId)
+                }
+                val seriesKey = entry.seriesId?.takeIf { entry.kind == VodProgressKind.EPISODE }
+                    ?.let { entry.sourceId to it }
+                val newItem = items.add(Triple(entry.kind, entry.sourceId, canonicalId))
+                newItem && (seriesKey == null || series.add(seriesKey))
+            }
+        }
 
         internal fun encode(entries: List<VodProgressEntry>): String = JSONArray().apply {
             entries.forEach { entry ->
@@ -263,11 +281,11 @@ class VodProgressStore internal constructor(
 
         internal fun decode(json: String?): List<VodProgressEntry> = runCatching {
             val array = JSONArray(json ?: "[]")
-            (0 until array.length()).mapNotNull { index ->
+            val entries = (0 until array.length()).mapNotNull { index ->
                 val item = array.optJSONObject(index) ?: return@mapNotNull null
                 val key = item.optString("key").takeIf(String::isNotBlank) ?: return@mapNotNull null
                 val sourceId = item.optString("sourceId").takeIf(String::isNotBlank) ?: return@mapNotNull null
-                val title = item.optString("title").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val title = item.optString("title")
                 VodProgressEntry(
                     key = key,
                     kind = runCatching { VodProgressKind.valueOf(item.optString("kind")) }.getOrNull() ?: return@mapNotNull null,
@@ -283,7 +301,8 @@ class VodProgressStore internal constructor(
                     durationMs = item.optLong("durationMs").coerceAtLeast(0),
                     updatedAtMs = item.optLong("updatedAtMs")
                 )
-            }.distinctBy(VodProgressEntry::key).sortedByDescending(VodProgressEntry::updatedAtMs)
+            }
+            distinctResumeEntries(entries)
         }.getOrDefault(emptyList())
     }
 }

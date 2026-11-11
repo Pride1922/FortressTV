@@ -142,13 +142,20 @@ class CloudLibrarySyncService internal constructor(
         durationMs: Long,
         completed: Boolean,
         isDeleted: Boolean = false,
-        clientTimeMs: Long = ServerClockTracker.currentEstimatedServerTimeMs()
+        clientTimeMs: Long = ServerClockTracker.currentEstimatedServerTimeMs(),
+        seriesId: Int? = null,
+        season: Int? = null,
+        episode: Int? = null
     ) {
-        val hashedId = CloudIdentityHasher.hashItemId(itemId)
+        val hashedId = if (isDeleted && itemId.matches(Regex("[0-9a-f]{64}"))) itemId
+        else CloudIdentityHasher.hashItemId(itemId)
         val payload = JSONObject().apply {
             put("position_ms", positionMs)
             put("duration_ms", durationMs)
             put("completed", completed)
+            put("series_id", seriesId)
+            put("season_number", season)
+            put("episode_number", episode)
             put("client_updated_at_ms", clientTimeMs)
             if (isDeleted) put("deleted_at", java.time.Instant.now().toString())
         }
@@ -173,7 +180,10 @@ class CloudLibrarySyncService internal constructor(
         positionMs: Long,
         durationMs: Long,
         completed: Boolean,
-        isDeleted: Boolean = false
+        isDeleted: Boolean = false,
+        seriesId: Int? = null,
+        season: Int? = null,
+        episode: Int? = null
     ) {
         scope.launch {
             enqueueProgressMutation(
@@ -184,7 +194,10 @@ class CloudLibrarySyncService internal constructor(
                 positionMs = positionMs,
                 durationMs = durationMs,
                 completed = completed,
-                isDeleted = isDeleted
+                isDeleted = isDeleted,
+                seriesId = seriesId,
+                season = season,
+                episode = episode
             )
             progressDebounceJob?.cancel()
             progressDebounceJob = scope.launch {
@@ -290,12 +303,16 @@ class CloudLibrarySyncService internal constructor(
 
             val pending = outbox.loadPending()
             val preferencesSynced = flushPreferences(pending, accountState.accessToken)
-            flushTelemetryInternal(accountState.accessToken)
             val remaining = pending.filterNot { it.actionType == SyncActionType.UPSERT_PREFERENCES }
-            if (remaining.isEmpty()) return@withLock preferencesSynced
+            if (remaining.isEmpty()) {
+                runCatching { flushTelemetryInternal(accountState.accessToken) }
+                return@withLock preferencesSynced
+            }
             val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withLock false
 
+            var allSynced = preferencesSynced
             for (mutation in remaining) {
+                coroutineContext.ensureActive()
                 val success = runCatching {
                     when (mutation.actionType) {
                         SyncActionType.UPSERT_LIBRARY -> {
@@ -325,6 +342,9 @@ class CloudLibrarySyncService internal constructor(
                                 positionMs = mutation.payload.optLong("position_ms", 0L),
                                 durationMs = mutation.payload.optLong("duration_ms", 0L),
                                 completed = mutation.payload.optBoolean("completed", false),
+                                seriesId = mutation.payload.optInt("series_id").takeUnless { mutation.payload.isNull("series_id") },
+                                season = mutation.payload.optInt("season_number").takeUnless { mutation.payload.isNull("season_number") },
+                                episode = mutation.payload.optInt("episode_number").takeUnless { mutation.payload.isNull("episode_number") },
                                 clientUpdatedAtMs = mutation.clientUpdatedAtMs,
                                 deletedAt = mutation.payload.optString("deleted_at").takeIf(String::isNotBlank)
                             )
@@ -366,11 +386,11 @@ class CloudLibrarySyncService internal constructor(
                 if (success) {
                     outbox.remove(mutation.id)
                 } else {
-                    return@withLock false
+                    allSynced = false
                 }
             }
-            flushTelemetryInternal(accountState.accessToken)
-            preferencesSynced
+            runCatching { flushTelemetryInternal(accountState.accessToken) }
+            allSynced
         }
     }
 
@@ -562,30 +582,74 @@ class CloudLibrarySyncService internal constructor(
             userLibrary.setWatchedItemIds(watched)
         }
 
+        applyRemoteProgress(progressStore, backfillProgressIdentity(profileId, progressStore, remoteProgress))
+
+        withContext(Dispatchers.Main) {
+            onUpdated?.invoke()
+        }
+    }
+
+    suspend fun refreshProgress(profileId: String, progressStore: VodProgressStore) = withContext(Dispatchers.IO) {
+        flushOutbox()
+        val remoteProgress = pullRemoteProgress(profileId)
+        coroutineContext.ensureActive()
+        applyRemoteProgress(progressStore, backfillProgressIdentity(profileId, progressStore, remoteProgress))
+    }
+
+    private suspend fun backfillProgressIdentity(
+        profileId: String,
+        progressStore: VodProgressStore,
+        remoteProgress: List<CloudWatchProgressItem>
+    ): List<CloudWatchProgressItem> {
+        val local = progressStore.entries().filter { it.kind == VodProgressKind.EPISODE && it.seriesId != null }
+        if (local.isEmpty() || remoteProgress.none { it.itemKind == "episode" && it.seriesId == null }) return remoteProgress
+        val account = accountRepository.resolveAccountState()
+        if (account !is AccountState.AuthenticatedOnline) return remoteProgress
+        val session = profileRepository.getOrOpenActiveSessionToken() ?: return remoteProgress
+        return remoteProgress.map { item ->
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (item.profileId != profileId || item.itemKind != "episode" || item.seriesId != null) return@map item
+            val match = local.firstOrNull {
+                toValidUuid(it.sourceId) == item.sourceId &&
+                    (it.itemId == item.itemId || CloudIdentityHasher.hashItemId(it.itemId) == item.itemId)
+            } ?: return@map item
+            runCatching {
+                syncApi.backfillEpisodeIdentity(item, match, session, account.accessToken)
+                item.copy(seriesId = match.seriesId, season = match.season, episode = match.episode)
+            }.getOrDefault(item)
+        }
+    }
+
+    private fun applyRemoteProgress(progressStore: VodProgressStore, remoteProgress: List<CloudWatchProgressItem>) {
         if (remoteProgress.isNotEmpty()) {
             val entries = progressStore.entries().toMutableList()
-            for (prog in remoteProgress) {
+            for (prog in remoteProgress.sortedBy(CloudWatchProgressItem::clientUpdatedAtMs)) {
                 val key = "${prog.itemKind}:${prog.sourceId}:${prog.itemId}"
                 val kind = VodProgressKind.fromWireValue(prog.itemKind)
-                if (prog.deletedAt != null) {
+                if (prog.deletedAt != null || prog.completed) {
                     entries.removeAll {
-                        it.key == key || (it.sourceId == prog.sourceId && (it.itemId == prog.itemId || CloudIdentityHasher.hashItemId(it.itemId) == prog.itemId))
+                        it.kind == kind && it.sourceId == prog.sourceId &&
+                            (it.itemId == prog.itemId || CloudIdentityHasher.hashItemId(it.itemId) == prog.itemId ||
+                                (kind == VodProgressKind.EPISODE && prog.seriesId != null &&
+                                    it.seriesId == prog.seriesId && it.updatedAtMs <= prog.clientUpdatedAtMs))
                     }
                 } else {
                     val existingIndex = entries.indexOfFirst {
-                        it.key == key || (it.sourceId == prog.sourceId && (it.itemId == prog.itemId || CloudIdentityHasher.hashItemId(it.itemId) == prog.itemId))
+                        it.kind == kind && it.sourceId == prog.sourceId &&
+                            (it.itemId == prog.itemId || CloudIdentityHasher.hashItemId(it.itemId) == prog.itemId)
                     }
+                    val existing = entries.getOrNull(existingIndex)
                     val entry = VodProgressEntry(
-                        key = key,
+                        key = existing?.key ?: key,
                         kind = kind,
                         sourceId = prog.sourceId,
-                        itemId = prog.itemId,
-                        seriesId = null,
+                        itemId = existing?.itemId ?: prog.itemId,
+                        seriesId = prog.seriesId ?: existing?.seriesId,
                         title = entries.getOrNull(existingIndex)?.title.orEmpty(),
                         posterUrl = entries.getOrNull(existingIndex)?.posterUrl,
                         containerExtension = entries.getOrNull(existingIndex)?.containerExtension ?: "mp4",
-                        season = entries.getOrNull(existingIndex)?.season,
-                        episode = entries.getOrNull(existingIndex)?.episode,
+                        season = prog.season ?: existing?.season,
+                        episode = prog.episode ?: existing?.episode,
                         positionMs = prog.positionMs,
                         durationMs = prog.durationMs,
                         updatedAtMs = prog.clientUpdatedAtMs
@@ -600,8 +664,5 @@ class CloudLibrarySyncService internal constructor(
             progressStore.setAll(entries)
         }
 
-        withContext(Dispatchers.Main) {
-            onUpdated?.invoke()
-        }
     }
 }

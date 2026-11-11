@@ -230,16 +230,53 @@ class CloudSourceSyncService internal constructor(
         }
     }
 
-    suspend fun restoreTmdbFromCloud(unlockToken: String? = null): com.fortresstv.player.tmdb.TmdbSettings? = withContext(Dispatchers.IO) {
+    suspend fun reconcileTmdb(local: com.fortresstv.player.tmdb.TmdbSettings): com.fortresstv.player.tmdb.TmdbSettings? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val account = accountRepository.resolveAccountState()
+                if (account !is AccountState.AuthenticatedOnline) return@withLock null
+                val token = profileRepository.currentUnlockToken()
+                runCatching {
+                    val remote = sourceApi.getTmdb(token, account.accessToken)
+                    if (remote?.apiKey.isNullOrBlank() && local.apiKey.isNotBlank()) {
+                        check(sourceApi.saveTmdb(local, token, account.accessToken))
+                        return@runCatching local
+                    }
+                    remote
+                }.getOrNull()
+            }
+        }
+
+    suspend fun reconcileTraktClientId(profileId: String, localClientId: String): String? = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val accountState = accountRepository.resolveAccountState()
-            if (accountState !is AccountState.AuthenticatedOnline) return@withLock null
-            val token = unlockToken ?: profileRepository.currentUnlockToken()
+            val account = accountRepository.resolveAccountState()
+            if (account !is AccountState.AuthenticatedOnline) return@withLock null
             runCatching {
-                sourceApi.getTmdb(token, accountState.accessToken)
+                val remote = sourceApi.getTraktClientId(profileId, account.accessToken)
+                if (remote == null && localClientId.length in 20..256) {
+                    sourceApi.saveTraktClientId(profileId, localClientId, account.accessToken)
+                }
+                remote
             }.getOrNull()
         }
     }
+
+    suspend fun reconcileOmdb(local: com.fortresstv.player.omdb.OmdbSettings): com.fortresstv.player.omdb.OmdbSettings? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val account = accountRepository.resolveAccountState()
+                if (account !is AccountState.AuthenticatedOnline) return@withLock null
+                val token = profileRepository.currentUnlockToken()
+                runCatching {
+                    val remote = sourceApi.getOmdb(token, account.accessToken)
+                    if (remote?.apiKey.isNullOrBlank() && local.apiKey.isNotBlank()) {
+                        check(sourceApi.saveOmdb(local, token, account.accessToken))
+                        return@runCatching local
+                    }
+                    remote
+                }.getOrNull()
+            }
+        }
 
     suspend fun deleteTmdbFromCloud(unlockToken: String? = null): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {

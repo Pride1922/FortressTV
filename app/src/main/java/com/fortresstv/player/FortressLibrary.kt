@@ -382,6 +382,11 @@ import coil.size.Precision
 
 internal enum class LibraryDestination { HOME, LIVE_TV, MOVIES, SERIES, FAVORITES }
 
+private fun StartupDestination.toLibraryDestination() = when (this) {
+    StartupDestination.HOME -> LibraryDestination.HOME
+    StartupDestination.LIVE_TV -> LibraryDestination.LIVE_TV
+}
+
 internal data class VodPlaybackRequest(
     val key: String,
     val kind: VodProgressKind,
@@ -405,7 +410,7 @@ internal fun XtreamMovie.toPlaybackRequest(sourceId: String, streamUrl: String) 
     streamUrl = streamUrl, tmdbId = tmdbId, imdbId = imdbId
 )
 
-internal fun resolveVodPlayback(
+internal suspend fun resolveVodPlayback(
     entry: VodProgressEntry,
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
@@ -418,15 +423,23 @@ internal fun resolveVodPlayback(
     val movie = if (entry.kind == VodProgressKind.MOVIE) {
         catalog?.movies?.firstOrNull { it.id.toString() == entry.itemId }
     } else null
+    val restoredEpisode = if (entry.kind == VodProgressKind.EPISODE && entry.itemId.matches(Regex("[0-9a-f]{64}"))) {
+        val seriesId = entry.seriesId ?: return null
+        client.loadSeriesDetails(seriesId).episodes.firstOrNull {
+            com.fortresstv.player.library.CloudIdentityHasher.hashItemId(it.id) == entry.itemId
+        } ?: return null
+    } else null
+    val itemId = restoredEpisode?.id ?: entry.itemId
+    val extension = restoredEpisode?.containerExtension?.ifBlank { entry.containerExtension } ?: entry.containerExtension
     val streamUrl = when (entry.kind) {
         VodProgressKind.MOVIE -> client.movieStreamUrl(movie ?: return null)
         VodProgressKind.EPISODE -> client.episodeStreamUrl(
             XtreamEpisode(
-                id = entry.itemId,
+                id = itemId,
                 title = entry.title,
                 season = entry.season ?: 0,
                 episodeNumber = entry.episode ?: 0,
-                containerExtension = entry.containerExtension,
+                containerExtension = extension,
                 posterUrl = entry.posterUrl,
                 plot = null
             )
@@ -461,9 +474,11 @@ internal fun resolveVodPlayback(
     } else null
     val seriesName = series?.name
     return VodPlaybackRequest(
-        key = entry.key, kind = entry.kind, sourceId = entry.sourceId, itemId = entry.itemId,
+        key = restoredEpisode?.let { "episode:${entry.sourceId}:$itemId" } ?: entry.key,
+        kind = entry.kind, sourceId = entry.sourceId, itemId = itemId,
         seriesId = entry.seriesId, seriesName = seriesName, title = entry.title, posterUrl = entry.posterUrl,
-        containerExtension = entry.containerExtension, season = entry.season, episode = entry.episode,
+        containerExtension = extension, season = restoredEpisode?.season ?: entry.season,
+        episode = restoredEpisode?.episodeNumber ?: entry.episode,
         streamUrl = streamUrl, tmdbId = movie?.tmdbId ?: series?.tmdbId, imdbId = movie?.imdbId ?: series?.imdbId
     )
 }
@@ -560,6 +575,8 @@ internal fun FortressLibrary(
     playlist: Playlist,
     activeProfile: PlaylistProfile,
     startupDestination: StartupDestination = StartupDestination.HOME,
+    startupNavigationRequest: StartupDestination? = null,
+    onStartupNavigationHandled: () -> Unit = {},
     enabledSourceCount: Int,
     enabledSources: List<PlaylistProfile>,
     epgGuide: EpgGuide?,
@@ -626,13 +643,12 @@ internal fun FortressLibrary(
             progressEntries = it
         }
     }
-    var destination by rememberSaveable {
-        mutableStateOf(
-            when (startupDestination) {
-                StartupDestination.HOME -> LibraryDestination.HOME
-                StartupDestination.LIVE_TV -> LibraryDestination.LIVE_TV
-            }
-        )
+    var destination by rememberSaveable { mutableStateOf(startupDestination.toLibraryDestination()) }
+    LaunchedEffect(startupNavigationRequest) {
+        if (startupNavigationRequest != null) {
+            destination = startupNavigationRequest.toLibraryDestination()
+            onStartupNavigationHandled()
+        }
     }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
@@ -690,6 +706,19 @@ internal fun FortressLibrary(
                 })
             }
         }
+        val onResumeEntry: (VodProgressEntry) -> Unit = { entry ->
+            scope.launch {
+                val request = try {
+                    resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                if (request != null) vodPlayback = request
+                else Toast.makeText(context, strings.continueWatchingUnavailable, Toast.LENGTH_SHORT).show()
+            }
+        }
         val onRemoveContinueWatchingEntry: (VodProgressEntry) -> Unit = { entry ->
             progressEntries = progressStore.remove(entry.key, entry.seriesId)
             if (activeHouseholdProfile != null && activeHouseholdProfile.id != "restricted_default") {
@@ -702,7 +731,10 @@ internal fun FortressLibrary(
                     positionMs = 0L,
                     durationMs = entry.durationMs,
                     completed = false,
-                    isDeleted = true
+                    isDeleted = true,
+                    seriesId = entry.seriesId,
+                    season = entry.season,
+                    episode = entry.episode
                 )
             }
         }
@@ -833,9 +865,7 @@ internal fun FortressLibrary(
                     hideAdultContent = hideAdultContent,
                     maximumAge = maximumAge,
                     blockUnrated = blockUnrated,
-                    onContinueWatching = { entry ->
-                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
-                    },
+                    onContinueWatching = onResumeEntry,
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleMovieWatchlist = onToggleMovieWatchlist,
                     onToggleMovieWatched = { sourceId, movie ->
@@ -996,9 +1026,7 @@ internal fun FortressLibrary(
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.MOVIE },
                     progressEntries = progressEntries,
                     watchedItemIds = watchedItemIds,
-                    onContinueWatching = { entry ->
-                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
-                    },
+                    onContinueWatching = onResumeEntry,
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     hideAdultContent = hideAdultContent,
                     maximumAge = maximumAge,
@@ -1032,9 +1060,7 @@ internal fun FortressLibrary(
                     watchedItemIds = watchedItemIds,
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.EPISODE },
                     progressEntries = progressEntries,
-                    onContinueWatching = { entry ->
-                        vodPlayback = resolveVodPlayback(entry, xtreamCatalogs, xtreamProfiles, context, playlist.channels)
-                    },
+                    onContinueWatching = onResumeEntry,
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
                     onToggleFollow = onToggleSeriesFollow,
                     onToggleEpisodeWatched = { sourceId, ep, series ->
@@ -1162,7 +1188,10 @@ internal fun FortressLibrary(
                             itemId = request.itemId,
                             positionMs = positionMs,
                             durationMs = durationMs,
-                            completed = isCompleted
+                            completed = isCompleted,
+                            seriesId = request.seriesId,
+                            season = request.season,
+                            episode = request.episode
                         )
                     }
                     if (isCompleted && request.kind == VodProgressKind.EPISODE && request.seriesId != null) {
@@ -1200,7 +1229,10 @@ internal fun FortressLibrary(
                                         itemId = nextRequest.itemId,
                                         positionMs = 0L,
                                         durationMs = 0L,
-                                        completed = false
+                                        completed = false,
+                                        seriesId = nextEntry.seriesId,
+                                        season = nextEntry.season,
+                                        episode = nextEntry.episode
                                     )
                                 }
                             }
