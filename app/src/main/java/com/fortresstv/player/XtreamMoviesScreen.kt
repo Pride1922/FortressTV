@@ -403,6 +403,8 @@ internal fun XtreamMoviesScreen(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val omdbSettings = LocalOmdbSettings.current
+    var ratingCacheVersion by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
@@ -445,8 +447,21 @@ internal fun XtreamMoviesScreen(
                     .map { CatalogMovie(catalog, it) }
                     .toList()
             }
+            val uniqueMovies = baseFiltered.distinctBy { entry ->
+                val movie = entry.movie
+                val tmdbId = movie.tmdbId?.toIntOrNull()?.takeIf { it > 0 }
+                val imdbId = movie.imdbId?.trim()?.lowercase()?.takeIf { it.startsWith("tt") && it.length > 2 }
+                val year = movie.year?.trim()?.toIntOrNull()?.takeIf { it in 1000..9999 }
+                val poster = movie.posterUrl?.trim()?.takeIf(String::isNotEmpty)
+                when {
+                    tmdbId != null -> listOf("tmdb", tmdbId)
+                    imdbId != null -> listOf("imdb", imdbId)
+                    year != null && poster != null -> listOf("poster", movie.name.trim().lowercase(), year, poster)
+                    else -> listOf("stream", entry.catalog.sourceId, movie.id)
+                }
+            }
             val hasOmdb = OmdbMetadataResolver.hasAnyCached()
-            val scoredItems = baseFiltered.map { entry ->
+            val scoredItems = uniqueMovies.map { entry ->
                 val cached = if (hasOmdb) {
                     OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
                 } else null
@@ -476,6 +491,20 @@ internal fun XtreamMoviesScreen(
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
+    }
+    LaunchedEffect(gridState, visibleMovies, omdbSettings, selectedMovie != null) {
+        ratingCacheVersion++
+        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank() || selectedMovie != null) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow {
+            gridState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
+                visibleMovies.getOrNull(item.index)?.movie?.let { movie ->
+                    com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", movie.name, movie.year, movie.imdbId)
+                }
+            }
+        }.collect { targets ->
+            OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, targets)
+            ratingCacheVersion++
+        }
     }
     val fastScrollNames = remember(visibleMovies, sortOption) {
         if (sortOption == VodSortOption.ALPHABETICAL) visibleMovies.map { it.movie.name } else emptyList()
@@ -572,14 +601,17 @@ internal fun XtreamMoviesScreen(
                 val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
                 source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
             }
-            val cachedOmdb = remember(entry.movie.id) {
-                OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+            val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
+                if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                    OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                } else null
             }
+            val rating = cachedOmdb?.imdbRating ?: entry.movie.rating
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
-                subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                subtitle = formatVodMetadata(entry.movie.year, rating),
+                imdbRating = rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                 isWatched = libraryId in watchedItemIds,
                 progressFraction = progressByKey[libraryId]?.progressFraction,

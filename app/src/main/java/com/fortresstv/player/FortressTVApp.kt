@@ -1678,7 +1678,15 @@ internal fun FortressTVApp(
                     homeHiddenSections = homeHiddenSections,
                     homeSectionOrder = homeSectionOrder,
                     onOpenCustomizeHome = { showCustomizeHomeDialog = true },
-                    xtreamCatalogs = xtreamCatalogs.values.toList(),
+                    xtreamCatalogs = playlists.filter { it.enabled }.sortedBy { it.order }.mapNotNull { profile ->
+                        val catalog = xtreamCatalogs[profile.id] ?: return@mapNotNull null
+                        catalog.copy(
+                            movies = if (profile.role.contributesMovies()) catalog.movies else emptyList(),
+                            movieCategories = if (profile.role.contributesMovies()) catalog.movieCategories else emptyList(),
+                            series = if (profile.role.contributesSeries()) catalog.series else emptyList(),
+                            seriesCategories = if (profile.role.contributesSeries()) catalog.seriesCategories else emptyList()
+                        )
+                    },
                     xtreamProfiles = playlists.filter { it.enabled && it.source is ContentSource.Xtream },
                     onToggleFavorite = { channel ->
                         val isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true

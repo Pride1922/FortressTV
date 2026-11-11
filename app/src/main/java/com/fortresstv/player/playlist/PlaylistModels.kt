@@ -44,6 +44,8 @@ enum class SourceRole {
     EVERYTHING;
 
     fun contributesLiveTv(): Boolean = this == AUTOMATIC || this == LIVE_TV || this == EVERYTHING
+    fun contributesMovies(): Boolean = this == AUTOMATIC || this == MOVIES || this == MOVIES_AND_SERIES || this == EVERYTHING
+    fun contributesSeries(): Boolean = this == AUTOMATIC || this == SERIES || this == MOVIES_AND_SERIES || this == EVERYTHING
 }
 
 fun mergeLivePlaylists(
