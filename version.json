@@ -1,7 +1,7 @@
 {
-  "version": "1.0",
-  "versionCode": 60,
-  "notes": "- Fixed Continue Watching sync across devices, including episode recovery and queued progress uploads.\n- Fixed profile sync for preferred audio and subtitle languages, TMDB and OMDb settings, and the Trakt client ID.\n- Fixed the Live TV startup setting.\n\n- Corrigimos a sincronização de Continuar a ver entre dispositivos, incluindo a recuperação de episódios e o envio do progresso pendente.\n- Corrigimos a sincronização das preferências de áudio e legendas, das definições do TMDB e OMDb e do ID de cliente do Trakt.\n- Corrigimos a opção de iniciar na TV em direto.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0/fortresstv.apk",
-  "sha256": "CD1D113839A78FBF55CAA9410762CF0DE697BBBF156468867AFD609EEEA5ABB3"
+  "version": "1.0.1",
+  "versionCode": 61,
+  "notes": "- Fixed duplicate movie cards across playlists and excluded Live TV sources from Movies and Series.\n- The Films grid now uses the IMDb rating from OMDb when available, matching movie details.\n\n- Corrigimos os cartões de filmes duplicados entre listas e excluímos as fontes de TV em direto dos Filmes e das Séries.\n- A grelha de Filmes usa agora a classificação IMDb do OMDb, quando disponível, tal como os detalhes do filme.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.1/fortresstv.apk",
+  "sha256": "5BA68603E0E96F9FD2C5B162BA09A677D47FDACBC3086D05C48BD0C7A87EF0F4"
 }
