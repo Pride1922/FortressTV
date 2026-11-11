@@ -447,19 +447,7 @@ internal fun XtreamMoviesScreen(
                     .map { CatalogMovie(catalog, it) }
                     .toList()
             }
-            val uniqueMovies = baseFiltered.distinctBy { entry ->
-                val movie = entry.movie
-                val tmdbId = movie.tmdbId?.toIntOrNull()?.takeIf { it > 0 }
-                val imdbId = movie.imdbId?.trim()?.lowercase()?.takeIf { it.startsWith("tt") && it.length > 2 }
-                val year = movie.year?.trim()?.toIntOrNull()?.takeIf { it in 1000..9999 }
-                val poster = movie.posterUrl?.trim()?.takeIf(String::isNotEmpty)
-                when {
-                    tmdbId != null -> listOf("tmdb", tmdbId)
-                    imdbId != null -> listOf("imdb", imdbId)
-                    year != null && poster != null -> listOf("poster", movie.name.trim().lowercase(), year, poster)
-                    else -> listOf("stream", entry.catalog.sourceId, movie.id)
-                }
-            }
+            val uniqueMovies = deduplicateCatalogMovies(baseFiltered)
             val hasOmdb = OmdbMetadataResolver.hasAnyCached()
             val scoredItems = uniqueMovies.map { entry ->
                 val cached = if (hasOmdb) {
