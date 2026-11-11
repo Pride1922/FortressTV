@@ -56,6 +56,7 @@ class CloudSourceSyncService internal constructor(
                         put("server_url", p.source.value)
                         put("username", p.source.username)
                         put("password", p.source.password)
+                        put("role", p.role.name)
                     }
                     val validId = runCatching { UUID.fromString(p.id).toString() }.getOrNull()
                         ?: UUID.nameUUIDFromBytes("source_${p.id}".toByteArray()).toString()
@@ -145,6 +146,9 @@ class CloudSourceSyncService internal constructor(
                         name = src.displayName,
                         source = contentSource,
                         enabled = src.enabled,
+                        role = runCatching {
+                            com.fortresstv.player.playlist.SourceRole.valueOf(src.config.optString("role"))
+                        }.getOrDefault(com.fortresstv.player.playlist.SourceRole.AUTOMATIC),
                         order = src.sourceOrder
                     )
                     val existingIndex = currentLocalPlaylists.indexOfFirst { it.id == src.id }

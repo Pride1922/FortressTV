@@ -86,8 +86,8 @@ class SourceSettingsStore internal constructor(
             val enabled = if (obj.has("enabled")) obj.optBoolean("enabled", true)
             else activeId == null || activeId == id
             val role = runCatching {
-                SourceRole.valueOf(obj.optString("role", SourceRole.LIVE_TV.name))
-            }.getOrDefault(SourceRole.LIVE_TV)
+                SourceRole.valueOf(obj.optString("role", SourceRole.AUTOMATIC.name))
+            }.getOrDefault(SourceRole.AUTOMATIC)
             val order = obj.optInt("order", i)
             list.add(PlaylistProfile(id, name, source, lastUpdated, channelCount, enabled, role, order))
         }

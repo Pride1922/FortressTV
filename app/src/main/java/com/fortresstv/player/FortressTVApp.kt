@@ -2067,6 +2067,11 @@ internal fun FortressTVApp(
                     settings.savePlaylistProfile(updated)
                     val all = settings.getPlaylists()
                     playlists = all
+                    if (updated.source is ContentSource.Xtream && currentUserId != null) {
+                        scope.launch {
+                            cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
+                        }
+                    }
                     if (updated.source is ContentSource.Xtream && (loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv())) {
                         loadXtreamProfile(updated)
                     } else {

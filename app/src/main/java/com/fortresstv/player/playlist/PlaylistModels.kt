@@ -31,7 +31,7 @@ data class PlaylistProfile(
     val lastUpdated: Long = 0L,
     val channelCount: Int = 0,
     val enabled: Boolean = true,
-    val role: SourceRole = SourceRole.LIVE_TV,
+    val role: SourceRole = SourceRole.AUTOMATIC,
     val order: Int = 0
 )
 
