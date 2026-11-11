@@ -422,7 +422,7 @@ internal data class HomeSearchResults(
 )
 
 @Composable
-private fun HomeShortcut(title: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun HomeShortcut(destination: LibraryDestination, title: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
     Surface(
@@ -430,9 +430,18 @@ private fun HomeShortcut(title: String, icon: ImageVector, onClick: () -> Unit, 
         shape = shape,
         color = colors.surfaceContainer,
         border = BorderStroke(1.dp, colors.outlineVariant),
-        modifier = modifier.tvFocusHighlight(shape = shape, scaleOnFocus = 1.02f)
+        modifier = modifier.testTag("library_destination_${destination.name.lowercase()}").tvFocusHighlight(shape = shape, scaleOnFocus = 1.02f)
     ) {
-        Row(
+        if (compact) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 2.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
+            ) {
+                Icon(icon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
+                Text(title, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        } else Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
@@ -449,7 +458,13 @@ internal fun HomeScreen(
     channels: List<PlaylistChannel>,
     catalogs: List<XtreamCatalog>,
     profiles: List<PlaylistProfile>,
-    contentFocusRequester: FocusRequester,
+    homeFocusRequester: FocusRequester,
+    onHeaderFocusChanged: (Boolean) -> Unit,
+    onSwitchProfile: (() -> Unit)?,
+    onOpenSettings: () -> Unit,
+    onCloseApp: () -> Unit,
+    openSearchOnEntry: Boolean,
+    onSearchOpened: () -> Unit,
     sidebarFocusRequester: FocusRequester? = null,
     epgGuide: EpgGuide?,
     epgTimeShiftHours: Int = 0,
@@ -484,10 +499,12 @@ internal fun HomeScreen(
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val isTv = LocalFormFactor.current.isTelevision
+    val compactSearch = !isTv && LocalConfiguration.current.screenWidthDp < 600
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     var isTvSearchActive by remember { mutableStateOf(false) }
+    var compactSearchExpanded by remember { mutableStateOf(false) }
     val searchBarFocusRequester = remember { FocusRequester() }
     val searchTextFieldFocusRequester = remember { FocusRequester() }
 
@@ -616,14 +633,33 @@ internal fun HomeScreen(
         addAll(visibleShelves)
         add(if (visibleShelves.isEmpty()) 0 else 1, "shortcuts")
         if (visibleShelves.isEmpty()) add("empty")
+        if (compactSearch) add("customize")
     }
     val homeListState = rememberLazyListState()
     LaunchedEffect(homeSectionOrder) {
         homeListState.requestScrollToItem(0)
     }
 
-    BackHandler(enabled = isTv && isTvSearchActive) {
+    fun openSearch() {
+        if (compactSearch) compactSearchExpanded = true
+        if (isTv) isTvSearchActive = true
+        coroutineScope.launch {
+            delay(50)
+            runCatching { searchTextFieldFocusRequester.requestFocus() }
+            keyboardController?.show()
+        }
+    }
+    LaunchedEffect(openSearchOnEntry) {
+        if (openSearchOnEntry) {
+            openSearch()
+            onSearchOpened()
+        }
+    }
+
+    BackHandler(enabled = isTvSearchActive || compactSearchExpanded || searchQuery.isNotBlank()) {
         isTvSearchActive = false
+        compactSearchExpanded = false
+        searchQuery = ""
         keyboardController?.hide()
         runCatching { searchBarFocusRequester.requestFocus() }
     }
@@ -671,50 +707,17 @@ internal fun HomeScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 14.dp)
+                .padding(horizontal = if (compactSearch) 12.dp else 20.dp, vertical = if (compactSearch) 6.dp else 14.dp)
         ) {
-        if (!isSearching) {
-            Text(strings.navHome, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.dp))
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        val searchField: @Composable () -> Unit = {
             Surface(
-                onClick = {
-                    if (isTv) {
-                        isTvSearchActive = true
-                        coroutineScope.launch {
-                            delay(50)
-                            runCatching { searchTextFieldFocusRequester.requestFocus() }
-                            keyboardController?.show()
-                        }
-                    } else {
-                        runCatching { searchTextFieldFocusRequester.requestFocus() }
-                    }
-                },
+                onClick = ::openSearch,
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                 modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(searchBarFocusRequester)
-                    .focusRequester(contentFocusRequester)
-                    .focusProperties {
-                        if (sidebarFocusRequester != null) {
-                            left = sidebarFocusRequester
-                        }
-                    }
-                    .onPreviewKeyEvent { keyEvent ->
-                        if (isTv && !isTvSearchActive && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT && sidebarFocusRequester != null) {
-                            if (keyEvent.type == KeyEventType.KeyDown) {
-                                val handled = runCatching { sidebarFocusRequester.requestFocus() }.isSuccess
-                                if (handled) return@onPreviewKeyEvent true
-                            }
-                        }
-                        false
-                    }
+                    .fillMaxWidth()
+                    .then(if (compactSearch) Modifier else Modifier.focusRequester(searchBarFocusRequester))
                     .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.02f else 1.0f)
             ) {
             Row(
@@ -739,6 +742,7 @@ internal fun HomeScreen(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(
                         onSearch = {
+                            keyboardController?.hide()
                             if (isTv) {
                                 isTvSearchActive = false
                                 keyboardController?.hide()
@@ -794,28 +798,36 @@ internal fun HomeScreen(
                     }
                 }
             }
-        }
-
-            Spacer(Modifier.width(10.dp))
-
-            Surface(
-                onClick = onOpenCustomizeHome,
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                modifier = Modifier
-                    .size(48.dp)
-                    .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.05f else 1.0f)
-            ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = strings.customizeHome,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
             }
+        }
+        if (compactSearch && compactSearchExpanded) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = {
+                    compactSearchExpanded = false
+                    searchQuery = ""
+                    keyboardController?.hide()
+                }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                }
+                Box(Modifier.weight(1f)) { searchField() }
+            }
+        } else LibraryHomeHeader(
+            onHome = {
+                searchQuery = ""
+                compactSearchExpanded = false
+                isTvSearchActive = false
+                keyboardController?.hide()
+                homeListState.requestScrollToItem(0)
+            },
+            onSwitchProfile = onSwitchProfile,
+            onSettings = onOpenSettings,
+            onCloseApp = onCloseApp,
+            profile = currentProfile,
+            modifier = Modifier.onFocusChanged { onHeaderFocusChanged(it.hasFocus) },
+            homeModifier = Modifier.focusRequester(homeFocusRequester)
+        ) {
+            if (compactSearch) LibrarySearchButton(::openSearch, Modifier.focusRequester(searchBarFocusRequester))
+            else searchField()
         }
 
         Spacer(Modifier.height(16.dp))
@@ -965,12 +977,26 @@ internal fun HomeScreen(
                     }
 
                     "shortcuts" -> {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            HomeShortcut(strings.navLiveTv, Icons.Default.LiveTv, { onNavigateToDestination(LibraryDestination.LIVE_TV) }, Modifier.weight(1f))
-                            HomeShortcut(strings.navMovies, Icons.Default.Movie, { onNavigateToDestination(LibraryDestination.MOVIES) }, Modifier.weight(1f))
-                            HomeShortcut(strings.navSeries, Icons.Default.VideoLibrary, { onNavigateToDestination(LibraryDestination.SERIES) }, Modifier.weight(1f))
+                        val shortcuts = listOf(
+                            Triple(LibraryDestination.LIVE_TV, strings.navLiveTv, Icons.Default.LiveTv),
+                            Triple(LibraryDestination.MOVIES, strings.navMovies, Icons.Default.Movie),
+                            Triple(LibraryDestination.SERIES, strings.navSeries, Icons.Default.VideoLibrary),
+                            Triple(LibraryDestination.FAVORITES, strings.navFavorites, Icons.Default.Star)
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(if (compactSearch) 4.dp else 8.dp)) {
+                                    shortcuts.forEach { (destination, label, icon) ->
+                                        HomeShortcut(destination, label, icon, { onNavigateToDestination(destination) }, Modifier.weight(1f), compactSearch)
+                                    }
+                                }
+                            }
+                            if (!compactSearch) IconButton(onClick = onOpenCustomizeHome) {
+                                Icon(Icons.Default.Tune, contentDescription = strings.customizeHome)
+                            }
                         }
                     }
+                    "customize" -> TextButton(onClick = onOpenCustomizeHome) { Text(strings.customizeHome) }
 
                     "empty" -> {
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {

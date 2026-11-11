@@ -626,8 +626,6 @@ internal fun FortressLibrary(
             progressEntries = it
         }
     }
-    val libraryConfiguration = LocalConfiguration.current
-    val compactLibraryNavigation = libraryConfiguration.screenWidthDp < 700
     var destination by rememberSaveable {
         mutableStateOf(
             when (startupDestination) {
@@ -638,17 +636,10 @@ internal fun FortressLibrary(
     }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
-    var globalSidebarExpanded by remember { mutableStateOf(false) }
+    var openHomeSearch by remember { mutableStateOf(false) }
     // Keep catalogue positions alive while the user moves between primary destinations.
     val movieGridState = rememberLazyGridState()
     val seriesGridState = rememberLazyGridState()
-    val destinations = listOf(
-        Triple(LibraryDestination.HOME, strings.navHome, Icons.Default.Home),
-        Triple(LibraryDestination.LIVE_TV, strings.navLiveTv, Icons.Default.LiveTv),
-        Triple(LibraryDestination.MOVIES, strings.navMovies, Icons.Default.Movie),
-        Triple(LibraryDestination.SERIES, strings.navSeries, Icons.Default.VideoLibrary),
-        Triple(LibraryDestination.FAVORITES, strings.navFavorites, Icons.Default.Star)
-    )
 
     val effectivePlaylist = remember(playlist, hideAdultContent) {
         if (!hideAdultContent) playlist
@@ -658,54 +649,47 @@ internal fun FortressLibrary(
         }
     }
     val isTv = LocalFormFactor.current.isTelevision
-    var sidebarHasFocus by remember { mutableStateOf(false) }
-    val selectedItemFocusRequester = remember { FocusRequester() }
+    val compactHeader = !isTv && LocalConfiguration.current.screenWidthDp < 600
+    var headerHasFocus by remember { mutableStateOf(false) }
+    val homeFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isTv, destination) {
-        if (isTv) {
+        if (isTv && !openHomeSearch) {
             delay(150)
             try {
-                selectedItemFocusRequester.requestFocus()
+                homeFocusRequester.requestFocus()
             } catch (_: Throwable) {}
         }
     }
 
-    BackHandler(globalSidebarExpanded || (isTv && !sidebarHasFocus)) {
-        if (globalSidebarExpanded) {
-            globalSidebarExpanded = false
-        } else if (isTv && !sidebarHasFocus) {
-            try {
-                selectedItemFocusRequester.requestFocus()
-            } catch (_: Throwable) {}
-        }
+    BackHandler(destination != LibraryDestination.HOME || (isTv && !headerHasFocus)) {
+        if (destination != LibraryDestination.HOME) destination = LibraryDestination.HOME
+        else runCatching { homeFocusRequester.requestFocus() }
     }
 
-    Row(
+    Column(
         Modifier
             .fillMaxSize()
             .background(FortressBackgroundBrush)
             .systemBarsPadding()
     ) {
-        GlobalLibrarySidebar(
-            expanded = globalSidebarExpanded,
-            destinations = destinations,
-            selectedDestination = destination,
-            onDestinationSelected = {
-                destination = it
-                if (compactLibraryNavigation) globalSidebarExpanded = false
-            },
-            onToggleExpanded = { globalSidebarExpanded = !globalSidebarExpanded },
-            onOpenSettings = {
-                if (compactLibraryNavigation) globalSidebarExpanded = false
-                onOpenSettings(0)
-            },
-            activeHouseholdProfile = activeHouseholdProfile,
-            onOpenProfiles = onOpenProfiles,
-            onFocusChanged = { sidebarHasFocus = it },
-            selectedItemFocusRequester = selectedItemFocusRequester,
-            contentFocusRequester = contentFocusRequester
-        )
+        if (destination != LibraryDestination.HOME) {
+            LibraryHomeHeader(
+                onHome = { destination = LibraryDestination.HOME },
+                onSwitchProfile = onOpenProfiles,
+                onSettings = { onOpenSettings(0) },
+                onCloseApp = { context.findActivity()?.finishAndRemoveTask() },
+                profile = activeHouseholdProfile,
+                modifier = Modifier.padding(horizontal = if (compactHeader) 12.dp else 20.dp, vertical = if (compactHeader) 6.dp else 8.dp),
+                homeModifier = Modifier.focusRequester(homeFocusRequester).focusProperties { down = contentFocusRequester }
+            ) {
+                LibrarySearchButton(onClick = {
+                    openHomeSearch = true
+                    destination = LibraryDestination.HOME
+                })
+            }
+        }
         val onRemoveContinueWatchingEntry: (VodProgressEntry) -> Unit = { entry ->
             progressEntries = progressStore.remove(entry.key, entry.seriesId)
             if (activeHouseholdProfile != null && activeHouseholdProfile.id != "restricted_default") {
@@ -818,7 +802,7 @@ internal fun FortressLibrary(
             }
         }
 
-        Box(Modifier.weight(1f).fillMaxHeight().testTag("startup_destination_ready")) {
+        Box(Modifier.weight(1f).fillMaxWidth().testTag("startup_destination_ready")) {
             ReportDrawn()
             when (destination) {
                 LibraryDestination.HOME -> HomeScreen(
@@ -826,8 +810,13 @@ internal fun FortressLibrary(
                     channels = effectivePlaylist.channels,
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
-                    contentFocusRequester = contentFocusRequester,
-                    sidebarFocusRequester = selectedItemFocusRequester,
+                    homeFocusRequester = homeFocusRequester,
+                    onHeaderFocusChanged = { headerHasFocus = it },
+                    onSwitchProfile = onOpenProfiles,
+                    onOpenSettings = { onOpenSettings(0) },
+                    onCloseApp = { context.findActivity()?.finishAndRemoveTask() },
+                    openSearchOnEntry = openHomeSearch,
+                    onSearchOpened = { openHomeSearch = false },
                     epgGuide = epgGuide,
                     epgTimeShiftHours = epgTimeShiftHours,
                     epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
@@ -895,7 +884,6 @@ internal fun FortressLibrary(
                     playlist = if (activeHouseholdProfile?.isChild == true) effectivePlaylist else playlist,
                     activeProfile = activeProfile,
                     contentFocusRequester = contentFocusRequester,
-                    sidebarFocusRequester = selectedItemFocusRequester,
                     enabledSourceCount = enabledSourceCount,
                     enabledSources = enabledSources,
                     epgGuide = epgGuide,

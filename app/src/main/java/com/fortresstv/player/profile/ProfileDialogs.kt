@@ -11,12 +11,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -42,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.fortresstv.player.ui.LocalAppStrings
+import com.fortresstv.player.ui.LocalFormFactor
 import com.fortresstv.player.ui.tvFocusHighlight
 import kotlinx.coroutines.launch
 
@@ -81,11 +89,33 @@ fun ProfileSelectionDialog(
     val profiles by repository.profiles.collectAsState()
     val activeProfile by repository.activeProfile.collectAsState()
     val lastUsedProfileId = remember(profiles, activeProfile) { repository.getLastActiveProfileId() }
+    val phoneLayout = !LocalFormFactor.current.isTelevision && LocalConfiguration.current.screenWidthDp < 640
     val scope = rememberCoroutineScope()
 
     var showPinDialogForProfile by remember { mutableStateOf<HouseholdProfile?>(null) }
     var showPinDialogForManagement by remember { mutableStateOf(false) }
     var showManagementDialog by remember { mutableStateOf(false) }
+
+    fun adultPinRequired(): Boolean = repository.getPinStatus().hasPin &&
+        (activeProfile.isChild || activeProfile.id == "restricted_default") && !repository.isAdultUnlocked()
+
+    fun selectProfile(profile: HouseholdProfile) {
+        if (profile.isAdult && adultPinRequired()) {
+            showPinDialogForProfile = profile
+        } else {
+            scope.launch {
+                if (runCatching { repository.selectProfile(profile) }.getOrDefault(false)) {
+                    onProfileSelected(profile)
+                    onDismiss()
+                }
+            }
+        }
+    }
+
+    fun manageProfiles() {
+        if (adultPinRequired()) showPinDialogForManagement = true
+        else showManagementDialog = true
+    }
 
     if (showPinDialogForProfile != null) {
         ParentalPinDialog(
@@ -126,7 +156,56 @@ fun ProfileSelectionDialog(
         onDismissRequest = { if (!isMandatory) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
+        if (phoneLayout) {
+            Surface(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (isMandatory) copy.whoIsWatching else copy.switchProfile,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                        if (!isMandatory) IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = copy.close)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(profiles, key = { it.id }) { profile ->
+                            val isActive = profile.id == activeProfile.id && profile.id != "restricted_default"
+                            val needsPin = profile.isAdult && adultPinRequired()
+                            Surface(
+                                onClick = { selectProfile(profile) },
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ProfileAvatar(profile.name, profile.isChild, size = 44.dp, usePalette = true, avatarUrl = profile.avatarUrl)
+                                    Column(Modifier.weight(1f)) {
+                                        Text(profile.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        if (isActive) Text(copy.active, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (needsPin) Icon(Icons.Default.Lock, contentDescription = copy.pinProtected)
+                                    else if (isActive) Icon(Icons.Default.Check, contentDescription = null)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(onClick = ::manageProfiles, modifier = Modifier.fillMaxWidth()) { Text(copy.manageProfiles) }
+                    if (!isMandatory && onOpenAccount != null) {
+                        TextButton(onClick = { onDismiss(); onOpenAccount() }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (languageTag.startsWith("pt")) "Conta Cloud" else "Cloud Account")
+                        }
+                    }
+                }
+            }
+        } else Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier
@@ -155,28 +234,14 @@ fun ProfileSelectionDialog(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     for (prof in profiles) {
-                        val isActive = (prof.id == activeProfile.id && activeProfile.id != "restricted_default")
                         val isLastUsed = (prof.id == lastUsedProfileId)
                         val status = repository.getPinStatus()
-                        val requiresPin = prof.isAdult && (activeProfile.isChild || activeProfile.id == "restricted_default") && status.hasPin && !repository.isAdultUnlocked()
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    if (requiresPin) {
-                                        showPinDialogForProfile = prof
-                                    } else {
-                                        scope.launch {
-                                            val ok = runCatching { repository.selectProfile(prof) }.getOrDefault(false)
-                                            if (ok) {
-                                                onProfileSelected(prof)
-                                                onDismiss()
-                                            }
-                                        }
-                                    }
-                                }
+                                .clickable { selectProfile(prof) }
                                 .tvFocusHighlight()
                                 .padding(8.dp)
                         ) {
@@ -233,14 +298,7 @@ fun ProfileSelectionDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
-                        onClick = {
-                            val status = repository.getPinStatus()
-                            if (status.hasPin && (activeProfile.isChild || activeProfile.id == "restricted_default") && !repository.isAdultUnlocked()) {
-                                showPinDialogForManagement = true
-                            } else {
-                                showManagementDialog = true
-                            }
-                        },
+                        onClick = ::manageProfiles,
                         shape = RoundedCornerShape(4.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
                         modifier = Modifier.tvFocusHighlight()

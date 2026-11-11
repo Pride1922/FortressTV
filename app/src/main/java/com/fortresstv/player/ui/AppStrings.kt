@@ -320,6 +320,8 @@ interface Strings {
     val tabProfiles: String
     val profiles: String
     val switchProfile: String
+    val libraryProfileMenu: String
+    val closeApp: String
     val manageProfiles: String
     val childProfile: String
     val adultProfile: String
@@ -896,6 +898,8 @@ object EnglishStrings : Strings {
     override val tabProfiles = "Profiles"
     override val profiles = "Profiles"
     override val switchProfile = "Switch Profile"
+    override val libraryProfileMenu = "Profile"
+    override val closeApp = "Close app"
     override val manageProfiles = "Manage Profiles"
     override val childProfile = "Child profile"
     override val adultProfile = "Adult profile"
@@ -1475,6 +1479,8 @@ object PortugueseStrings : Strings {
     override val tabProfiles = "Perfis"
     override val profiles = "Perfis"
     override val switchProfile = "Mudar de Perfil"
+    override val libraryProfileMenu = "Perfil"
+    override val closeApp = "Fechar aplicação"
     override val manageProfiles = "Gerir Perfis"
     override val childProfile = "Perfil de criança"
     override val adultProfile = "Perfil de adulto"

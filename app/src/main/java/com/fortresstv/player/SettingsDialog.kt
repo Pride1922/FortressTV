@@ -460,6 +460,7 @@ internal fun SettingsDialog(
     val configuration = LocalConfiguration.current
     val isTwoPane = configuration.screenWidthDp >= 640
     val isTv = LocalFormFactor.current.isTelevision
+    val isPhoneLayout = !isTv && !isTwoPane
 
     val tabItems = listOf(
         Pair(strings.tabGeneral, Icons.Default.Settings),
@@ -471,7 +472,8 @@ internal fun SettingsDialog(
         Pair(strings.tabAbout, Icons.Default.Info)
     )
 
-    var selectedTab by remember { mutableIntStateOf(initialTab.coerceIn(0, (tabItems.size - 1).coerceAtLeast(0))) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(tabItems.indices)) }
+    var showSection by rememberSaveable { mutableStateOf(initialTab > 0) }
     val tabFocusRequesters = remember(tabItems.size) { List(tabItems.size) { FocusRequester() } }
     var settingsContentHasFocus by remember { mutableStateOf(false) }
 
@@ -491,22 +493,26 @@ internal fun SettingsDialog(
         keyboardController?.hide()
     }
 
-    BackHandler(onBack = {
+    fun goBack() {
         hideKeyboard()
-        if (isTv && settingsContentHasFocus) {
+        if (isPhoneLayout && showSection) {
+            showSection = false
+        } else if (isTv && settingsContentHasFocus) {
             runCatching { tabFocusRequesters.getOrNull(selectedTab)?.requestFocus() }
         } else {
             onDismiss()
         }
-    })
+    }
+    BackHandler(onBack = ::goBack)
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = if (isPhoneLayout) ::goBack else onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .then(if (isPhoneLayout) Modifier.systemBarsPadding() else Modifier)
             .background(Color.Black.copy(alpha = 0.7f))
             .imePadding()
             .then(
@@ -520,10 +526,12 @@ internal fun SettingsDialog(
         contentAlignment = Alignment.Center
     ) {
         Surface(
-            shape = RoundedCornerShape(if (isTwoPane) 20.dp else 16.dp),
+            shape = RoundedCornerShape(if (isTwoPane) 20.dp else if (isPhoneLayout) 0.dp else 16.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
-            modifier = (if (isTwoPane) {
+            modifier = (if (isPhoneLayout) {
+                Modifier.fillMaxSize()
+            } else if (isTwoPane) {
                 Modifier
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 940.dp)
@@ -551,15 +559,22 @@ internal fun SettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        strings.settingsTitle,
-                        fontSize = if (isTwoPane) 20.sp else 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        if (isPhoneLayout && showSection) {
+                            IconButton(onClick = ::goBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.back)
+                            }
+                        }
+                        Text(
+                            if (isPhoneLayout && showSection) tabItems[selectedTab].first else strings.settingsTitle,
+                            fontSize = if (isPhoneLayout) 22.sp else if (isTwoPane) 20.sp else 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     IconButton(
                         onClick = onDismiss,
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(if (isPhoneLayout) 48.dp else 36.dp)
                             .tvFocusHighlight(
                                 shape = CircleShape,
                                 scaleOnFocus = if (isTv) 1.15f else 1.0f
@@ -736,9 +751,33 @@ internal fun SettingsDialog(
                             }
                         }
                     }
+                } else if (isPhoneLayout && !showSection) {
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        tabItems.forEachIndexed { index, (title, icon) ->
+                            Surface(
+                                onClick = { selectedTab = index; showSection = true },
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
                 } else {
                     // Single pane compact top tabs
-                    PrimaryTabRow(
+                    if (!isPhoneLayout) PrimaryTabRow(
                         selectedTabIndex = selectedTab,
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         modifier = Modifier.clip(RoundedCornerShape(10.dp))
@@ -760,7 +799,7 @@ internal fun SettingsDialog(
                         }
                     }
 
-                    Spacer(Modifier.height(10.dp))
+                    if (!isPhoneLayout) Spacer(Modifier.height(10.dp))
 
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         when (selectedTab) {

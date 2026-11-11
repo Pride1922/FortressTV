@@ -269,6 +269,9 @@ class FortressTvBenchmark {
             device.wait(Until.findObject(By.res("programme_guide_button")), UI_TIMEOUT)
         }
         if (device.findObject(By.res("programme_guide_button")) == null) {
+            if (device.findObject(By.res("library_destination_live_tv")) == null) {
+                device.findObject(By.res("library_destination_home"))?.click()
+            }
             val liveTvDestination = device.wait(
                 Until.findObject(By.res("library_destination_live_tv")),
                 UI_TIMEOUT
@@ -284,6 +287,9 @@ class FortressTvBenchmark {
     ) {
         pressHome()
         startActivityAndWait()
+        if (device.findObject(By.res(destinationTag)) == null) {
+            device.wait(Until.findObject(By.res("library_destination_home")), UI_TIMEOUT)?.click()
+        }
         assertNotNull(
             "Configure an enabled Xtream source before running catalogue benchmarks",
             device.wait(Until.findObject(By.res(destinationTag)), UI_TIMEOUT)
