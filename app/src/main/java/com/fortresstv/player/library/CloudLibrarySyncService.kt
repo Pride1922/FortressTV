@@ -10,6 +10,7 @@ import com.fortresstv.player.profile.ProfileRepository
 import com.fortresstv.player.profile.ServerClockTracker
 import com.fortresstv.player.telemetry.TelemetryStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
@@ -226,7 +227,7 @@ class CloudLibrarySyncService internal constructor(
         startupDestination: String = "home",
         epgTimeShiftHours: Int = 0
     ) {
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val payload = JSONObject().apply {
                 put("audio_lang", audioLang)
                 put("subtitle_lang", subtitleLang)
@@ -287,14 +288,14 @@ class CloudLibrarySyncService internal constructor(
             val accountState = accountRepository.resolveAccountState()
             if (accountState !is AccountState.AuthenticatedOnline) return@withLock false
 
+            val pending = outbox.loadPending()
+            val preferencesSynced = flushPreferences(pending, accountState.accessToken)
             flushTelemetryInternal(accountState.accessToken)
-
+            val remaining = pending.filterNot { it.actionType == SyncActionType.UPSERT_PREFERENCES }
+            if (remaining.isEmpty()) return@withLock preferencesSynced
             val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withLock false
 
-            val pending = outbox.loadPending()
-            if (pending.isEmpty()) return@withLock true
-
-            for (mutation in pending) {
+            for (mutation in remaining) {
                 val success = runCatching {
                     when (mutation.actionType) {
                         SyncActionType.UPSERT_LIBRARY -> {
@@ -347,17 +348,7 @@ class CloudLibrarySyncService internal constructor(
                                 accessToken = accountState.accessToken
                             )
                         }
-                        SyncActionType.UPSERT_PREFERENCES -> {
-                            syncApi.saveProfilePreferences(
-                                profileId = mutation.profileId,
-                                audioLang = mutation.payload.optString("audio_lang", "default"),
-                                subtitleLang = mutation.payload.optString("subtitle_lang", "off"),
-                                subFallback = mutation.payload.optBoolean("sub_fallback", true),
-                                startupDestination = mutation.payload.optString("startup_destination", "home"),
-                                epgTimeShiftHours = mutation.payload.optInt("epg_time_shift_hours", 0),
-                                accessToken = accountState.accessToken
-                            )
-                        }
+                        SyncActionType.UPSERT_PREFERENCES -> error("Preferences are flushed separately")
                         SyncActionType.UPSERT_RECENT_CHANNELS -> {
                             val channelsArr = mutation.payload.optJSONArray("recent_channels") ?: org.json.JSONArray()
                             val channels = mutableListOf<String>()
@@ -379,8 +370,27 @@ class CloudLibrarySyncService internal constructor(
                 }
             }
             flushTelemetryInternal(accountState.accessToken)
-            true
+            preferencesSynced
         }
+    }
+
+    private suspend fun flushPreferences(pending: List<PendingSyncMutation>, accessToken: String): Boolean {
+        var synced = true
+        for (mutation in pending.filter { it.actionType == SyncActionType.UPSERT_PREFERENCES }) {
+            val success = runCatching {
+                syncApi.saveProfilePreferences(
+                    profileId = mutation.profileId,
+                    audioLang = mutation.payload.optString("audio_lang", "default"),
+                    subtitleLang = mutation.payload.optString("subtitle_lang", "off"),
+                    subFallback = mutation.payload.optBoolean("sub_fallback", true),
+                    startupDestination = mutation.payload.optString("startup_destination", "home"),
+                    epgTimeShiftHours = mutation.payload.optInt("epg_time_shift_hours", 0),
+                    accessToken = accessToken
+                )
+            }.isSuccess
+            if (success) outbox.remove(mutation.id) else synced = false
+        }
+        return synced
     }
 
     private fun flushTelemetryInternal(accessToken: String) {
@@ -446,11 +456,16 @@ class CloudLibrarySyncService internal constructor(
     }
 
     suspend fun pullRemotePreferences(profileId: String): CloudProfilePreferences? = withContext(Dispatchers.IO) {
-        val accountState = accountRepository.resolveAccountState()
-        if (accountState !is AccountState.AuthenticatedOnline) return@withContext null
-        runCatching {
-            syncApi.getProfilePreferences(profileId, accountState.accessToken)
-        }.getOrNull()
+        mutex.withLock {
+            val accountState = accountRepository.resolveAccountState()
+            if (accountState !is AccountState.AuthenticatedOnline) return@withLock null
+            if (!flushPreferences(outbox.loadPending().filter { it.profileId == profileId }, accountState.accessToken)) {
+                return@withLock null
+            }
+            val preferences = syncApi.getProfilePreferences(profileId, accountState.accessToken)
+            if (outbox.loadPending().any { it.profileId == profileId && it.actionType == SyncActionType.UPSERT_PREFERENCES }) null
+            else preferences
+        }
     }
 
     suspend fun pullRemoteRecentChannels(profileId: String): List<String> = withContext(Dispatchers.IO) {
@@ -476,7 +491,6 @@ class CloudLibrarySyncService internal constructor(
         profileId: String,
         userLibrary: UserLibraryStore,
         progressStore: VodProgressStore,
-        settingsStore: com.fortresstv.player.source.SourceSettingsStore? = null,
         onUpdated: (() -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         coroutineContext.ensureActive()
@@ -487,8 +501,6 @@ class CloudLibrarySyncService internal constructor(
         val remoteCategories = pullRemoteCategories(profileId)
         coroutineContext.ensureActive()
         val remoteRecent = pullRemoteRecentChannels(profileId)
-        coroutineContext.ensureActive()
-        val remotePrefs = if (settingsStore != null) pullRemotePreferences(profileId) else null
         coroutineContext.ensureActive()
 
         if (remoteCategories.isNotEmpty()) {
@@ -502,16 +514,6 @@ class CloudLibrarySyncService internal constructor(
             userLibrary.setRecentChannelIds(remoteRecent)
         }
 
-        if (remotePrefs != null && settingsStore != null) {
-            settingsStore.setPreferredAudioLanguage(remotePrefs.preferredAudioLanguage, profileId)
-            settingsStore.setPreferredSubtitleLanguage(remotePrefs.preferredSubtitleLanguage, profileId)
-            settingsStore.setSubtitleFallbackEnglish(remotePrefs.subtitleFallbackEnglish, profileId)
-            settingsStore.setStartupDestination(
-                com.fortresstv.player.source.StartupDestination.fromPersisted(remotePrefs.startupDestination),
-                profileId
-            )
-            settingsStore.saveEpgTimeShiftHours(remotePrefs.epgTimeShiftHours, profileId)
-        }
 
         if (remoteLibrary.isNotEmpty()) {
             val favs = userLibrary.favoriteChannelIds().toMutableSet()

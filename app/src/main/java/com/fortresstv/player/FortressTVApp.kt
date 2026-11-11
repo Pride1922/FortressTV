@@ -766,7 +766,6 @@ internal fun FortressTVApp(
                 profileId = targetProfileId,
                 userLibrary = profileLibrary,
                 progressStore = profileProgress,
-                settingsStore = settings,
                 onUpdated = {
                     if (activeHouseholdProfile.id == targetProfileId) {
                         scope.launch(Dispatchers.Default) {
@@ -782,13 +781,8 @@ internal fun FortressTVApp(
                                 progressRefreshTrigger++
                             }
                         }
-                        preferredAudioLanguage = settings.preferredAudioLanguage(targetProfileId)
-                        preferredSubtitleLanguage = settings.preferredSubtitleLanguage(targetProfileId)
-                        subtitleFallbackEnglish = settings.subtitleFallbackEnglish(targetProfileId)
-                        startupDestination = settings.startupDestination(targetProfileId)
                         homeHiddenSections = settings.homeHiddenSections(targetProfileId)
                         homeSectionOrder = settings.homeSectionOrder(targetProfileId)
-                        epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
                         if (activeSourceId != null) {
                             hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
                             categoryOrder = userLibrary.categoryOrder(activeSourceId)
@@ -891,7 +885,7 @@ internal fun FortressTVApp(
 
     val onPreferredAudioLanguageChanged: (String) -> Unit = { lang ->
         preferredAudioLanguage = lang
-        scope.launch(Dispatchers.IO) { settings.setPreferredAudioLanguage(lang, activeHouseholdProfile.id) }
+        settings.setPreferredAudioLanguage(lang, activeHouseholdProfile.id)
         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
             cloudLibrarySyncService.recordPreferencesMutation(
                 profileId = activeHouseholdProfile.id,
@@ -906,7 +900,7 @@ internal fun FortressTVApp(
 
     val onPreferredSubtitleLanguageChanged: (String) -> Unit = { lang ->
         preferredSubtitleLanguage = lang
-        scope.launch(Dispatchers.IO) { settings.setPreferredSubtitleLanguage(lang, activeHouseholdProfile.id) }
+        settings.setPreferredSubtitleLanguage(lang, activeHouseholdProfile.id)
         if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
             cloudLibrarySyncService.recordPreferencesMutation(
                 profileId = activeHouseholdProfile.id,
@@ -1205,6 +1199,32 @@ internal fun FortressTVApp(
 
     LaunchedEffect(foregroundGeneration) {
         currentAppEpochDay = LocalDate.now().toEpochDay()
+    }
+
+    LaunchedEffect(foregroundGeneration, activeHouseholdProfile.id, currentUserId) {
+        val profileId = activeHouseholdProfile.id
+        if (currentUserId == null || profileId == "restricted_default") return@LaunchedEffect
+        fun localPreferences() = listOf(
+            settings.preferredAudioLanguage(profileId), settings.preferredSubtitleLanguage(profileId),
+            settings.subtitleFallbackEnglish(profileId), settings.startupDestination(profileId),
+            settings.epgScheduleCorrectionMinutes(profileId)
+        )
+        val before = localPreferences()
+        val remote = cloudLibrarySyncService.pullRemotePreferences(profileId) ?: return@LaunchedEffect
+        if (profileId != activeHouseholdProfile.id || before != localPreferences()) return@LaunchedEffect
+
+        settings.setPreferredAudioLanguage(remote.preferredAudioLanguage, profileId)
+        settings.setPreferredSubtitleLanguage(remote.preferredSubtitleLanguage, profileId)
+        settings.setSubtitleFallbackEnglish(remote.subtitleFallbackEnglish, profileId)
+        settings.setStartupDestination(StartupDestination.fromPersisted(remote.startupDestination), profileId)
+        if (settings.epgTimeShiftHours(profileId) != remote.epgTimeShiftHours) {
+            settings.saveEpgTimeShiftHours(remote.epgTimeShiftHours, profileId)
+        }
+        preferredAudioLanguage = settings.preferredAudioLanguage(profileId)
+        preferredSubtitleLanguage = settings.preferredSubtitleLanguage(profileId)
+        subtitleFallbackEnglish = settings.subtitleFallbackEnglish(profileId)
+        startupDestination = settings.startupDestination(profileId)
+        epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(profileId)
     }
 
     LaunchedEffect(currentAppEpochDay) {
