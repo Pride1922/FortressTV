@@ -717,36 +717,30 @@ internal fun FortressTVApp(
         }
 
         if (uid != null && targetProfileId != "restricted_default") {
-            val currentFollowed = userLibrary.followedSeriesIds()
-            for (item in currentFollowed) {
-                val parts = item.split(":")
-                if (parts.size >= 3 && parts[2].length < 64) {
+            // Upload watchlist/followed items the cloud doesn't know yet. An item whose hashed key is
+            // already in the set came from (or went through) the cloud, so it is skipped instead of being
+            // re-sent on every start. The server overwrites all flags, so send the real watched state:
+            // a hard-coded "not watched" here used to reset watched watchlist movies on each launch.
+            val currentWatched = userLibrary.watchedItemIds()
+            suspend fun uploadIfLocalOnly(items: Set<String>, itemKind: String) {
+                for (item in items) {
+                    val parts = item.split(":")
+                    if (parts.size < 3 || parts[2].length >= 64) continue
+                    val hashedKey = "${parts[0]}:${parts[1]}:${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(parts[2])}"
+                    if (hashedKey in items) continue
                     cloudLibrarySyncService.enqueueLibraryMutation(
                         profileId = targetProfileId,
                         sourceId = parts[1],
-                        itemKind = "series",
+                        itemKind = itemKind,
                         itemId = parts[2],
                         isFavourite = true,
                         isWatchlisted = true,
-                        isWatched = false
+                        isWatched = userLibrary.isItemWatched(item, currentWatched)
                     )
                 }
             }
-            val currentWatchlist = userLibrary.movieWatchlistIds()
-            for (item in currentWatchlist) {
-                val parts = item.split(":")
-                if (parts.size >= 3 && parts[2].length < 64) {
-                    cloudLibrarySyncService.enqueueLibraryMutation(
-                        profileId = targetProfileId,
-                        sourceId = parts[1],
-                        itemKind = "movie",
-                        itemId = parts[2],
-                        isFavourite = true,
-                        isWatchlisted = true,
-                        isWatched = false
-                    )
-                }
-            }
+            uploadIfLocalOnly(userLibrary.followedSeriesIds(), "series")
+            uploadIfLocalOnly(userLibrary.movieWatchlistIds(), "movie")
             cloudLibrarySyncService.triggerSync()
             val profileLibrary = UserLibraryStore(context.applicationContext, ns)
             val profileProgress = VodProgressStore(context.applicationContext, ns)
