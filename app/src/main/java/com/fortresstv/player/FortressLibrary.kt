@@ -626,6 +626,7 @@ internal fun FortressLibrary(
     blockUnrated: Boolean = false,
     activeHouseholdProfile: HouseholdProfile? = null,
     onOpenProfiles: (() -> Unit)? = null,
+    profileSwitcher: com.fortresstv.player.profile.ProfileSwitcher? = null,
     onOpenSettings: (Int) -> Unit,
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
     onResetMapping: (PlaylistChannel, String?) -> Unit = { _, _ -> },
@@ -694,6 +695,7 @@ internal fun FortressLibrary(
             LibraryHomeHeader(
                 onHome = { destination = LibraryDestination.HOME },
                 onSwitchProfile = onOpenProfiles,
+                profileSwitcher = profileSwitcher,
                 onSettings = { onOpenSettings(0) },
                 onCloseApp = { context.findActivity()?.finishAndRemoveTask() },
                 profile = activeHouseholdProfile,
@@ -845,6 +847,7 @@ internal fun FortressLibrary(
                     homeFocusRequester = homeFocusRequester,
                     onHeaderFocusChanged = { headerHasFocus = it },
                     onSwitchProfile = onOpenProfiles,
+                    profileSwitcher = profileSwitcher,
                     onOpenSettings = { onOpenSettings(0) },
                     onCloseApp = { context.findActivity()?.finishAndRemoveTask() },
                     openSearchOnEntry = openHomeSearch,

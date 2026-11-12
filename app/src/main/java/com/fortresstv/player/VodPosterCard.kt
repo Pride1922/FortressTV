@@ -467,13 +467,25 @@ internal fun VodPosterCard(
                     Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                 }
 
-                // Frosted Rating Badge on Top-Left (IMDb is primary, Rotten Tomatoes exception)
+                // Rating badge bottom-left, over a soft fade so it reads on any poster without
+                // covering the title art at the top (IMDb is primary, Rotten Tomatoes the fallback).
+                val badgeModifier = Modifier
+                    .padding(start = 8.dp, bottom = if (progressFraction != null && progressFraction > 0f && !isWatched) 12.dp else 8.dp)
+                    .align(Alignment.BottomStart)
+                if (hasRatingPill) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.32f)
+                            .align(Alignment.BottomCenter)
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))))
+                    )
+                }
                 if (formattedImdbRating != null) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = Color(0xDE1A1605),
-                        border = BorderStroke(0.5.dp, Color(0xFFF5C518).copy(alpha = 0.85f)),
-                        modifier = Modifier.padding(7.dp).align(Alignment.TopStart)
+                        color = Color.Black.copy(alpha = 0.55f),
+                        modifier = badgeModifier
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
@@ -499,9 +511,8 @@ internal fun VodPosterCard(
                     val isFresh = pct >= 60
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = if (isFresh) Color(0xDE260D08) else Color(0xDE121E0F),
-                        border = BorderStroke(0.5.dp, if (isFresh) Color(0xFFFA320A).copy(alpha = 0.8f) else Color(0xFF468C32).copy(alpha = 0.8f)),
-                        modifier = Modifier.padding(7.dp).align(Alignment.TopStart)
+                        color = Color.Black.copy(alpha = 0.55f),
+                        modifier = badgeModifier
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
@@ -545,12 +556,19 @@ internal fun VodPosterCard(
                     )
                 }
             }
+            // Every card reserves two title lines and the subtitle line, so cards in a row line up
+            // whether a title wraps or a year is missing.
             Column(Modifier.padding(11.dp)) {
-                Text(title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (displaySubtitle.isNotBlank()) {
-                    Spacer(Modifier.height(3.dp))
-                    Text(displaySubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
-                }
+                Text(title, fontWeight = FontWeight.Bold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    displaySubtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    minLines = 1,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -558,7 +576,20 @@ internal fun VodPosterCard(
 
 internal fun formatVodMetadata(year: String?, rating: String?): String {
     val formattedRating = formatVodRating(rating)?.let { "★ $it/10" }
-    return listOfNotNull(year?.trim()?.takeIf(String::isNotEmpty), formattedRating).joinToString("  ")
+    return listOfNotNull(displayYear(year), formattedRating).joinToString("  ")
+}
+
+private val DATE_ONLY = Regex("""^[\d\s./-]+$""")
+private val FOUR_DIGIT_YEAR = Regex("""(?<!\d)(1[89]|20)\d{2}(?!\d)""")
+
+/**
+ * The year to show under a poster. Series list their full release date ("2008-09-23"); a poster
+ * only needs the year. Anything that isn't purely a date is shown as given.
+ */
+internal fun displayYear(raw: String?): String? {
+    val text = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    if (!DATE_ONLY.matches(text)) return text
+    return FOUR_DIGIT_YEAR.find(text)?.value ?: text
 }
 
 internal fun formatVodRating(rating: String?): String? =

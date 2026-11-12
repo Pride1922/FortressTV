@@ -187,6 +187,7 @@ import java.util.UUID
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -393,10 +394,11 @@ internal fun HomeContinueWatchingShelf(
     val strings = LocalAppStrings.current
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
+    val cardWidth = if (LocalFormFactor.current.isTelevision) 300.dp else 264.dp
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(strings.continueWatching, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             itemsIndexed(cards, key = { _, entry -> entry.key }) { index, entry ->
                 val nextEpisode = entry.progressFraction == 0f && entry.kind == VodProgressKind.EPISODE
                 val season = entry.season
@@ -413,64 +415,128 @@ internal fun HomeContinueWatchingShelf(
                         text.removePrefix("$label · ").replace(" · $label · ", " · ")
                     }.ifBlank { entry.title }
                 } else entry.title
-                Surface(
-                    modifier = Modifier.width(156.dp),
-                    shape = shape,
-                    color = colors.surfaceContainer,
-                    border = BorderStroke(1.dp, colors.outlineVariant)
-                ) {
-                    Column {
+                // A wide 16:9 card: the poster blurred and darkened as the background, sharp on the left,
+                // title and episode over the image, progress along its bottom edge. Progress entries only
+                // store the portrait poster, so it doubles as the backdrop. The remove button sits in the
+                // footer, not over the image, so a TV remote can reach it with "down".
+                val progressLabel = if (nextEpisode) strings.nextEpisode else "${(entry.progressFraction * 100).toInt()}%"
+                Column(Modifier.width(cardWidth)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .focusProperties {
+                                if (index == 0 && sidebarFocusRequester != null) left = sidebarFocusRequester
+                            }
+                            .tvFocusHighlight(shape = shape)
+                            .clip(shape)
+                            .background(colors.surfaceVariant)
+                            .clickable(
+                                onClickLabel = if (nextEpisode) strings.playNow else strings.resume,
+                                onClick = { onClick(entry) }
+                            )
+                    ) {
+                        if (!entry.posterUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                entry.posterUrl,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    // Real blur needs Android 12; older TVs get the darkened poster only.
+                                    .then(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(20.dp) else Modifier)
+                            )
+                        }
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Black.copy(alpha = 0.82f))))
+                        )
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusProperties {
-                                    if (index == 0 && sidebarFocusRequester != null) left = sidebarFocusRequester
-                                }
-                                .clickable(
-                                    onClickLabel = if (nextEpisode) strings.playNow else strings.resume,
-                                    onClick = { onClick(entry) }
-                                )
-                                .tvFocusHighlight(shape = shape, scaleOnFocus = 1f)
-                                .padding(start = 8.dp, top = 8.dp, end = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Modifier.fillMaxSize().padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
-                                Modifier.width(40.dp).height(56.dp).clip(RoundedCornerShape(6.dp))
-                                    .background(colors.surfaceVariant),
+                                Modifier
+                                    .fillMaxHeight()
+                                    .aspectRatio(2f / 3f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(colors.surfaceContainer),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (!entry.posterUrl.isNullOrBlank()) {
                                     AsyncImage(entry.posterUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                }
-                                Surface(shape = CircleShape, color = colors.inverseSurface, modifier = Modifier.size(22.dp)) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = colors.inverseOnSurface, modifier = Modifier.padding(3.dp))
+                                } else {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = colors.primary, modifier = Modifier.size(28.dp))
                                 }
                             }
-                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                if (episodeLabel != null) {
-                                    Text(episodeLabel, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant, maxLines = 1)
+                            Column(
+                                Modifier.weight(1f).fillMaxHeight(),
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (episodeLabel != null) {
+                                        Text(
+                                            episodeLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Color.White.copy(alpha = 0.75f),
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                                Surface(shape = CircleShape, color = colors.primary, modifier = Modifier.size(30.dp)) {
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                        tint = colors.onPrimary,
+                                        modifier = Modifier.padding(5.dp)
+                                    )
                                 }
                             }
                         }
-                        Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    if (nextEpisode) strings.nextEpisode else "${(entry.progressFraction * 100).toInt()}%",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (nextEpisode) colors.primary else colors.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                LinearProgressIndicator(
-                                    progress = { entry.progressFraction },
-                                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp))
+                        if (!nextEpisode) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .align(Alignment.BottomCenter)
+                                    .background(Color.White.copy(alpha = 0.18f))
+                            ) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth(entry.progressFraction.coerceIn(0f, 1f))
+                                        .fillMaxHeight()
+                                        .background(colors.primary)
                                 )
                             }
-                            IconButton(onClick = { onRemove(entry) }, modifier = Modifier.tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)) {
-                                Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching, modifier = Modifier.size(16.dp))
-                            }
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            progressLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (nextEpisode) colors.primary else colors.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { onRemove(entry) },
+                            modifier = Modifier.size(36.dp).tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching, modifier = Modifier.size(16.dp))
                         }
                     }
                 }
