@@ -3,6 +3,7 @@ package com.fortresstv.player
 import android.content.Context
 import android.os.Trace
 import com.fortresstv.player.library.CloudIdentityHasher
+import com.fortresstv.player.library.ColonSuffixIndex
 import com.fortresstv.player.library.UserLibraryStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.library.VodProgressEntry
@@ -95,12 +96,14 @@ internal class SourceSyncWorkflow(
         val moviePrefix = "movie:$sourceId:"
         val seriesPrefix = "series:$sourceId:"
 
+        // Index lookups replace per-item scans of the whole library (same answers, see ColonSuffixIndex).
         val hasHashedChannels = favs.any { it.startsWith("channel:") && it.length > 40 }
         if (hasHashedChannels) {
+            val favIndex = ColonSuffixIndex(favs)
             for (channel in catalog.liveChannels) {
                 val hash = CloudIdentityHasher.hashItemId(channel.sourceItemId)
-                if (favs.contains("$channelPrefix$hash") || favs.any { it.endsWith(":$hash") }) {
-                    favs.add("$channelPrefix${channel.sourceItemId}")
+                if (favIndex.anyEndsWithColonAnd(hash)) {
+                    favIndex.add("$channelPrefix${channel.sourceItemId}")
                 }
             }
         }
@@ -108,24 +111,26 @@ internal class SourceSyncWorkflow(
         val hasHashedMovies = watchlist.any { it.startsWith("movie:") && it.length > 38 } ||
                 watched.any { it.startsWith("movie:") && it.length > 38 }
         if (hasHashedMovies) {
+            val watchlistIndex = ColonSuffixIndex(watchlist)
+            val watchedIndex = ColonSuffixIndex(watched)
             for (movie in catalog.movies) {
                 val hash = CloudIdentityHasher.hashItemId(movie.id.toString())
-                val movieKey = "$moviePrefix$hash"
-                if (watchlist.contains(movieKey) || watchlist.any { it.endsWith(":$hash") }) {
-                    watchlist.add("$moviePrefix${movie.id}")
+                if (watchlistIndex.anyEndsWithColonAnd(hash)) {
+                    watchlistIndex.add("$moviePrefix${movie.id}")
                 }
-                if (watched.contains(movieKey) || watched.any { it.endsWith(":$hash") }) {
-                    watched.add("$moviePrefix${movie.id}")
+                if (watchedIndex.anyEndsWithColonAnd(hash)) {
+                    watchedIndex.add("$moviePrefix${movie.id}")
                 }
             }
         }
 
         val hasHashedSeries = followed.any { it.startsWith("series:") && it.length > 39 }
         if (hasHashedSeries) {
+            val followedIndex = ColonSuffixIndex(followed)
             for (series in catalog.series) {
                 val hash = CloudIdentityHasher.hashItemId(series.id.toString())
-                if (followed.contains("$seriesPrefix$hash") || followed.any { it.endsWith(":$hash") }) {
-                    followed.add("$seriesPrefix${series.id}")
+                if (followedIndex.anyEndsWithColonAnd(hash)) {
+                    followedIndex.add("$seriesPrefix${series.id}")
                 }
             }
         }
@@ -141,6 +146,13 @@ internal class SourceSyncWorkflow(
             seriesMap[series.id.toString()] = series
         }
 
+        // Built on first need: hashed movie id -> first movie with that id, as firstOrNull returned.
+        val moviesByHash by lazy {
+            HashMap<String, XtreamMovie>(catalog.movies.size * 2).also { map ->
+                for (movie in catalog.movies) map.putIfAbsent(CloudIdentityHasher.hashItemId(movie.id.toString()), movie)
+            }
+        }
+
         var progressChanged = false
         for (i in currentEntries.indices) {
             val entry = currentEntries[i]
@@ -148,9 +160,7 @@ internal class SourceSyncWorkflow(
             if (entry.kind == VodProgressKind.MOVIE && (entry.title.isBlank() || entry.posterUrl.isNullOrBlank())) {
                 var matchingMovie = movieMap[entry.itemId]
                 if (matchingMovie == null) {
-                    matchingMovie = catalog.movies.firstOrNull {
-                        CloudIdentityHasher.hashItemId(it.id.toString()) == entry.itemId
-                    }
+                    matchingMovie = moviesByHash[entry.itemId]
                 }
                 if (matchingMovie != null) {
                     currentEntries[i] = entry.copy(
