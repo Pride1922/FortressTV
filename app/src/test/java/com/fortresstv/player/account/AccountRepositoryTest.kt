@@ -66,9 +66,24 @@ class AccountRepositoryTest {
         assertNull(persistence.value)
         repository.resetPassword("new-password")
         assertNull(persistence.value)
-        assertEquals(listOf("/auth/v1/verify", "/auth/v1/user", "/auth/v1/logout?scope=local"), paths)
+        assertEquals(listOf("/auth/v1/verify", "/auth/v1/user", "/auth/v1/logout?scope=global"), paths)
         try { repository.resetPassword("another-password"); fail("Consumed recovery reused") }
         catch (failure: AccountException) { assertEquals(AccountError.EXPIRED_CODE, failure.reason) }
+    }
+
+    @Test fun passwordResetSignsOutThisDeviceToo() = runBlocking {
+        val persistence = MemoryPersistence().apply { value = AccountSession.decode(response()) }
+        var departed: AccountSession? = null
+        val repository = AccountRepository(persistence, SupabaseAuthApi(AuthTransport { _, path, _, _ ->
+            if (path == "/auth/v1/verify") response() else JSONObject()
+        }))
+        repository.setDepartureHandler { departed = it }
+        repository.restore()
+        repository.verifyRecovery("adult@example.test", "123456")
+        repository.resetPassword("new-password")
+        assertNull("Revoked session must not stay stored", persistence.value)
+        assertNull(repository.currentUserId())
+        assertNotNull("Local profile data must be released like a normal sign-out", departed)
     }
 
     @Test fun logoutClearsLocalSessionEvenWhenServerIsOffline() = runBlocking {

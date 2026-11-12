@@ -125,8 +125,19 @@ internal class AccountRepository(
         val verified = recovery ?: throw AccountException(AccountError.EXPIRED_CODE)
         api.changePassword(verified, password)
         recovery = null
-        // Require an ordinary login with the new password after recovery.
-        runCatching { api.signOut(verified) }
+        // A reset usually means the old password may be known to someone else: revoke every
+        // session of the account on every device, then require an ordinary login with the new password.
+        // The password is already changed, so a failed revoke is retried once rather than surfaced.
+        if (runCatching { api.signOut(verified, everywhere = true) }.isFailure) {
+            runCatching { api.signOut(verified, everywhere = true) }
+        }
+        // This device's own stored session for the same account was just revoked too.
+        val stored = session ?: persistence.load()
+        if (stored != null && stored.userId == verified.userId) {
+            runCatching { departureHandler?.invoke(stored) }
+            persistence.clear()
+            session = null
+        }
         Unit
     }
 

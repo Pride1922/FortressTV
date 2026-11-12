@@ -143,8 +143,10 @@ internal class SupabaseAuthApi(private val transport: AuthTransport = SupabaseHt
     fun refresh(session: AccountSession): AccountSession = AccountSession.decode(transport.request(
         "POST", "/auth/v1/token?grant_type=refresh_token", JSONObject().put("refresh_token", session.refreshToken), null))
 
-    fun signOut(session: AccountSession) {
-        transport.request("POST", "/auth/v1/logout?scope=local", null, session.accessToken)
+    // everywhere = true revokes every session of the account (all TVs and phones), not just this one.
+    fun signOut(session: AccountSession, everywhere: Boolean = false) {
+        val scope = if (everywhere) "global" else "local"
+        transport.request("POST", "/auth/v1/logout?scope=$scope", null, session.accessToken)
     }
 
     private fun credentials(email: String, password: String) = JSONObject().put("email", email.trim()).put("password", password)
