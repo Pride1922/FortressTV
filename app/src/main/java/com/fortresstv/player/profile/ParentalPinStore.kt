@@ -107,6 +107,7 @@ data class PinStatus(
 }
 
 sealed class PinVerifyResult {
+    data object Unavailable : PinVerifyResult()
     data class Success(val unlockToken: String?) : PinVerifyResult()
     data class Failed(val remainingAttempts: Int) : PinVerifyResult()
     data class Locked(val lockoutSeconds: Int) : PinVerifyResult()

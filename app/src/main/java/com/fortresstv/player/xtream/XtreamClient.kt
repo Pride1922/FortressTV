@@ -11,6 +11,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -82,6 +84,8 @@ class XtreamClient(
 
     suspend fun loadCatalog(
         forceRefresh: Boolean = false,
+        onMoviesLoaded: suspend (XtreamCatalog) -> Unit = {},
+        onSeriesLoaded: suspend (XtreamCatalog) -> Unit = {},
         onLiveLoaded: suspend (XtreamCatalog) -> Unit = {}
     ): XtreamCatalog {
         val cachedLive = if (forceRefresh) null else loadCachedLive()
@@ -89,25 +93,46 @@ class XtreamClient(
             onLiveLoaded(cachedLive.catalog)
         }
         authenticate()
-        val live = if (cachedLive?.fresh == true && cachedLive.streamBaseUrl == baseUrl) cachedLive.catalog else loadLive()
-        if (live !== cachedLive?.catalog && live.liveChannels.isNotEmpty()) onLiveLoaded(live)
-
-        return coroutineScope {
-            val movieCategories = async { categories(ACTION_VOD_CATEGORIES, forceRefresh) }
-            val seriesCategories = async { categories(ACTION_SERIES_CATEGORIES, forceRefresh) }
+        return supervisorScope {
+            val live = async {
+                val catalogue = if (cachedLive?.fresh == true && cachedLive.streamBaseUrl == baseUrl) {
+                    cachedLive.catalog
+                } else {
+                    loadLive()
+                }
+                if (catalogue !== cachedLive?.catalog && catalogue.liveChannels.isNotEmpty()) onLiveLoaded(catalogue)
+                catalogue
+            }
+            val sourceCatalogue = XtreamCatalog(sourceId = sourceId, sourceName = source.displayName)
             val movies = async {
-                freshCache(ACTION_VOD_STREAMS, forceRefresh, XtreamCatalogSnapshot::readMovies)
-                    ?: fetchList(ACTION_VOD_STREAMS, { parseMovies(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeMovies(file, value) }
+                coroutineScope {
+                    val categories = async { categories(ACTION_VOD_CATEGORIES, forceRefresh) }
+                    val streams = freshCache(ACTION_VOD_STREAMS, forceRefresh, XtreamCatalogSnapshot::readMovies)
+                        ?: fetchList(ACTION_VOD_STREAMS, { parseMovies(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeMovies(file, value) }
+                    val partial = sourceCatalogue.copy(movieCategories = categories.await(), movies = streams)
+                    onMoviesLoaded(partial)
+                    partial
+                }
             }
             val series = async {
-                freshCache(ACTION_SERIES, forceRefresh, XtreamCatalogSnapshot::readSeries)
-                    ?: fetchList(ACTION_SERIES, { parseSeries(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeSeries(file, value) }
+                coroutineScope {
+                    val categories = async { categories(ACTION_SERIES_CATEGORIES, forceRefresh) }
+                    val streams = freshCache(ACTION_SERIES, forceRefresh, XtreamCatalogSnapshot::readSeries)
+                        ?: fetchList(ACTION_SERIES, { parseSeries(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeSeries(file, value) }
+                    val partial = sourceCatalogue.copy(seriesCategories = categories.await(), series = streams)
+                    onSeriesLoaded(partial)
+                    partial
+                }
             }
-            live.copy(
-                movieCategories = movieCategories.await(),
-                seriesCategories = seriesCategories.await(),
-                movies = movies.await(),
-                series = series.await()
+            // Let each section publish before surfacing another section's failure.
+            joinAll(live, movies, series)
+            val movieCatalog = movies.await()
+            val seriesCatalog = series.await()
+            live.await().copy(
+                movieCategories = movieCatalog.movieCategories,
+                movies = movieCatalog.movies,
+                seriesCategories = seriesCatalog.seriesCategories,
+                series = seriesCatalog.series
             )
         }
     }

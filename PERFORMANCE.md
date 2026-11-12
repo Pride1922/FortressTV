@@ -57,6 +57,14 @@ a real multi-day EPG before release.
 
 ## Mi Box playback investigation — 2026-09-12
 
+On 2026-11-11, the Mi Box app session reported 86.09% janky frames across
+12,711 frames, with a median of 36 ms. This was a whole-session Android
+`gfxinfo` snapshot, not an isolated card navigation benchmark. A separate
+catalogue fix publishes Xtream Movies and Series independently, so one section
+can be browsed while the other loads or fails. The local HTTP regression test
+covers a successful Movies response alongside a failing Series response.
+Post-change Mi Box frame timings have not been measured.
+
 On the explicitly selected MIBOX4 (Android 9), the display was in 1080p60 mode.
 A user-selected live H.264 1080p stream reported unknown frame-rate metadata.
 Repeated ten-second samples measured 24.97–25.00 submitted frames per second,

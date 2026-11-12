@@ -236,8 +236,6 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Translate
@@ -471,6 +469,7 @@ internal fun HomeScreen(
     epgTimeShiftHours: Int = 0,
     epgScheduleCorrectionMinutes: Int = epgTimeShiftHours * 60,
     epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
+    epgRepository: com.fortresstv.player.epg.EpgRepository? = null,
     favoriteChannels: List<PlaylistChannel>,
     recentChannelsList: List<PlaylistChannel>,
     followedSeries: List<CatalogSeries>,
@@ -521,28 +520,38 @@ internal fun HomeScreen(
         }
     }
 
-    val sportsRepo = remember { com.fortresstv.player.sports.SportsRepository.get(context) }
+    val sportsRepo = remember(context) { com.fortresstv.player.sports.SportsRepository.get(context) }
     val sportsFixtures by sportsRepo.fixtures.collectAsState()
-
-    // Immediate refresh when tablet wakes up or app returns to foreground
-    val homeLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    DisposableEffect(homeLifecycleOwner) {
-        val observer = object : DefaultLifecycleObserver {
-            override fun onResume(owner: LifecycleOwner) {
-                coroutineScope.launch { sportsRepo.refresh() }
-            }
-        }
-        homeLifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { homeLifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    // Dynamic polling: 30s when live matches exist, 60s otherwise
-    LaunchedEffect(Unit) {
+    LaunchedEffect(sportsRepo) {
         while (true) {
             sportsRepo.refresh()
-            val hasLiveMatches = sportsRepo.fixtures.value.any { it.isLive() }
-            val nextDelay = if (hasLiveMatches) 30_000L else 60_000L
-            delay(nextDelay)
+            delay(30_000L)
+        }
+    }
+    var now by remember { mutableStateOf(java.time.Instant.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = java.time.Instant.now()
+            delay(30_000L)
+        }
+    }
+    val liveMatches by androidx.compose.runtime.produceState(
+        initialValue = emptyList<Pair<com.fortresstv.player.sports.SportsFixture, PlaylistChannel>>(),
+        sportsFixtures, epgGuide, channels, epgMappings, epgRepository, epgScheduleCorrectionMinutes, now
+    ) {
+        val guide = epgGuide
+        value = if (guide == null || sportsFixtures.none { it.isLive() }) emptyList() else withContext(Dispatchers.Default) {
+            val manifest = guide.manifest
+            val currentGuide = if (manifest != null && epgRepository != null && epgRepository.manifest.value == manifest) {
+                val rawNow = now.minusSeconds(epgScheduleCorrectionMinutes * 60L)
+                val day = rawNow.atZone(java.time.ZoneId.of(manifest.timezoneId)).toLocalDate().toEpochDay()
+                if (day == guide.epochDay) guide else epgRepository.loadDay(day)?.let {
+                    guide.copy(programmes = it.programmes, epochDay = day)
+                }
+            } else guide
+            if (currentGuide == null) emptyList() else com.fortresstv.player.sports.liveEpgMatches(
+                sportsFixtures, currentGuide, channels, epgMappings, now, epgScheduleCorrectionMinutes
+            )
         }
     }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
@@ -619,7 +628,7 @@ internal fun HomeScreen(
     val visibleShelves = homeSectionOrder.filter { section ->
         section !in homeHiddenSections && when (section) {
             com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING -> progressEntries.any { it.title.isNotBlank() }
-            com.fortresstv.player.ui.HomeSectionId.SPORTS -> sportsFixtures.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.SPORTS -> liveMatches.isNotEmpty()
             com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS -> favoriteChannels.isNotEmpty()
             com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS -> recentChannelsList.isNotEmpty()
             com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES -> followedSeries.isNotEmpty()
@@ -1148,16 +1157,32 @@ internal fun HomeScreen(
                             }
                             Spacer(Modifier.height(10.dp))
                             val recentRowState = rememberLazyListState()
+                            val programmeTimeFormatter = remember(strings.languageTag) {
+                                DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)
+                                    .withLocale(java.util.Locale.forLanguageTag(strings.languageTag))
+                                    .withZone(java.time.ZoneId.systemDefault())
+                            }
                             LazyRow(state = recentRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(recentChannelsList, key = { index, it -> "recent:${it.sourceId}:${it.sourceItemId}_$index" }) { index, channel ->
+                                    val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
+                                    val currentProgramme = remember(
+                                        channel.tvgId, channel.name, epgGuide, scheduleNow,
+                                        epgScheduleCorrectionMinutes, manualXmltvId
+                                    ) {
+                                        epgGuide?.snapshot(
+                                            channel.tvgId, channel.name, scheduleNow,
+                                            correctionMinutes = epgScheduleCorrectionMinutes,
+                                            manualXmltvId = manualXmltvId
+                                        )?.current
+                                    }
                                     Surface(
                                         onClick = { onWatchChannel(channel) },
                                         shape = RoundedCornerShape(12.dp),
                                         color = MaterialTheme.colorScheme.surfaceVariant,
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                                         modifier = Modifier
-                                            .width(180.dp)
-                                            .height(64.dp)
+                                            .width(240.dp)
+                                            .height(112.dp)
                                             .focusProperties {
                                                 if (index == 0 && sidebarFocusRequester != null) {
                                                     left = sidebarFocusRequester
@@ -1174,19 +1199,41 @@ internal fun HomeScreen(
                                             }
                                             .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.04f else 1.0f)
                                     ) {
-                                        Row(
-                                            Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(36.dp))
-                                            Spacer(Modifier.width(10.dp))
-                                            Text(
-                                                channel.name,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 13.sp,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
+                                        Column(Modifier.fillMaxSize().padding(12.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(32.dp))
+                                                Spacer(Modifier.width(10.dp))
+                                                Text(
+                                                    channel.name,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSize = 14.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            if (currentProgramme != null) {
+                                                Spacer(Modifier.height(8.dp))
+                                                Text(
+                                                    currentProgramme.title,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                currentProgramme.stopEpochMilli?.let { stop ->
+                                                    val shiftMillis = epgScheduleCorrectionMinutes * 60_000L
+                                                    val startTime = programmeTimeFormatter.format(
+                                                        Instant.ofEpochMilli(currentProgramme.startEpochMilli + shiftMillis)
+                                                    )
+                                                    val endTime = programmeTimeFormatter.format(Instant.ofEpochMilli(stop + shiftMillis))
+                                                    Text(
+                                                        "$startTime – $endTime",
+                                                        fontSize = 11.sp,
+                                                        maxLines = 1,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1244,9 +1291,7 @@ internal fun HomeScreen(
 
                     com.fortresstv.player.ui.HomeSectionId.SPORTS -> {
                         com.fortresstv.player.sports.SportsHubSection(
-                            fixtures = sportsFixtures,
-                            channels = channels,
-                            epgGuide = epgGuide,
+                            playableFixtures = liveMatches,
                             onWatchChannel = onWatchChannel
                         )
                     }

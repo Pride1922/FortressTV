@@ -402,7 +402,9 @@ internal fun ProfileLoadingScreen(
             ) {
                 ShieldMark(Modifier.size(if (isCompact) 100.dp else 140.dp))
 
-                val displayName = profile.name.takeIf { it.isNotBlank() && profile.id != "restricted_default" } ?: ""
+                val displayName = profile.name.takeIf {
+                    it.isNotBlank() && it != "Primary" && profile.id != "restricted_default"
+                }.orEmpty()
                 val welcomeText = if (displayName.isNotBlank()) strings.welcomeUser(displayName) else strings.appName
 
                 Text(

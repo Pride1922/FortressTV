@@ -416,6 +416,7 @@ internal fun ChannelBrowser(
     onResetCategoryOrder: () -> Unit = {},
     onToggleFavorite: (PlaylistChannel) -> Unit,
     requestedChannel: PlaylistChannel?,
+    requestedChannelFullscreen: Boolean = false,
     onRequestedChannelHandled: () -> Unit,
     onOpenSettings: (Int) -> Unit,
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
@@ -555,7 +556,9 @@ internal fun ChannelBrowser(
     }
     LaunchedEffect(requestedChannel) {
         requestedChannel?.let {
+            val alreadySelected = selectedChannel == it
             selectChannel(it)
+            if (requestedChannelFullscreen && !alreadySelected) fullscreenTrigger++
             onRequestedChannelHandled()
         }
     }

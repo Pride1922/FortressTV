@@ -652,6 +652,7 @@ internal fun FortressLibrary(
         }
     }
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
+    var requestedChannelFullscreen by remember { mutableStateOf(false) }
     var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
     var openHomeSearch by remember { mutableStateOf(false) }
     // Keep catalogue positions alive while the user moves between primary destinations.
@@ -853,6 +854,7 @@ internal fun FortressLibrary(
                     openSearchOnEntry = openHomeSearch,
                     onSearchOpened = { openHomeSearch = false },
                     epgGuide = epgGuide,
+                    epgRepository = epgRepository,
                     epgTimeShiftHours = epgTimeShiftHours,
                     epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
                     epgMappings = epgMappings,
@@ -903,6 +905,7 @@ internal fun FortressLibrary(
                         )
                     },
                     onWatchChannel = { channel ->
+                        requestedChannelFullscreen = true
                         requestedChannel = channel
                         destination = LibraryDestination.LIVE_TV
                     },
@@ -986,7 +989,11 @@ internal fun FortressLibrary(
                     },
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,
-                    onRequestedChannelHandled = { requestedChannel = null },
+                    requestedChannelFullscreen = requestedChannelFullscreen,
+                    onRequestedChannelHandled = {
+                        requestedChannel = null
+                        requestedChannelFullscreen = false
+                    },
                     onOpenSettings = onOpenSettings,
                     onSaveMapping = onSaveMapping,
                     onResetMapping = onResetMapping,

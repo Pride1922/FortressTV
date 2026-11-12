@@ -58,7 +58,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
-import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.ui.LocalAppStrings
 import com.fortresstv.player.ui.tvFocusHighlight
@@ -67,33 +66,12 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal object SportsPlayableCache {
-    var cached: List<Pair<SportsFixture, PlaylistChannel>> = emptyList()
-}
-
 @Composable
 fun SportsHubSection(
-    fixtures: List<SportsFixture>,
-    channels: List<PlaylistChannel>,
-    epgGuide: EpgGuide?,
+    playableFixtures: List<Pair<SportsFixture, PlaylistChannel>>,
     onWatchChannel: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (fixtures.isEmpty()) return
-
-    // Stream Filter Rule: Only show matches/events that can actually be played on the user's active stream
-    // Resolve off the main thread: EPG matching scans the whole guide and must never block composition.
-    val playableFixtures by androidx.compose.runtime.produceState(
-        initialValue = SportsPlayableCache.cached,
-        fixtures, channels, epgGuide
-    ) {
-        val resolved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            SportsBindingResolver.resolveAll(fixtures, channels, epgGuide)
-        }
-        SportsPlayableCache.cached = resolved
-        value = resolved
-        android.util.Log.d("FortressTV", "[SportsHub] fixtures=${fixtures.size}, playable=${value.size}, channels=${channels.size}")
-    }
 
     if (playableFixtures.isEmpty()) return
     val strings = LocalAppStrings.current
@@ -114,7 +92,7 @@ fun SportsHubSection(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = strings.upcomingMatches,
+                text = strings.liveMatches,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color.White

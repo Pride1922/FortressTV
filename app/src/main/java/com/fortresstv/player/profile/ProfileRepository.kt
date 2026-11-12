@@ -414,11 +414,16 @@ class ProfileRepository internal constructor(
                         is PinVerifyResult.Failed -> {
                             pinStore.syncServerStatus(hasPin = true, isLocked = false, remainingAttempts = result.remainingAttempts, lockoutSeconds = 0)
                         }
+                        PinVerifyResult.Unavailable -> Unit
                     }
                     result
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (_: Exception) {
-                    PinVerifyResult.Failed(0)
+                    PinVerifyResult.Unavailable
                 }
+            } else if (currentNamespace != "local" || accountRepository.currentUserId() != null) {
+                PinVerifyResult.Unavailable
             } else {
                 pinStore.verifyPinLocally(pin)
             }

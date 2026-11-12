@@ -13,7 +13,7 @@ import java.net.InetSocketAddress
 
 class XtreamClientTest {
     @Test
-    fun publishesLiveChannelsEvenWhenVodFails() = runBlocking {
+    fun publishesLiveChannelsAndMoviesEvenWhenSeriesFails() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
         server.createContext("/player_api.php") { exchange ->
             val action = exchange.requestURI.rawQuery.split('&')
@@ -23,7 +23,8 @@ class XtreamClientTest {
                 null -> 200 to """{"user_info":{"auth":1}}"""
                 "get_live_streams" -> 200 to """[{"stream_id":1,"name":"Test channel","category_id":"1"}]"""
                 "get_live_categories" -> 200 to """[{"category_id":"1","category_name":"Test category"}]"""
-                "get_vod_streams" -> 400 to ""
+                "get_vod_streams" -> 200 to """[{"stream_id":42,"name":"Test movie"}]"""
+                "get_series" -> 400 to ""
                 else -> 200 to "[]"
             }
             val bytes = body.toByteArray()
@@ -37,13 +38,20 @@ class XtreamClientTest {
                 source = ContentSource.Xtream("http://127.0.0.1:${server.address.port}", "Test", "", "")
             )
             val published = mutableListOf<XtreamCatalog>()
+            val publishedMovies = mutableListOf<XtreamCatalog>()
 
-            val result = runCatching { client.loadCatalog(onLiveLoaded = { published += it }) }
+            val result = runCatching {
+                client.loadCatalog(
+                    onMoviesLoaded = { publishedMovies += it },
+                    onLiveLoaded = { published += it }
+                )
+            }
 
             assertEquals(HttpStatusException::class.java, result.exceptionOrNull()?.javaClass)
             val channel = published.single().liveChannels.single()
             assertEquals("Test category", channel.group)
             assertEquals("test-source", channel.sourceId)
+            assertEquals(42, publishedMovies.single().movies.single().id)
         } finally {
             server.stop(0)
         }

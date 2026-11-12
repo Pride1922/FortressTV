@@ -185,6 +185,10 @@ internal fun ParentalPinDialog(
                     errorMessage = copy.remainingAttempts(result.remainingAttempts)
                     enteredPin = ""
                 }
+                PinVerifyResult.Unavailable -> {
+                    errorMessage = copy.pinVerificationUnavailable
+                    enteredPin = ""
+                }
             }
         }
     }

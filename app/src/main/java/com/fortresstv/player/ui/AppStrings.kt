@@ -195,7 +195,7 @@ interface Strings {
     val failoverBackupSwitched: String
     fun failoverSourceSwitched(sourceName: String): String
     val sportsHub: String
-    val upcomingMatches: String
+    val liveMatches: String
     val watchLive: String
     val liveNow: String
     fun broadcastOn(channel: String): String
@@ -777,7 +777,7 @@ object EnglishStrings : Strings {
     override val failoverBackupSwitched = "Switched to backup stream."
     override fun failoverSourceSwitched(sourceName: String) = "Switched to backup source: $sourceName"
     override val sportsHub = "Sports Hub"
-    override val upcomingMatches = "Upcoming Matches"
+    override val liveMatches = "Live Matches"
     override val watchLive = "Watch Live"
     override val liveNow = "Live Now"
     override fun broadcastOn(channel: String) = "Live on $channel"
@@ -1362,7 +1362,7 @@ object PortugueseStrings : Strings {
     override val failoverBackupSwitched = "Comutado para emissão alternativa."
     override fun failoverSourceSwitched(sourceName: String) = "Comutado para fonte alternativa: $sourceName"
     override val sportsHub = "Desporto"
-    override val upcomingMatches = "Próximos Jogos"
+    override val liveMatches = "Jogos em direto"
     override val watchLive = "Ver em Direto"
     override val liveNow = "Em Direto"
     override fun broadcastOn(channel: String) = "Em direto na $channel"

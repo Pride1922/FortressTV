@@ -74,8 +74,11 @@ data class HouseholdProfile(
             )
         }
 
-        fun defaultAdult(name: String = "Primary", language: String = "en"): HouseholdProfile = HouseholdProfile(
-            name = name,
+        fun defaultAdult(
+            name: String? = null,
+            language: String = "en"
+        ): HouseholdProfile = HouseholdProfile(
+            name = name ?: if (language.startsWith("pt")) "Perfil principal" else "Main profile",
             kind = ProfileKind.ADULT,
             language = if (language.startsWith("pt")) "pt-PT" else "en",
             hideAdultContent = false,

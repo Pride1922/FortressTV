@@ -36,6 +36,10 @@ internal class ProfileStrings(private val portuguese: Boolean) {
     val confirmPin = text("Confirm PIN", "Confirmar PIN")
     val pinMismatch = text("PINs do not match", "Os PINs não coincidem")
     val wrongPin = text("Incorrect PIN", "PIN incorreto")
+    val pinVerificationUnavailable = text(
+        "Could not verify the PIN. Check your connection and try again.",
+        "Não foi possível verificar o PIN. Verifique a ligação e tente novamente."
+    )
     val adultRequired = text("Adult authorization required", "Autorização de adulto necessária")
     val active = text("Active", "Ativo")
     val save = text("Save", "Guardar")

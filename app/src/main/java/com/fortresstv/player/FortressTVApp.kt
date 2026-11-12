@@ -541,10 +541,6 @@ internal fun FortressTVApp(
         epgMappings = epgSyncWorkflow.resetMapping(channel, unlockToken)
     }
 
-    val shouldShowCloudOnboarding = remember {
-        currentUserId == null && !settings.hasSeenCloudOnboardingPrompt()
-    }
-    var showOnboardingDialog by rememberSaveable { mutableStateOf(shouldShowCloudOnboarding) }
     var showLocalImportDialog by remember { mutableStateOf(false) }
 
     val pinStatus = remember(currentUserId, householdProfiles, requireProfileSelection) { profileRepository.getPinStatus() }
@@ -1058,8 +1054,33 @@ internal fun FortressTVApp(
                 }
 
                 var livePlaylist: Playlist? = null
-                // A stale cache is already on screen, so download everything fresh.
-                val catalog = client.loadCatalog(forceRefresh = forceRefresh || cached != null) { live ->
+                val catalog = client.loadCatalog(
+                    forceRefresh = forceRefresh || cached != null,
+                    onMoviesLoaded = { movies ->
+                        withContext(Dispatchers.Main) {
+                            currentProfile()?.let { current ->
+                                val previous = xtreamCatalogs[profile.id] ?: movies
+                                xtreamCatalogs[profile.id] = previous.copy(
+                                    movieCategories = movies.movieCategories,
+                                    movies = movies.movies
+                                )
+                                if (activeProfile == null && current.role.contributesMovies()) activeProfile = current
+                            }
+                        }
+                    },
+                    onSeriesLoaded = { series ->
+                        withContext(Dispatchers.Main) {
+                            currentProfile()?.let { current ->
+                                val previous = xtreamCatalogs[profile.id] ?: series
+                                xtreamCatalogs[profile.id] = previous.copy(
+                                    seriesCategories = series.seriesCategories,
+                                    series = series.series
+                                )
+                                if (activeProfile == null && current.role.contributesSeries()) activeProfile = current
+                            }
+                        }
+                    }
+                ) { live ->
                     val partial = Playlist(live.liveChannels)
                     livePlaylist = partial
                     withContext(Dispatchers.Main) {
@@ -1540,16 +1561,10 @@ internal fun FortressTVApp(
         LocalOmdbSettings provides omdbSettings
     ) {
         Box(Modifier.fillMaxSize()) {
-            if (showOnboardingDialog) {
+            if (currentUserId == null) {
                 com.fortresstv.player.account.OnboardingDialog(
-                    onDismiss = {
-                        showOnboardingDialog = false
-                        settings.setSeenCloudOnboardingPrompt(true)
-                    },
                     onComplete = {
-                        showOnboardingDialog = false
-                        settings.setSeenCloudOnboardingPrompt(true)
-                        val uid = accountRepository.currentUserId()
+                        val uid = accountRepository.currentUserId() ?: return@OnboardingDialog
                         currentUserId = uid
                         requireProfileSelection = true
                         scope.launch {
@@ -1883,7 +1898,7 @@ internal fun FortressTVApp(
                     playbackResetGeneration++
                 },
                 onOpenAccount = {
-                    settingsInitialTab = 4
+                    settingsInitialTab = 5
                     showSettings = true
                 },
                 onDismiss = { showProfileSelectionDialog = false }

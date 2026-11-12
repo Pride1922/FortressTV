@@ -64,6 +64,12 @@ const SOCCER_LEAGUES = [
     name: "UEFA Europa League",
     defaultBroadcaster: "Sport TV 1",
     logo: "https://r2.thesportsdb.com/images/media/league/badge/28741513623681.png"
+  },
+  {
+    slug: "uefa.nations",
+    name: "UEFA Nations League",
+    defaultBroadcaster: "",
+    logo: null
   }
 ];
 
