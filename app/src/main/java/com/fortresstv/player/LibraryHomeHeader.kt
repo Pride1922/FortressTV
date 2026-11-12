@@ -35,7 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -369,10 +369,42 @@ private fun MenuDivider() {
     )
 }
 
+/**
+ * The header's search entry: a full-width pill with the search hint, so the empty middle of the
+ * header becomes an obvious, easy-to-hit place to start searching. Opens the unified search.
+ */
 @Composable
 internal fun LibrarySearchButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val strings = LocalAppStrings.current
-    TextButton(onClick = onClick, modifier = modifier.tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1f)) {
-        Icon(Icons.Default.Search, contentDescription = strings.search, modifier = Modifier.size(22.dp))
+    val pill = RoundedCornerShape(24.dp)
+    Surface(
+        onClick = onClick,
+        shape = pill,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .tvFocusHighlight(shape = pill)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                strings.homeUnifiedSearchPlaceholder,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }

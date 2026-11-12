@@ -61,6 +61,7 @@ import coil.compose.AsyncImage
 import com.fortresstv.player.epg.EpgGuide
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.ui.LocalAppStrings
+import com.fortresstv.player.ui.tvFocusHighlight
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -174,11 +175,10 @@ fun SportsFixtureCard(
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, Color(0xFF2A2E39), RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
             .clickable(enabled = onCardClick != null) { onCardClick?.invoke() },
-        color = Color(0xFF161922),
-        shape = RoundedCornerShape(12.dp),
-        tonalElevation = 2.dp
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(12.dp)
     ) {
         Column(
             modifier = Modifier
@@ -244,7 +244,7 @@ fun SportsFixtureCard(
                 } else {
                     Text(
                         text = formattedTime,
-                        color = Color(0xFF4CAF50),
+                        color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -355,30 +355,37 @@ fun SportsFixtureCard(
                 }
             }
 
-            // Broadcaster / Direct Action Button (100% playable on user's stream)
-            Button(
+            // Where to watch: a compact channel chip, so the match is the focus rather than a big
+            // button. Red while the match is live, matching the LIVE badge; cyan otherwise.
+            val live = fixture.isLive()
+            val chipTint = if (live) Color(0xFFE53935) else MaterialTheme.colorScheme.primary
+            val chipShape = RoundedCornerShape(18.dp)
+            Surface(
                 onClick = { onWatchChannel(resolvedChannel) },
-                modifier = Modifier.fillMaxWidth().height(36.dp),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1E88E5),
-                    contentColor = Color.White
-                ),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                shape = chipShape,
+                color = chipTint.copy(alpha = if (live) 0.22f else 0.14f),
+                modifier = Modifier.height(34.dp).tvFocusHighlight(shape = chipShape)
             ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = strings.broadcastOn(resolvedChannel.name.ifBlank { fixture.broadcasterOfficial }),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    Modifier.padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = chipTint,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = strings.broadcastOn(resolvedChannel.name.ifBlank { fixture.broadcasterOfficial }),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
