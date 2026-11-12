@@ -994,6 +994,21 @@ class ProfileRepositoryTest {
     }
 
     @Test
+    fun resetPinAfterRecoveryWithoutSessionFailsClosed() = runBlocking {
+        val persistence = MemoryProfilePersistence()
+        val pinStore = ParentalPinStore(MemoryPinPersistence())
+        val accountRepo = AccountRepository(MemorySessionPersistence())
+        val repo = ProfileRepository(persistence, accountRepo, pinStore, SupabaseProfileApi(FakeProfileTransport()))
+
+        repo.setPin("1111")
+
+        // No recovery token and no signed-in session: the PIN must not change.
+        assertFalse(repo.resetPinAfterRecovery("9999", null))
+        assertTrue(repo.verifyPin("1111") is PinVerifyResult.Success)
+        assertFalse(repo.verifyPin("9999") is PinVerifyResult.Success)
+    }
+
+    @Test
     fun duplicateProfileNameIsHandledIdempotentlyAndLocalStorageDeduplicates() = runBlocking {
         val persistence = MemoryProfilePersistence()
         val pinStore = ParentalPinStore(MemoryPinPersistence())

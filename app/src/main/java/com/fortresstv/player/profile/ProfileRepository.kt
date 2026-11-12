@@ -483,16 +483,16 @@ class ProfileRepository internal constructor(
         mutex.withLock {
             val token = recoveryToken ?: accountRepository.getValidAccessToken()
             val success = if (token != null) {
-                val apiSuccess = api.resetPinAfterRecovery(newPin, token)
+                // The server rejects stale sessions; treat that as a failed reset rather than crashing the dialog.
+                val apiSuccess = runCatching { api.resetPinAfterRecovery(newPin, token) }.getOrDefault(false)
                 if (apiSuccess) {
                     pinStore.setPinLocally(newPin)
                     pinStore.syncServerStatus(hasPin = true, isLocked = false, remainingAttempts = 5, lockoutSeconds = 0)
                 }
                 apiSuccess
             } else {
-                pinStore.setPinLocally(newPin)
-                pinStore.syncServerStatus(hasPin = true, isLocked = false, remainingAttempts = 5, lockoutSeconds = 0)
-                true
+                // Fail closed: without a server-verified session there is no proof of account ownership.
+                false
             }
             if (success) {
                 pinStore.revokeAdultUnlock()

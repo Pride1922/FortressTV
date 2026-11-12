@@ -22,7 +22,7 @@ create table if not exists public.household_adult_sessions (
     household_id uuid not null references public.households(id) on delete cascade,
     auth_session_id text not null default 'default',
     created_at timestamptz not null default clock_timestamp(),
-    expires_at timestamptz not null default (clock_timestamp() + interval '15 minutes')
+    expires_at timestamptz not null default (clock_timestamp() + interval '10 minutes')
 );
 
 alter table public.household_adult_sessions
@@ -211,7 +211,7 @@ begin
     for update;
 
     if not found or v_ctrl.pin_hash is null then
-        v_expires := v_now + interval '15 minutes';
+        v_expires := v_now + interval '10 minutes';
         insert into public.household_adult_sessions (household_id, auth_session_id, expires_at)
         values (v_uid, v_auth_session, v_expires) returning id into v_token;
         return jsonb_build_object('verified', true, 'unlock_token', v_token, 'expires_at', v_expires);
@@ -230,7 +230,7 @@ begin
         v_failed := v_ctrl.failed_attempts + 1;
         update public.household_parental_controls
         set failed_attempts = v_failed,
-            locked_until = case when v_failed >= 5 then v_now + interval '15 minutes' else null end,
+            locked_until = case when v_failed >= 5 then v_now + interval '10 minutes' else null end,
             updated_at = v_now
         where household_id = v_uid;
 
@@ -248,7 +248,7 @@ begin
         set failed_attempts = 0, locked_until = null, updated_at = v_now
         where household_id = v_uid;
 
-        v_expires := v_now + interval '15 minutes';
+        v_expires := v_now + interval '10 minutes';
         insert into public.household_adult_sessions (household_id, auth_session_id, expires_at)
         values (v_uid, v_auth_session, v_expires) returning id into v_token;
 
@@ -257,7 +257,7 @@ begin
         v_failed := v_ctrl.failed_attempts + 1;
         update public.household_parental_controls
         set failed_attempts = v_failed,
-            locked_until = case when v_failed >= 5 then v_now + interval '15 minutes' else null end,
+            locked_until = case when v_failed >= 5 then v_now + interval '10 minutes' else null end,
             updated_at = v_now
         where household_id = v_uid;
 
@@ -671,6 +671,32 @@ create policy progress_session_access on public.profile_watch_progress for all t
         and public.fortress_validate_profile_session(profile_id)
     );
 
+create or replace function public.fortress_has_recent_reauthentication()
+returns boolean language plpgsql stable security definer set search_path = '' as $$
+declare
+    v_claims jsonb;
+begin
+    begin
+        v_claims := nullif(current_setting('request.jwt.claims', true), '')::jsonb;
+    exception when others then
+        return false;
+    end;
+    if v_claims is null or jsonb_typeof(v_claims->'amr') <> 'array' then
+        return false;
+    end if;
+
+    return exists (
+        select 1
+        from jsonb_array_elements(v_claims->'amr') as entry
+        where jsonb_typeof(entry) = 'object'
+          and entry->>'method' in ('recovery', 'password')
+          and (entry->>'timestamp') ~ '^[0-9]{1,12}$'
+          and to_timestamp((entry->>'timestamp')::bigint) > clock_timestamp() - interval '10 minutes'
+    );
+end;
+$$;
+revoke all on function public.fortress_has_recent_reauthentication() from public, anon, authenticated;
+
 create or replace function public.fortress_reset_parental_pin_after_recovery(
     p_new_pin text
 )
@@ -682,6 +708,10 @@ declare
 begin
     if v_uid is null then
         raise exception 'Not authenticated';
+    end if;
+
+    if not public.fortress_has_recent_reauthentication() then
+        raise exception 'Recent re-authentication required';
     end if;
 
     if p_new_pin is null or length(trim(p_new_pin)) < 4 or length(trim(p_new_pin)) > 12 or trim(p_new_pin) !~ '^[0-9]+$' then
@@ -709,6 +739,8 @@ begin
     return true;
 end;
 $$;
+
+revoke all on function public.fortress_reset_parental_pin_after_recovery(text) from public, anon;
 grant execute on function public.fortress_reset_parental_pin_after_recovery(text) to authenticated;
 
 -- 18. Sports Fixtures and Calendar
