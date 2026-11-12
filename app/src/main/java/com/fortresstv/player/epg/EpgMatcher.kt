@@ -20,6 +20,9 @@ object EpgMatcher {
 
     private val digitPattern = Regex("""\d+""")
 
+    // Accent marks left after NFD decomposition. Compiled once: normalize() runs for every guide channel.
+    private val combiningMarkPattern = Regex("""\p{M}""")
+
     /**
      * Normalizes a channel name or EPG identifier for smart matching.
      * Examples:
@@ -45,7 +48,7 @@ object EpgMatcher {
 
         // Normalize accents (e.g. é -> e, ã -> a, ç -> c)
         cleaned = Normalizer.normalize(cleaned, Normalizer.Form.NFD)
-        cleaned = cleaned.replace(Regex("""\p{M}"""), "")
+        cleaned = combiningMarkPattern.replace(cleaned, "")
 
         // Strip non-alphanumeric except '+'
         cleaned = nonAlphaNumPattern.replace(cleaned, "")

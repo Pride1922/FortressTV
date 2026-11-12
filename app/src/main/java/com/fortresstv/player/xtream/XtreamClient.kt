@@ -28,7 +28,8 @@ import javax.net.ssl.SSLException
 class XtreamClient(
     private val context: Context? = null,
     private val sourceId: String,
-    private val source: ContentSource.Xtream
+    private val source: ContentSource.Xtream,
+    private val cacheDirectory: File? = context?.filesDir
 ) {
     @Volatile
     private var baseUrl = normalizeServerUrl(source.value)
@@ -51,6 +52,34 @@ class XtreamClient(
         }
     }
 
+    /** A catalogue read only from this device's cache, with whether every part is under 24 h old. */
+    data class CachedCatalog(val catalog: XtreamCatalog, val fresh: Boolean)
+
+    /**
+     * Reads the whole catalogue from the on-device cache without touching the network, or returns
+     * null if any part has never been cached. Stale parts are returned too, so the UI can show
+     * them immediately (also when offline or when the provider is down) while a refresh runs.
+     */
+    suspend fun loadCachedCatalog(): CachedCatalog? = withContext(Dispatchers.IO) {
+        traced("FortressTV.restoreXtreamCatalog") {
+            val live = loadCachedLive() ?: return@traced null
+            val movieCategories = cachedList(ACTION_VOD_CATEGORIES, XtreamCatalogSnapshot::readCategories) ?: return@traced null
+            val seriesCategories = cachedList(ACTION_SERIES_CATEGORIES, XtreamCatalogSnapshot::readCategories) ?: return@traced null
+            val movies = cachedList(ACTION_VOD_STREAMS, XtreamCatalogSnapshot::readMovies) ?: return@traced null
+            val series = cachedList(ACTION_SERIES, XtreamCatalogSnapshot::readSeries) ?: return@traced null
+            CachedCatalog(
+                catalog = live.catalog.copy(
+                    movieCategories = movieCategories.first,
+                    seriesCategories = seriesCategories.first,
+                    movies = movies.first,
+                    series = series.first
+                ),
+                fresh = live.fresh && live.streamBaseUrl == baseUrl &&
+                    movieCategories.second && seriesCategories.second && movies.second && series.second
+            )
+        }
+    }
+
     suspend fun loadCatalog(
         forceRefresh: Boolean = false,
         onLiveLoaded: suspend (XtreamCatalog) -> Unit = {}
@@ -64,10 +93,16 @@ class XtreamClient(
         if (live !== cachedLive?.catalog && live.liveChannels.isNotEmpty()) onLiveLoaded(live)
 
         return coroutineScope {
-            val movieCategories = async { parseCategories(request("get_vod_categories", forceRefresh = forceRefresh)) }
-            val seriesCategories = async { parseCategories(request("get_series_categories", forceRefresh = forceRefresh)) }
-            val movies = async { parseMovies(request("get_vod_streams", forceRefresh = forceRefresh)) }
-            val series = async { parseSeries(request("get_series", forceRefresh = forceRefresh)) }
+            val movieCategories = async { categories(ACTION_VOD_CATEGORIES, forceRefresh) }
+            val seriesCategories = async { categories(ACTION_SERIES_CATEGORIES, forceRefresh) }
+            val movies = async {
+                freshCache(ACTION_VOD_STREAMS, forceRefresh, XtreamCatalogSnapshot::readMovies)
+                    ?: fetchList(ACTION_VOD_STREAMS, { parseMovies(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeMovies(file, value) }
+            }
+            val series = async {
+                freshCache(ACTION_SERIES, forceRefresh, XtreamCatalogSnapshot::readSeries)
+                    ?: fetchList(ACTION_SERIES, { parseSeries(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeSeries(file, value) }
+            }
             live.copy(
                 movieCategories = movieCategories.await(),
                 seriesCategories = seriesCategories.await(),
@@ -80,41 +115,60 @@ class XtreamClient(
     private data class CachedLive(val catalog: XtreamCatalog, val streamBaseUrl: String, val fresh: Boolean)
 
     private suspend fun loadCachedLive(): CachedLive? = withContext(Dispatchers.IO) {
-        val categoriesFile = cacheFile("get_live_categories", emptyMap()) ?: return@withContext null
-        val streamsFile = cacheFile("get_live_streams", emptyMap()) ?: return@withContext null
-        Trace.beginSection("FortressTV.restoreXtreamLive")
-        try {
-            val categories = readCache(categoriesFile, allowStale = true) ?: return@withContext null
-            val response = readCache(streamsFile, allowStale = true) ?: return@withContext null
-            val scheme = response.substringBefore('\n')
-            if (scheme != "http" && scheme != "https") return@withContext null
+        traced("FortressTV.restoreXtreamLive") {
+            val categories = cachedList(ACTION_LIVE_CATEGORIES, XtreamCatalogSnapshot::readCategories) ?: return@traced null
+            val streamsFile = cacheFile(ACTION_LIVE_STREAMS) ?: return@traced null
+            val (scheme, records) = XtreamCatalogSnapshot.readLive(streamsFile) ?: return@traced null
             val cachedBaseUrl = "$scheme://${baseUrl.substringAfter("://")}"
-            runCatching {
-                CachedLive(
-                    liveCatalog(categories, response.substringAfter('\n'), cachedBaseUrl),
-                    cachedBaseUrl,
-                    isFresh(categoriesFile) && isFresh(streamsFile)
-                )
-            }.getOrNull()
-        } finally {
-            Trace.endSection()
+            CachedLive(
+                liveCatalog(categories.first, records, cachedBaseUrl),
+                cachedBaseUrl,
+                categories.second && isFresh(streamsFile)
+            )
         }
     }
 
     private suspend fun loadLive(): XtreamCatalog = coroutineScope {
-        val categories = async { request("get_live_categories", forceRefresh = true) }
-        val streams = async { request("get_live_streams", forceRefresh = true) }
-        liveCatalog(categories.await(), streams.await())
+        val categories = async { fetchCategories(ACTION_LIVE_CATEGORIES) }
+        val streams = async {
+            fetchList(ACTION_LIVE_STREAMS, { parseLiveRecords(it) }) { file, value, targetBaseUrl ->
+                XtreamCatalogSnapshot.writeLive(file, targetBaseUrl.substringBefore("://").lowercase(), value)
+            }
+        }
+        // baseUrl is read after both downloads: an https failure may have switched it to http.
+        val categoryList = categories.await()
+        val records = streams.await()
+        liveCatalog(categoryList, records, baseUrl)
     }
 
-    private fun liveCatalog(categoriesJson: String, streamsJson: String, streamBaseUrl: String = baseUrl): XtreamCatalog {
-        val categories = parseCategories(categoriesJson)
-        return XtreamCatalog(
+    private fun liveCatalog(categories: List<XtreamCategory>, records: List<LiveStreamRecord>, streamBaseUrl: String): XtreamCatalog =
+        XtreamCatalog(
             sourceId = sourceId,
             sourceName = source.displayName,
             liveCategories = categories,
-            liveChannels = parseLiveChannels(streamsJson, categories, streamBaseUrl)
+            liveChannels = liveChannels(records, categories, streamBaseUrl)
         )
+
+    private suspend fun categories(action: String, forceRefresh: Boolean): List<XtreamCategory> =
+        freshCache(action, forceRefresh, XtreamCatalogSnapshot::readCategories) ?: fetchCategories(action)
+
+    /** The cached value if it is under 24 h old and no refresh was forced; otherwise null (download it). */
+    private fun <T> freshCache(action: String, forceRefresh: Boolean, reader: (File) -> T?): T? =
+        if (forceRefresh) null else cachedList(action, reader, freshOnly = true)?.first
+
+    private suspend fun fetchCategories(action: String): List<XtreamCategory> =
+        fetchList(action, { parseCategories(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeCategories(file, value) }
+
+    /**
+     * Reads a cached list snapshot. Returns the value and whether it is fresh, or null if there is no
+     * usable cache (or, with [freshOnly], if it is older than 24 h).
+     */
+    private fun <T> cachedList(action: String, reader: (File) -> T?, freshOnly: Boolean = false): Pair<T, Boolean>? {
+        val file = cacheFile(action) ?: return null
+        val fresh = isFresh(file)
+        if (freshOnly && !fresh) return null
+        val value = reader(file) ?: return null
+        return value to fresh
     }
 
     suspend fun loadEpisodes(seriesId: Int): List<XtreamEpisode> {
@@ -159,75 +213,117 @@ class XtreamClient(
         extra: Map<String, String> = emptyMap(),
         forceRefresh: Boolean = false
     ): String = withContext(Dispatchers.IO) {
-        val cacheFile = action?.let { cacheFile(it, extra) }
+        val cacheFile = action?.let { detailCacheFile(it, extra) }
         if (!forceRefresh && cacheFile != null) readCache(cacheFile)?.let { return@withContext it }
         val requestContext = currentCoroutineContext()
-        retryTransientNetwork {
-            val parameters = linkedMapOf("username" to source.username, "password" to source.password)
-            if (action != null) parameters["action"] = action
-            parameters.putAll(extra)
-            val query = parameters.entries.joinToString("&") { "${query(it.key)}=${query(it.value)}" }
-
-            fun executeConnection(targetBaseUrl: String): String {
-                val connection = URI("$targetBaseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 45_000
-                connection.instanceFollowRedirects = true
-                connection.setRequestProperty("Accept", "application/json")
-                connection.setRequestProperty("User-Agent", "FortressTV")
-                return try {
-                    val code = connection.responseCode
-                    if (code !in 200..299) throw HttpStatusException(code)
-                    require(connection.contentLengthLong <= 0L || connection.contentLengthLong <= MAX_RESPONSE_BYTES) {
-                        "Xtream response exceeds the 64 MB safety limit"
-                    }
-                    connection.inputStream.use { input -> readUtf8Limited(input, MAX_RESPONSE_BYTES) }.also { response ->
-                        if (cacheFile != null) {
-                            requestContext.ensureActive()
-                            val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
-                            runCatching {
-                                val temp = File.createTempFile("xtream_", ".tmp", cacheFile.parentFile)
-                                try {
-                                    temp.bufferedWriter().use { writer ->
-                                        if (action == "get_live_streams") {
-                                            writer.appendLine(targetBaseUrl.substringBefore("://").lowercase())
-                                        }
-                                        writer.write(sanitizedResponse)
-                                    }
-                                    Files.move(temp.toPath(), cacheFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                                } finally {
-                                    temp.delete()
-                                }
-                            }
+        fetch(action, extra) { input, _ ->
+            readUtf8Limited(input, MAX_RESPONSE_BYTES).also { response ->
+                if (cacheFile != null) {
+                    requestContext.ensureActive()
+                    val sanitizedResponse = sanitizeCatalogResponse(response) ?: return@also
+                    runCatching {
+                        val temp = File.createTempFile("xtream_", ".tmp", cacheFile.parentFile)
+                        try {
+                            temp.bufferedWriter().use { writer -> writer.write(sanitizedResponse) }
+                            Files.move(temp.toPath(), cacheFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                        } finally {
+                            temp.delete()
                         }
                     }
-                } finally {
-                    connection.disconnect()
-                }
-            }
-
-            try {
-                executeConnection(baseUrl)
-            } catch (e: SSLException) {
-                if (baseUrl.startsWith("https://", ignoreCase = true)) {
-                    val httpUrl = baseUrl.replaceFirst("https://", "http://", ignoreCase = true)
-                    baseUrl = httpUrl
-                    executeConnection(httpUrl)
-                } else {
-                    throw e
                 }
             }
         }
     }
 
-    private fun cacheFile(action: String, extra: Map<String, String>): File? {
-        val directory = context?.filesDir ?: return null
-        val suffix = if (action == "get_live_categories" || action == "get_live_streams") {
-            liveCacheKey
-        } else {
-            extra.toSortedMap().entries.joinToString("_") { "${it.key}_${it.value}" }
+    /**
+     * Downloads a list endpoint and parses it while it streams in, then stores the parsed result as a
+     * snapshot. The response is never held in memory as one string, and no raw JSON (which can contain
+     * direct_source URLs) is written to disk.
+     */
+    private suspend fun <T> fetchList(
+        action: String,
+        parse: (java.io.Reader) -> T,
+        save: (file: File, value: T, targetBaseUrl: String) -> Unit
+    ): T = withContext(Dispatchers.IO) {
+        val requestContext = currentCoroutineContext()
+        fetch(action, emptyMap()) { input, targetBaseUrl ->
+            val value = LimitedInputStream(input, MAX_RESPONSE_BYTES).reader(Charsets.UTF_8).buffered(64 * 1024).use(parse)
+            requestContext.ensureActive()
+            cacheFile(action)?.let { file ->
+                runCatching { save(file, value, targetBaseUrl) }
+                    .onSuccess { deleteOutdatedCaches(action, keep = file) }
+            }
+            value
         }
+    }
+
+    /** Performs the HTTP request (with retries and the https-to-http fallback) and hands over the body. */
+    private suspend fun <T> fetch(
+        action: String?,
+        extra: Map<String, String>,
+        consume: (input: java.io.InputStream, targetBaseUrl: String) -> T
+    ): T = retryTransientNetwork {
+        val parameters = linkedMapOf("username" to source.username, "password" to source.password)
+        if (action != null) parameters["action"] = action
+        parameters.putAll(extra)
+        val query = parameters.entries.joinToString("&") { "${query(it.key)}=${query(it.value)}" }
+
+        fun executeConnection(targetBaseUrl: String): T {
+            val connection = URI("$targetBaseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 45_000
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("User-Agent", "FortressTV")
+            return try {
+                val code = connection.responseCode
+                if (code !in 200..299) throw HttpStatusException(code)
+                require(connection.contentLengthLong <= 0L || connection.contentLengthLong <= MAX_RESPONSE_BYTES) {
+                    "Xtream response exceeds the 64 MB safety limit"
+                }
+                connection.inputStream.use { input -> consume(input, targetBaseUrl) }
+            } finally {
+                connection.disconnect()
+            }
+        }
+
+        try {
+            executeConnection(baseUrl)
+        } catch (e: SSLException) {
+            if (baseUrl.startsWith("https://", ignoreCase = true)) {
+                val httpUrl = baseUrl.replaceFirst("https://", "http://", ignoreCase = true)
+                baseUrl = httpUrl
+                executeConnection(httpUrl)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    /** Snapshot file for a list endpoint, bound to this server and login so an edited source never shows old data. */
+    private fun cacheFile(action: String): File? {
+        val directory = cacheDirectory ?: return null
+        return File(directory, "xtream_${sourceId}_${action}_${liveCacheKey}.bin")
+    }
+
+    /** Raw-JSON cache for detail endpoints (one movie or series). */
+    private fun detailCacheFile(action: String, extra: Map<String, String>): File? {
+        val directory = cacheDirectory ?: return null
+        val suffix = extra.toSortedMap().entries.joinToString("_") { "${it.key}_${it.value}" }
         return File(directory, "xtream_${sourceId}_${action}_${suffix}.json")
+    }
+
+    /**
+     * Once a snapshot is saved, removes what it replaces: the multi-MB JSON list caches of earlier
+     * versions, and snapshots made with a previous server address or login for this source.
+     */
+    private fun deleteOutdatedCaches(action: String, keep: File) {
+        val directory = cacheDirectory ?: return
+        val prefix = Regex.escape("xtream_${sourceId}_${action}_")
+        // Old list caches were "<action>_.json", or "<action>_<64 hex>.json" for live lists. The exact
+        // patterns keep detail caches such as get_series_info_series_id_5.json untouched.
+        val outdated = Regex("^$prefix(([0-9a-f]{64})?\\.json|[0-9a-f]{64}\\.bin)$")
+        directory.listFiles { file -> file.name != keep.name && outdated.matches(file.name) }?.forEach { it.delete() }
     }
 
     private fun isFresh(file: File): Boolean =
@@ -254,80 +350,114 @@ class XtreamClient(
         return output.toString(Charsets.UTF_8.name())
     }
 
-    internal fun parseCategories(json: String): List<XtreamCategory> = JSONArray(json).objects().mapNotNull { item ->
-        val id = item.optString("category_id")
-        if (id.isBlank()) null else XtreamCategory(id, item.optString("category_name").ifBlank { id })
+    internal fun parseCategories(json: String): List<XtreamCategory> = parseCategories(java.io.StringReader(json))
+
+    internal fun parseCategories(reader: java.io.Reader): List<XtreamCategory> {
+        val categories = ArrayList<XtreamCategory>()
+        XtreamJsonStream.forEachObject(reader) { _, item ->
+            val id = item.optString("category_id")
+            if (id.isNotBlank()) categories += XtreamCategory(id, item.optString("category_name").ifBlank { id })
+        }
+        return categories
     }
 
-    internal fun parseMovies(json: String): List<XtreamMovie> = JSONArray(json).objects().mapNotNull { item ->
-        val id = item.optInt("stream_id", -1)
-        if (id < 0) null else XtreamMovie(
-            id = id,
-            name = item.optString("name").ifBlank { "Movie $id" },
-            categoryId = item.nullableString("category_id"),
-            posterUrl = item.nullableString("stream_icon")
-                ?: item.nullableString("cover_big")
-                ?: item.nullableString("movie_image")
-                ?: item.nullableString("cover"),
-            containerExtension = item.optString("container_extension").ifBlank { "mp4" },
-            rating = item.nullableString("rating"),
-            year = item.nullableString("year"),
-            plot = item.nullableString("plot"),
-            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
-            tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
-            imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
-        )
+    internal fun parseMovies(json: String): List<XtreamMovie> = parseMovies(java.io.StringReader(json))
+
+    internal fun parseMovies(reader: java.io.Reader): List<XtreamMovie> {
+        val movies = ArrayList<XtreamMovie>()
+        XtreamJsonStream.forEachObject(reader) { _, item ->
+            val id = item.optInt("stream_id", -1)
+            if (id >= 0) movies += XtreamMovie(
+                id = id,
+                name = item.optString("name").ifBlank { "Movie $id" },
+                categoryId = item.nullableString("category_id"),
+                posterUrl = item.nullableString("stream_icon")
+                    ?: item.nullableString("cover_big")
+                    ?: item.nullableString("movie_image")
+                    ?: item.nullableString("cover"),
+                containerExtension = item.optString("container_extension").ifBlank { "mp4" },
+                rating = item.nullableString("rating"),
+                year = item.nullableString("year"),
+                plot = item.nullableString("plot"),
+                ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
+                tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
+                imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
+            )
+        }
+        return movies
     }
 
     internal fun parseLiveChannels(
         json: String,
         categories: List<XtreamCategory> = emptyList(),
         streamBaseUrl: String = baseUrl
+    ): List<PlaylistChannel> = liveChannels(parseLiveRecords(java.io.StringReader(json)), categories, streamBaseUrl)
+
+    internal fun parseLiveRecords(reader: java.io.Reader): List<LiveStreamRecord> {
+        val records = ArrayList<LiveStreamRecord>()
+        XtreamJsonStream.forEachObject(reader) { index, item ->
+            val streamId = item.optInt("stream_id", item.optString("stream_id").toIntOrNull() ?: -1)
+            if (streamId < 0) return@forEachObject
+            records += LiveStreamRecord(
+                position = index,
+                streamId = streamId,
+                name = item.optString("name").ifBlank { "Channel $streamId" },
+                categoryId = item.nullableString("category_id"),
+                logoUrl = item.nullableString("stream_icon"),
+                tvgId = item.nullableString("epg_channel_id") ?: item.nullableString("custom_sid"),
+                tvgName = item.nullableString("name"),
+                containerExtension = item.nullableString("container_extension"),
+                hasCatchup = item.optInt("tv_archive", 0) == 1 || item.optString("tv_archive") == "1",
+                catchupDays = item.optInt("tv_archive_duration", item.optString("tv_archive_duration").toIntOrNull() ?: 0)
+            )
+        }
+        return records
+    }
+
+    private fun liveChannels(
+        records: List<LiveStreamRecord>,
+        categories: List<XtreamCategory>,
+        streamBaseUrl: String
     ): List<PlaylistChannel> {
         val categoryMap = categories.associate { it.id to it.name }
-        return JSONArray(json).objects().mapIndexedNotNull { index, item ->
-            val streamId = item.optInt("stream_id", item.optString("stream_id").toIntOrNull() ?: -1)
-            if (streamId < 0) return@mapIndexedNotNull null
-            val name = item.optString("name").ifBlank { "Channel $streamId" }
-            val catId = item.nullableString("category_id")
-            val group = catId?.let { categoryMap[it] ?: it }
-            val logo = item.nullableString("stream_icon")
-            val tvgId = item.nullableString("epg_channel_id") ?: item.nullableString("custom_sid")
-            val tvgName = item.nullableString("name")
-            val streamUrl = liveStreamUrl(streamBaseUrl, streamId, item.nullableString("container_extension"))
-            val tvArchive = item.optInt("tv_archive", 0) == 1 || item.optString("tv_archive") == "1"
-            val archiveDuration = item.optInt("tv_archive_duration", item.optString("tv_archive_duration").toIntOrNull() ?: 0)
+        return records.map { record ->
             PlaylistChannel(
-                position = index,
-                name = name,
-                streamUrl = streamUrl,
-                tvgId = tvgId,
-                tvgName = tvgName,
-                logoUrl = logo,
-                group = group,
+                position = record.position,
+                name = record.name,
+                streamUrl = liveStreamUrl(streamBaseUrl, record.streamId, record.containerExtension),
+                tvgId = record.tvgId,
+                tvgName = record.tvgName,
+                logoUrl = record.logoUrl,
+                group = record.categoryId?.let { categoryMap[it] ?: it },
                 sourceId = sourceId,
-                sourcePosition = index,
-                sourceItemId = streamId.toString(),
-                hasCatchup = tvArchive,
-                catchupDays = archiveDuration
+                sourcePosition = record.position,
+                sourceItemId = record.streamId.toString(),
+                hasCatchup = record.hasCatchup,
+                catchupDays = record.catchupDays
             )
         }
     }
 
-    internal fun parseSeries(json: String): List<XtreamSeries> = JSONArray(json).objects().mapNotNull { item ->
-        val id = item.optInt("series_id", -1)
-        if (id < 0) null else XtreamSeries(
-            id = id,
-            name = item.optString("name").ifBlank { "Series $id" },
-            categoryId = item.nullableString("category_id"),
-            coverUrl = item.nullableString("cover"),
-            rating = item.nullableString("rating"),
-            year = item.nullableString("releaseDate") ?: item.nullableString("year"),
-            plot = item.nullableString("plot"),
-            ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
-            tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
-            imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
-        )
+    internal fun parseSeries(json: String): List<XtreamSeries> = parseSeries(java.io.StringReader(json))
+
+    internal fun parseSeries(reader: java.io.Reader): List<XtreamSeries> {
+        val series = ArrayList<XtreamSeries>()
+        XtreamJsonStream.forEachObject(reader) { _, item ->
+            val id = item.optInt("series_id", -1)
+            if (id >= 0) series += XtreamSeries(
+                id = id,
+                name = item.optString("name").ifBlank { "Series $id" },
+                categoryId = item.nullableString("category_id"),
+                coverUrl = item.nullableString("cover"),
+                rating = item.nullableString("rating"),
+                year = item.nullableString("releaseDate") ?: item.nullableString("year"),
+                plot = item.nullableString("plot"),
+                ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
+                tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
+                imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
+            )
+        }
+        return series
     }
 
     internal fun parseMovieDetails(json: String): XtreamMovieDetails {
@@ -485,7 +615,23 @@ class XtreamClient(
 
     companion object {
         private const val MAX_RESPONSE_BYTES = 64L * 1024L * 1024L
-        private const val MAX_CACHE_BYTES = MAX_RESPONSE_BYTES + 6 // Live streams include a protocol line.
+        private const val MAX_CACHE_BYTES = MAX_RESPONSE_BYTES
+        private const val ACTION_LIVE_CATEGORIES = "get_live_categories"
+        private const val ACTION_LIVE_STREAMS = "get_live_streams"
+        private const val ACTION_VOD_CATEGORIES = "get_vod_categories"
+        private const val ACTION_SERIES_CATEGORIES = "get_series_categories"
+        private const val ACTION_VOD_STREAMS = "get_vod_streams"
+        private const val ACTION_SERIES = "get_series"
+
+        /** android.os.Trace, but harmless where it is unavailable (JVM unit tests). */
+        private inline fun <T> traced(section: String, block: () -> T): T {
+            val started = runCatching { Trace.beginSection(section) }.isSuccess
+            try {
+                return block()
+            } finally {
+                if (started) runCatching { Trace.endSection() }
+            }
+        }
 
         fun normalizeServerUrl(value: String): String {
             val trimmed = value.trim().substringBefore('?').removeSuffix("/player_api.php").trimEnd('/')
@@ -499,5 +645,21 @@ class XtreamClient(
             require(!uri.host.isNullOrBlank()) { "Enter a valid Xtream server URL" }
             return withScheme
         }
+    }
+}
+
+/** Fails once more than [limit] bytes have been read, so a hostile server cannot exhaust storage or memory. */
+private class LimitedInputStream(input: java.io.InputStream, private val limit: Long) : java.io.FilterInputStream(input) {
+    private var total = 0L
+
+    override fun read(): Int = super.read().also { if (it >= 0) count(1) }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { if (it > 0) count(it) }
+
+    override fun skip(n: Long): Long = super.skip(n).also { count(it) }
+
+    private fun count(bytes: Number) {
+        total += bytes.toLong()
+        if (total > limit) throw java.io.IOException("Xtream response exceeds the 64 MB safety limit")
     }
 }

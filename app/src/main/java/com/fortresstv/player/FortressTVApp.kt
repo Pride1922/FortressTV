@@ -717,36 +717,30 @@ internal fun FortressTVApp(
         }
 
         if (uid != null && targetProfileId != "restricted_default") {
-            val currentFollowed = userLibrary.followedSeriesIds()
-            for (item in currentFollowed) {
-                val parts = item.split(":")
-                if (parts.size >= 3 && parts[2].length < 64) {
+            // Upload watchlist/followed items the cloud doesn't know yet. An item whose hashed key is
+            // already in the set came from (or went through) the cloud, so it is skipped instead of being
+            // re-sent on every start. The server overwrites all flags, so send the real watched state:
+            // a hard-coded "not watched" here used to reset watched watchlist movies on each launch.
+            val currentWatched = userLibrary.watchedItemIds()
+            suspend fun uploadIfLocalOnly(items: Set<String>, itemKind: String) {
+                for (item in items) {
+                    val parts = item.split(":")
+                    if (parts.size < 3 || parts[2].length >= 64) continue
+                    val hashedKey = "${parts[0]}:${parts[1]}:${com.fortresstv.player.library.CloudIdentityHasher.hashItemId(parts[2])}"
+                    if (hashedKey in items) continue
                     cloudLibrarySyncService.enqueueLibraryMutation(
                         profileId = targetProfileId,
                         sourceId = parts[1],
-                        itemKind = "series",
+                        itemKind = itemKind,
                         itemId = parts[2],
                         isFavourite = true,
                         isWatchlisted = true,
-                        isWatched = false
+                        isWatched = userLibrary.isItemWatched(item, currentWatched)
                     )
                 }
             }
-            val currentWatchlist = userLibrary.movieWatchlistIds()
-            for (item in currentWatchlist) {
-                val parts = item.split(":")
-                if (parts.size >= 3 && parts[2].length < 64) {
-                    cloudLibrarySyncService.enqueueLibraryMutation(
-                        profileId = targetProfileId,
-                        sourceId = parts[1],
-                        itemKind = "movie",
-                        itemId = parts[2],
-                        isFavourite = true,
-                        isWatchlisted = true,
-                        isWatched = false
-                    )
-                }
-            }
+            uploadIfLocalOnly(userLibrary.followedSeriesIds(), "series")
+            uploadIfLocalOnly(userLibrary.movieWatchlistIds(), "movie")
             cloudLibrarySyncService.triggerSync()
             val profileLibrary = UserLibraryStore(context.applicationContext, ns)
             val profileProgress = VodProgressStore(context.applicationContext, ns)
@@ -1028,10 +1022,40 @@ internal fun FortressTVApp(
         fun currentProfile() = playlists.firstOrNull { it.id == profile.id && it.enabled && it.source == source }
 
         xtreamLoadJobs[profile.id] = scope.launch(Dispatchers.IO) {
+            // True once a cached catalogue is on screen; a failed refresh then keeps it instead of erroring.
+            var showingCachedCatalog = false
             try {
                 val client = XtreamClient(context.applicationContext, profile.id, source)
+
+                suspend fun publish(catalog: XtreamCatalog, live: Playlist, updatedAt: Long?): Boolean {
+                    val count = catalog.liveChannels.size.takeIf { it > 0 } ?: (catalog.movies.size + catalog.series.size)
+                    if (updatedAt != null) settings.updatePlaylistStats(profile, updatedAt, count)
+                    val published = withContext(Dispatchers.Main) {
+                        val current = currentProfile() ?: return@withContext false
+                        val updated = current.copy(lastUpdated = updatedAt ?: current.lastUpdated, channelCount = count)
+                        xtreamCatalogs[profile.id] = catalog
+                        if (catalog.liveChannels.isEmpty()) loadedPlaylists.remove(profile.id)
+                        else loadedPlaylists[profile.id] = live
+                        playlists = playlists.map { if (it.id == profile.id) updated else it }
+                        if (activeProfile?.id == profile.id || activeProfile == null) activeProfile = updated
+                        true
+                    }
+                    if (published) reconnectFavouritesAndProgress(profile.id, catalog)
+                    return published
+                }
+
+                // Cache first: show what this device already has without waiting for the provider's
+                // login, so a slow or unreachable provider never leaves Movies and Series empty.
+                val cached = if (forceRefresh) null else client.loadCachedCatalog()
+                if (cached != null) {
+                    showingCachedCatalog = publish(cached.catalog, Playlist(cached.catalog.liveChannels), updatedAt = null)
+                    // Under 24 h old: nothing to download.
+                    if (cached.fresh) return@launch
+                }
+
                 var livePlaylist: Playlist? = null
-                val catalog = client.loadCatalog(forceRefresh) { live ->
+                // A stale cache is already on screen, so download everything fresh.
+                val catalog = client.loadCatalog(forceRefresh = forceRefresh || cached != null) { live ->
                     val partial = Playlist(live.liveChannels)
                     livePlaylist = partial
                     withContext(Dispatchers.Main) {
@@ -1041,25 +1065,14 @@ internal fun FortressTVApp(
                         }
                     }
                 }
-                val count = catalog.liveChannels.size.takeIf { it > 0 } ?: (catalog.movies.size + catalog.series.size)
-                val updatedAt = System.currentTimeMillis()
                 val live = livePlaylist?.takeIf { it.channels === catalog.liveChannels } ?: Playlist(catalog.liveChannels)
-                settings.updatePlaylistStats(profile, updatedAt, count)
-                val published = withContext(Dispatchers.Main) {
-                    val current = currentProfile() ?: return@withContext false
-                    val updated = current.copy(lastUpdated = updatedAt, channelCount = count)
-                    xtreamCatalogs[profile.id] = catalog
-                    if (catalog.liveChannels.isEmpty()) loadedPlaylists.remove(profile.id)
-                    else loadedPlaylists[profile.id] = live
-                    playlists = playlists.map { if (it.id == profile.id) updated else it }
-                    if (activeProfile?.id == profile.id || activeProfile == null) activeProfile = updated
-                    true
-                }
-                if (published) reconnectFavouritesAndProgress(profile.id, catalog)
+                publish(catalog, live, updatedAt = System.currentTimeMillis())
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 withContext(Dispatchers.Main) {
+                    // The cached catalogue stays usable; the next start or a manual refresh tries again.
+                    if (showingCachedCatalog) return@withContext
                     currentProfile()?.let { current ->
                         error = "${current.name}: ${failure.message ?: "could not load Xtream catalogue"}"
                         retryLoad = { loadXtreamProfile(current, forceRefresh = true) }
@@ -1163,7 +1176,7 @@ internal fun FortressTVApp(
                         programmes = day.programmes,
                         manifest = manifest,
                         epochDay = epochDay
-                    )
+                    ).warmUp()
                 } else null
             }
             if (epgSource != source || epgRepository.manifest.value != manifest) return@launch

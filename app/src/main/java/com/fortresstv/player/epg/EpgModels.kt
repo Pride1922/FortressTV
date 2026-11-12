@@ -55,27 +55,22 @@ data class EpgGuide(
 ) {
     private val resolutionCache = ConcurrentHashMap<String, String>()
 
-    val normalizedChannelMap: Map<String, String> by lazy {
-        val map = mutableMapOf<String, String>()
-        for ((id, channel) in channels) {
-            val normId = EpgMatcher.normalize(id)
-            if (normId.isNotBlank() && !map.containsKey(normId)) {
-                map[normId] = id
-            }
-            val idNoDomain = id.substringBeforeLast(".")
-            val normIdNoDomain = EpgMatcher.normalize(idNoDomain)
-            if (normIdNoDomain.isNotBlank() && !map.containsKey(normIdNoDomain)) {
-                map[normIdNoDomain] = id
-            }
-            for (dn in channel.displayNames) {
-                val normDn = EpgMatcher.normalize(dn)
-                if (normDn.isNotBlank() && !map.containsKey(normDn)) {
-                    map[normDn] = id
-                }
-            }
-        }
-        map
-    }
+    /**
+     * Normalised channel names and ids to guide channel ids. Building it runs several regexes per
+     * channel, so the result is shared by every guide built on the same channel map (each day of
+     * one download), and [warmUp] lets loaders build it on a background thread.
+     */
+    val normalizedChannelMap: Map<String, String> by lazy { NormalizedChannelIndex.forChannels(channels) }
+
+    /** Builds the channel lookup now, so the first channel row on the main thread doesn't pay for it. */
+    fun warmUp(): EpgGuide = also { normalizedChannelMap }
+
+    // A guide holds every programme of a day. Structural equality made Compose and StateFlow compare
+    // two guides item by item (once per channel row keyed on the guide) whenever a new one arrived.
+    // Guides are immutable snapshots, so a new instance always means new data: compare by identity.
+    override fun equals(other: Any?): Boolean = this === other
+
+    override fun hashCode(): Int = System.identityHashCode(this)
 
     fun resolveChannelId(tvgId: String?, name: String?, manualXmltvId: String? = null): String? {
         if (!manualXmltvId.isNullOrBlank()) {
@@ -141,5 +136,38 @@ data class EpgGuide(
 
     private companion object {
         const val NO_CHANNEL_MATCH = "\u0000"
+    }
+}
+
+internal object NormalizedChannelIndex {
+    // One guide's channels are active at a time; remember the last build by identity.
+    @Volatile
+    private var last: Pair<Map<String, EpgChannel>, Map<String, String>>? = null
+
+    fun forChannels(channels: Map<String, EpgChannel>): Map<String, String> {
+        last?.let { (cachedChannels, index) -> if (cachedChannels === channels) return index }
+        return build(channels).also { last = channels to it }
+    }
+
+    private fun build(channels: Map<String, EpgChannel>): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+        for ((id, channel) in channels) {
+            val normId = EpgMatcher.normalize(id)
+            if (normId.isNotBlank() && !map.containsKey(normId)) {
+                map[normId] = id
+            }
+            val idNoDomain = id.substringBeforeLast(".")
+            val normIdNoDomain = EpgMatcher.normalize(idNoDomain)
+            if (normIdNoDomain.isNotBlank() && !map.containsKey(normIdNoDomain)) {
+                map[normIdNoDomain] = id
+            }
+            for (dn in channel.displayNames) {
+                val normDn = EpgMatcher.normalize(dn)
+                if (normDn.isNotBlank() && !map.containsKey(normDn)) {
+                    map[normDn] = id
+                }
+            }
+        }
+        return map
     }
 }
