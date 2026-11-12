@@ -26,4 +26,22 @@ class VodMetadataTest {
         assertEquals("2022", formatVodMetadata("2022", "N/A"))
         assertEquals("", formatVodMetadata(null, ""))
     }
+
+    @Test
+    fun showsTheYearOfAFullReleaseDate() {
+        assertEquals("2008  ★ 8.2/10", formatVodMetadata("2008-09-23", "8.2"))
+        assertEquals("2008", displayYear("2008-09-23"))
+        assertEquals("2008", displayYear("23/09/2008"))
+        assertEquals("2008", displayYear(" 2008.09.23 "))
+        assertEquals("2024", displayYear("2024"))
+    }
+
+    @Test
+    fun keepsYearTextThatIsNotADate() {
+        assertEquals("2019–2023", displayYear("2019–2023"))
+        assertEquals("TBA", displayYear("TBA"))
+        assertEquals("123", displayYear("123"))
+        assertNull(displayYear("  "))
+        assertNull(displayYear(null))
+    }
 }

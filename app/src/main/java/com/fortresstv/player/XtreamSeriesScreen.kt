@@ -572,7 +572,7 @@ internal fun XtreamSeriesScreen(
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
-                subtitle = listOfNotNull(entry.series.year, entry.series.rating).joinToString(" · "),
+                subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
                 imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
