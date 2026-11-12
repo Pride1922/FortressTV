@@ -74,6 +74,54 @@ import com.fortresstv.player.ui.LocalFormFactor
 import com.fortresstv.player.ui.tvFocusHighlight
 import kotlinx.coroutines.launch
 
+/**
+ * Switching to a profile, with the parental PIN rule in one place: an adult profile needs the PIN
+ * while the active profile is a child (or the restricted default) and the adult unlock has expired.
+ * Shared by the profile picker and the header's profile menu.
+ */
+internal class ProfileSwitcher(
+    /** Switches to [profile], asking for the PIN first when the rule requires it. */
+    val request: (HouseholdProfile) -> Unit,
+    val adultPinRequired: () -> Boolean
+) {
+    fun needsPin(profile: HouseholdProfile): Boolean = profile.isAdult && adultPinRequired()
+}
+
+/** Remembers a [ProfileSwitcher] and shows its PIN dialog when needed; [onSwitched] runs after a successful switch. */
+@Composable
+internal fun rememberProfileSwitcher(onSwitched: (HouseholdProfile) -> Unit): ProfileSwitcher {
+    val repository = ProfileRepository.get(androidx.compose.ui.platform.LocalContext.current)
+    val activeProfile by repository.activeProfile.collectAsState()
+    val scope = rememberCoroutineScope()
+    val currentOnSwitched by androidx.compose.runtime.rememberUpdatedState(onSwitched)
+    var pinTarget by remember { mutableStateOf<HouseholdProfile?>(null) }
+
+    fun adultPinRequired(): Boolean = repository.getPinStatus().hasPin &&
+        (activeProfile.isChild || activeProfile.id == "restricted_default") && !repository.isAdultUnlocked()
+
+    fun open(profile: HouseholdProfile) {
+        scope.launch {
+            if (runCatching { repository.selectProfile(profile) }.getOrDefault(false)) currentOnSwitched(profile)
+        }
+    }
+
+    pinTarget?.let { target ->
+        ParentalPinDialog(
+            mode = HouseholdPinDialogMode.VERIFY,
+            onSuccess = {
+                pinTarget = null
+                open(target)
+            },
+            onDismiss = { pinTarget = null }
+        )
+    }
+
+    return ProfileSwitcher(
+        request = { profile -> if (profile.isAdult && adultPinRequired()) pinTarget = profile else open(profile) },
+        adultPinRequired = ::adultPinRequired
+    )
+}
+
 @Composable
 fun ProfileSelectionDialog(
     onProfileSelected: (HouseholdProfile) -> Unit,
@@ -90,49 +138,21 @@ fun ProfileSelectionDialog(
     val activeProfile by repository.activeProfile.collectAsState()
     val lastUsedProfileId = remember(profiles, activeProfile) { repository.getLastActiveProfileId() }
     val phoneLayout = !LocalFormFactor.current.isTelevision && LocalConfiguration.current.screenWidthDp < 640
-    val scope = rememberCoroutineScope()
 
-    var showPinDialogForProfile by remember { mutableStateOf<HouseholdProfile?>(null) }
     var showPinDialogForManagement by remember { mutableStateOf(false) }
     var showManagementDialog by remember { mutableStateOf(false) }
-
-    fun adultPinRequired(): Boolean = repository.getPinStatus().hasPin &&
-        (activeProfile.isChild || activeProfile.id == "restricted_default") && !repository.isAdultUnlocked()
-
-    fun selectProfile(profile: HouseholdProfile) {
-        if (profile.isAdult && adultPinRequired()) {
-            showPinDialogForProfile = profile
-        } else {
-            scope.launch {
-                if (runCatching { repository.selectProfile(profile) }.getOrDefault(false)) {
-                    onProfileSelected(profile)
-                    onDismiss()
-                }
-            }
-        }
+    val switcher = rememberProfileSwitcher { profile ->
+        onProfileSelected(profile)
+        onDismiss()
     }
+
+    fun adultPinRequired(): Boolean = switcher.adultPinRequired()
+
+    fun selectProfile(profile: HouseholdProfile) = switcher.request(profile)
 
     fun manageProfiles() {
         if (adultPinRequired()) showPinDialogForManagement = true
         else showManagementDialog = true
-    }
-
-    if (showPinDialogForProfile != null) {
-        ParentalPinDialog(
-            mode = HouseholdPinDialogMode.VERIFY,
-            onSuccess = {
-                val target = showPinDialogForProfile!!
-                showPinDialogForProfile = null
-                scope.launch {
-                    val ok = runCatching { repository.selectProfile(target) }.getOrDefault(false)
-                    if (ok) {
-                        onProfileSelected(target)
-                        onDismiss()
-                    }
-                }
-            },
-            onDismiss = { showPinDialogForProfile = null }
-        )
     }
 
     if (showPinDialogForManagement) {

@@ -488,6 +488,10 @@ internal fun FortressTVApp(
 
     var showSettings by remember { mutableStateOf(false) }
     var playbackResetGeneration by remember { mutableIntStateOf(0) }
+    // Quick switching from the profile menu. It lives here, beside the profile picker, not in the
+    // menu: the library screen (and its header) is replaced while the new profile loads, which would
+    // cancel a switch still running there. A switch then resets playback, like the picker does.
+    val headerProfileSwitcher = com.fortresstv.player.profile.rememberProfileSwitcher { playbackResetGeneration++ }
     var settingsInitialTab by remember { mutableIntStateOf(0) }
     var showAddPlaylistDialog by remember { mutableStateOf(false) }
     var showTransferDialog by remember { mutableStateOf(false) }
@@ -1846,6 +1850,7 @@ internal fun FortressTVApp(
                     },
                     activeHouseholdProfile = activeHouseholdProfile,
                     onOpenProfiles = { showProfileSelectionDialog = true },
+                    profileSwitcher = headerProfileSwitcher,
                     onOpenSettings = { tab ->
                         val status = profileRepository.getPinStatus()
                         if (activeHouseholdProfile.isChild && status.hasPin && !profileRepository.isAdultUnlocked()) {
