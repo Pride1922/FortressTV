@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4",
-  "versionCode": 64,
-  "notes": "- Home channel cards open directly in fullscreen. Recently watched channels show the current EPG programme and airtime.\n- Live sports cards use live scores and show matches with a corresponding EPG broadcast, including Nations League coverage.\n- Live playback retries a source error once when a backup feed is unavailable.\n- Xtream Movies and Series load independently. Profile loading and parental PIN error handling were improved.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.4/fortresstv.apk",
-  "sha256": "DC0D3DF54E234BA0148215B33DBC8EE63EF8E1660B129117521EAECFCFF3BCBB"
+  "version": "1.0.5",
+  "versionCode": 65,
+  "notes": "Reopening FortressTV from the launcher now resumes the existing screen and its loaded playlist while the app is still running.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.5/fortresstv.apk",
+  "sha256": "68B2EB894331CD421EACB9BDA087629ECEFF5452C9ED9CCCB5E4FE1D1E7C39ED"
 }
