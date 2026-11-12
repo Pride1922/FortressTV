@@ -4,6 +4,7 @@
 begin;
 
 insert into auth.users (id) values ('00000000-0000-0000-0000-000000000001') on conflict do nothing;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
 insert into public.households (id) values ('00000000-0000-0000-0000-000000000001') on conflict do nothing;
 
 insert into public.household_profiles (id, household_id, name, kind)
