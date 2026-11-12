@@ -461,6 +461,7 @@ internal fun HomeScreen(
     homeFocusRequester: FocusRequester,
     onHeaderFocusChanged: (Boolean) -> Unit,
     onSwitchProfile: (() -> Unit)?,
+    profileSwitcher: com.fortresstv.player.profile.ProfileSwitcher? = null,
     onOpenSettings: () -> Unit,
     onCloseApp: () -> Unit,
     openSearchOnEntry: Boolean,
@@ -820,6 +821,7 @@ internal fun HomeScreen(
                 homeListState.requestScrollToItem(0)
             },
             onSwitchProfile = onSwitchProfile,
+            profileSwitcher = profileSwitcher,
             onSettings = onOpenSettings,
             onCloseApp = onCloseApp,
             profile = currentProfile,

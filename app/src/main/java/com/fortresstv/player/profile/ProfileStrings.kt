@@ -6,6 +6,8 @@ internal class ProfileStrings(private val portuguese: Boolean) {
     val profilesTitle = text("Profiles", "Perfis")
     val profile = text("Profile", "Perfil")
     val switchProfile = text("Switch Profile", "Mudar de Perfil")
+    val switchTo = text("Switch to", "Mudar para")
+    val allProfiles = text("All profiles", "Todos os perfis")
     val manageProfiles = text("Manage Profiles", "Gerir Perfis")
     val addProfile = text("Add Profile", "Adicionar Perfil")
     val editProfile = text("Edit Profile", "Editar Perfil")
