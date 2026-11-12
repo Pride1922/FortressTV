@@ -1182,7 +1182,7 @@ internal fun FortressTVApp(
                         programmes = day.programmes,
                         manifest = manifest,
                         epochDay = epochDay
-                    )
+                    ).warmUp()
                 } else null
             }
             if (epgSource != source || epgRepository.manifest.value != manifest) return@launch

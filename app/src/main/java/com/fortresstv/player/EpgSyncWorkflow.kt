@@ -89,13 +89,13 @@ internal class EpgSyncWorkflow(
                 (0 until loadedDays).all { manifest.partitions.containsKey(currentTodayEpoch + it) }
 
             if (hasFullWindow) {
-                EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { cached ->
+                EpgDiskCache.loadTodayGuide(context, fingerprint)?.warmUp()?.let { cached ->
                     stream.close()
                     epgRepository.setGuide(cached)
                     return@withContext cached
                 }
             } else if (manifest != null && manifest.partitions.isNotEmpty()) {
-                EpgDiskCache.loadTodayGuide(context, fingerprint)?.let { partialCached ->
+                EpgDiskCache.loadTodayGuide(context, fingerprint)?.warmUp()?.let { partialCached ->
                     epgRepository.setGuide(partialCached)
                     withContext(Dispatchers.Main) { onPartialGuideLoaded(partialCached) }
                 }
@@ -141,7 +141,7 @@ internal class EpgSyncWorkflow(
                 beforePublish = beforePublish
             )
         }
-        return EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)
+        return (EpgDiskCache.loadTodayGuide(context, fingerprint) ?: EpgGuide(channels = manifest.channels, manifest = manifest)).warmUp()
     }
 
     fun saveMapping(
