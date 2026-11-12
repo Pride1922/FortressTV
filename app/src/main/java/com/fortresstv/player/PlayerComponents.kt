@@ -420,6 +420,7 @@ internal fun PlayerPanel(
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
     var activeChannel by remember(channel) { mutableStateOf(channel) }
     var attemptedFailoverUrls by remember(channel) { mutableStateOf(setOf(channel.streamUrl)) }
+    var retriedSourceUrls by remember(channel) { mutableStateOf(emptySet<String>()) }
     var failoverMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(failoverMessage) {
         if (failoverMessage != null) {
@@ -446,6 +447,7 @@ internal fun PlayerPanel(
             playWhenReady = true
         }
     }
+    var pendingSourceRetry by remember(player) { mutableStateOf<PlaybackException?>(null) }
     LaunchedEffect(liveChannelId, currentHealth?.state) {
         adaptiveLoadControl.updateHealthState(currentHealth?.state ?: com.fortresstv.player.telemetry.ConnectionHealthState.UNKNOWN)
     }
@@ -601,6 +603,11 @@ internal fun PlayerPanel(
                             strings.failoverBackupSwitched
                         }
                         activeChannel = fallback
+                    } else if (error.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE &&
+                        activeChannel.streamUrl !in retriedSourceUrls
+                    ) {
+                        retriedSourceUrls = retriedSourceUrls + activeChannel.streamUrl
+                        pendingSourceRetry = error
                     } else {
                         playbackError = error.message ?: strings.playbackError
                     }
@@ -640,7 +647,23 @@ internal fun PlayerPanel(
         }
     }
 
+    LaunchedEffect(player, activeChannel.streamUrl, pendingSourceRetry) {
+        val error = pendingSourceRetry ?: return@LaunchedEffect
+        delay(1_000L)
+        if (player.playerError === error) {
+            val canPlay = lifecycleOwner?.lifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true ||
+                (activity as? MainActivity)?.isInPictureInPictureMode == true
+            if (canPlay && context.isPlaybackNetworkAvailable()) {
+                player.prepare()
+            } else {
+                playbackError = error.message ?: strings.playbackError
+            }
+        }
+        if (pendingSourceRetry === error) pendingSourceRetry = null
+    }
+
     LaunchedEffect(player, activeChannel.streamUrl) {
+        pendingSourceRetry = null
         if (currentTrackedChannel != activeChannel) {
             previousWatchedChannel = currentTrackedChannel
             currentTrackedChannel = activeChannel
