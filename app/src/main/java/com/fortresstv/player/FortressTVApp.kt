@@ -1028,10 +1028,40 @@ internal fun FortressTVApp(
         fun currentProfile() = playlists.firstOrNull { it.id == profile.id && it.enabled && it.source == source }
 
         xtreamLoadJobs[profile.id] = scope.launch(Dispatchers.IO) {
+            // True once a cached catalogue is on screen; a failed refresh then keeps it instead of erroring.
+            var showingCachedCatalog = false
             try {
                 val client = XtreamClient(context.applicationContext, profile.id, source)
+
+                suspend fun publish(catalog: XtreamCatalog, live: Playlist, updatedAt: Long?): Boolean {
+                    val count = catalog.liveChannels.size.takeIf { it > 0 } ?: (catalog.movies.size + catalog.series.size)
+                    if (updatedAt != null) settings.updatePlaylistStats(profile, updatedAt, count)
+                    val published = withContext(Dispatchers.Main) {
+                        val current = currentProfile() ?: return@withContext false
+                        val updated = current.copy(lastUpdated = updatedAt ?: current.lastUpdated, channelCount = count)
+                        xtreamCatalogs[profile.id] = catalog
+                        if (catalog.liveChannels.isEmpty()) loadedPlaylists.remove(profile.id)
+                        else loadedPlaylists[profile.id] = live
+                        playlists = playlists.map { if (it.id == profile.id) updated else it }
+                        if (activeProfile?.id == profile.id || activeProfile == null) activeProfile = updated
+                        true
+                    }
+                    if (published) reconnectFavouritesAndProgress(profile.id, catalog)
+                    return published
+                }
+
+                // Cache first: show what this device already has without waiting for the provider's
+                // login, so a slow or unreachable provider never leaves Movies and Series empty.
+                val cached = if (forceRefresh) null else client.loadCachedCatalog()
+                if (cached != null) {
+                    showingCachedCatalog = publish(cached.catalog, Playlist(cached.catalog.liveChannels), updatedAt = null)
+                    // Under 24 h old: nothing to download.
+                    if (cached.fresh) return@launch
+                }
+
                 var livePlaylist: Playlist? = null
-                val catalog = client.loadCatalog(forceRefresh) { live ->
+                // A stale cache is already on screen, so download everything fresh.
+                val catalog = client.loadCatalog(forceRefresh = forceRefresh || cached != null) { live ->
                     val partial = Playlist(live.liveChannels)
                     livePlaylist = partial
                     withContext(Dispatchers.Main) {
@@ -1041,25 +1071,14 @@ internal fun FortressTVApp(
                         }
                     }
                 }
-                val count = catalog.liveChannels.size.takeIf { it > 0 } ?: (catalog.movies.size + catalog.series.size)
-                val updatedAt = System.currentTimeMillis()
                 val live = livePlaylist?.takeIf { it.channels === catalog.liveChannels } ?: Playlist(catalog.liveChannels)
-                settings.updatePlaylistStats(profile, updatedAt, count)
-                val published = withContext(Dispatchers.Main) {
-                    val current = currentProfile() ?: return@withContext false
-                    val updated = current.copy(lastUpdated = updatedAt, channelCount = count)
-                    xtreamCatalogs[profile.id] = catalog
-                    if (catalog.liveChannels.isEmpty()) loadedPlaylists.remove(profile.id)
-                    else loadedPlaylists[profile.id] = live
-                    playlists = playlists.map { if (it.id == profile.id) updated else it }
-                    if (activeProfile?.id == profile.id || activeProfile == null) activeProfile = updated
-                    true
-                }
-                if (published) reconnectFavouritesAndProgress(profile.id, catalog)
+                publish(catalog, live, updatedAt = System.currentTimeMillis())
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 withContext(Dispatchers.Main) {
+                    // The cached catalogue stays usable; the next start or a manual refresh tries again.
+                    if (showingCachedCatalog) return@withContext
                     currentProfile()?.let { current ->
                         error = "${current.name}: ${failure.message ?: "could not load Xtream catalogue"}"
                         retryLoad = { loadXtreamProfile(current, forceRefresh = true) }
