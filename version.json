@@ -1,7 +1,7 @@
 {
-  "version": "1.0.1",
-  "versionCode": 61,
-  "notes": "- Fixed duplicate movie cards across playlists and excluded Live TV sources from Movies and Series.\n- The Films grid now uses the IMDb rating from OMDb when available, matching movie details.\n\n- Corrigimos os cartões de filmes duplicados entre listas e excluímos as fontes de TV em direto dos Filmes e das Séries.\n- A grelha de Filmes usa agora a classificação IMDb do OMDb, quando disponível, tal como os detalhes do filme.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.1/fortresstv.apk",
-  "sha256": "5BA68603E0E96F9FD2C5B162BA09A677D47FDACBC3086D05C48BD0C7A87EF0F4"
+  "version": "1.0.4",
+  "versionCode": 64,
+  "notes": "- Home channel cards open directly in fullscreen. Recently watched channels show the current EPG programme and airtime.\n- Live sports cards use live scores and show matches with a corresponding EPG broadcast, including Nations League coverage.\n- Live playback retries a source error once when a backup feed is unavailable.\n- Xtream Movies and Series load independently. Profile loading and parental PIN error handling were improved.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.4/fortresstv.apk",
+  "sha256": "DC0D3DF54E234BA0148215B33DBC8EE63EF8E1660B129117521EAECFCFF3BCBB"
 }
