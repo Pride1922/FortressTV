@@ -199,6 +199,7 @@ interface Strings {
     val watchLive: String
     val liveNow: String
     fun broadcastOn(channel: String): String
+    fun alsoOn(channel: String): String
     val matchDetails: String
     val matchEvents: String
     val noEventsYet: String
@@ -781,6 +782,7 @@ object EnglishStrings : Strings {
     override val watchLive = "Watch Live"
     override val liveNow = "Live Now"
     override fun broadcastOn(channel: String) = "Live on $channel"
+    override fun alsoOn(channel: String) = "Also on $channel"
     override val matchDetails = "Match Details"
     override val matchEvents = "Key Events"
     override val noEventsYet = "No goals or key events yet"
@@ -1366,6 +1368,7 @@ object PortugueseStrings : Strings {
     override val watchLive = "Ver em Direto"
     override val liveNow = "Em Direto"
     override fun broadcastOn(channel: String) = "Em direto na $channel"
+    override fun alsoOn(channel: String) = "Também na $channel"
     override val matchDetails = "Detalhes do Jogo"
     override val matchEvents = "Eventos Principais"
     override val noEventsYet = "Ainda sem golos ou cartões"
