@@ -553,7 +553,8 @@ internal fun HomeScreen(
                     }
                 }.ifEmpty { listOf(guide) }
             } else listOf(guide)
-            com.fortresstv.player.sports.liveEpgMatches(
+            // Guide events first (parsed once per loaded day), ESPN fixtures as enrichment.
+            com.fortresstv.player.sports.matchesOnTv(
                 sportsFixtures, guides, channels, epgMappings, now, epgScheduleCorrectionMinutes, until
             )
         }

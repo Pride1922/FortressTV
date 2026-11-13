@@ -27,9 +27,15 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sports
 import androidx.compose.material.icons.filled.SportsBasketball
+import androidx.compose.material.icons.filled.SportsGolf
+import androidx.compose.material.icons.filled.SportsHandball
+import androidx.compose.material.icons.filled.SportsHockey
+import androidx.compose.material.icons.filled.SportsMma
 import androidx.compose.material.icons.filled.SportsMotorsports
+import androidx.compose.material.icons.filled.SportsRugby
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.SportsTennis
+import androidx.compose.material.icons.filled.SportsVolleyball
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -109,8 +116,13 @@ fun SportsHubSection(
                     resolvedChannel = match.channel,
                     live = match.live,
                     onWatchChannel = onWatchChannel,
-                    onCardClick = { selectedMatch = match.fixture.id },
-                    modifier = Modifier.width(280.dp)
+                    // The details dialog is a two-team scoreboard; a single event (golf, tennis) has none.
+                    onCardClick = if (match.fixture.awayTeam.isBlank()) null else {
+                        { selectedMatch = match.fixture.id }
+                    },
+                    modifier = Modifier.width(280.dp),
+                    sportLabel = match.sportLabel,
+                    alternateChannels = match.alternateChannels
                 )
             }
         }
@@ -138,19 +150,27 @@ fun SportsFixtureCard(
     live: Boolean,
     onWatchChannel: (PlaylistChannel) -> Unit,
     onCardClick: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Sport named by the guide; set for events ESPN has no fixture (and so no crests) for. */
+    sportLabel: String? = null,
+    alternateChannels: List<PlaylistChannel> = emptyList()
 ) {
     val strings = LocalAppStrings.current
     val formattedTime = remember(fixture.kickoffUtc) {
         formatKickoffTime(fixture.kickoffUtc)
     }
 
-    val sportIcon = when (fixture.sport) {
+    val sportIcon = sportLabel?.let(::guideSportIcon) ?: when (fixture.sport) {
         SportsKind.FOOTBALL -> Icons.Default.SportsSoccer
         SportsKind.MOTORSPORT -> Icons.Default.SportsMotorsports
         SportsKind.BASKETBALL -> Icons.Default.SportsBasketball
         SportsKind.TENNIS -> Icons.Default.SportsTennis
         SportsKind.OTHER -> Icons.Default.Sports
+    }
+    // Guide-only events have no crests: the sport's icon stands in for them.
+    val crestFallback = sportIcon.takeIf { sportLabel != null }
+    val heading = if (sportLabel == null) fixture.competition else {
+        listOf(sportLabel, fixture.competition).filter(String::isNotBlank).joinToString(" · ")
     }
 
     Surface(
@@ -195,7 +215,7 @@ fun SportsFixtureCard(
                         Spacer(Modifier.width(6.dp))
                     }
                     Text(
-                        text = fixture.competition,
+                        text = heading,
                         color = Color(0xFF9EA3B0),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -232,8 +252,8 @@ fun SportsFixtureCard(
                 }
             }
 
-            // Teams and Logos Matchup or Motorsport Presentation
-            if (fixture.sport == SportsKind.MOTORSPORT) {
+            // Teams and Logos Matchup, or a single-event presentation (motorsport, golf, tennis, ...)
+            if (fixture.sport == SportsKind.MOTORSPORT || fixture.awayTeam.isBlank()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -243,7 +263,8 @@ fun SportsFixtureCard(
                     TeamLogo(
                         url = fixture.homeTeamLogoUrl ?: fixture.competitionLogoUrl,
                         name = fixture.homeTeam,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(40.dp),
+                        fallbackIcon = crestFallback
                     )
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -281,7 +302,7 @@ fun SportsFixtureCard(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        TeamLogo(url = fixture.homeTeamLogoUrl, name = fixture.homeTeam)
+                        TeamLogo(url = fixture.homeTeamLogoUrl, name = fixture.homeTeam, fallbackIcon = crestFallback)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = fixture.homeTeam,
@@ -321,7 +342,7 @@ fun SportsFixtureCard(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        TeamLogo(url = fixture.awayTeamLogoUrl, name = fixture.awayTeam)
+                        TeamLogo(url = fixture.awayTeamLogoUrl, name = fixture.awayTeam, fallbackIcon = crestFallback)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = fixture.awayTeam,
@@ -340,32 +361,39 @@ fun SportsFixtureCard(
             // button. Red while the match is live, matching the LIVE badge; cyan otherwise.
             val chipTint = if (live) Color(0xFFE53935) else MaterialTheme.colorScheme.primary
             val chipShape = RoundedCornerShape(18.dp)
-            Surface(
-                onClick = { onWatchChannel(resolvedChannel) },
-                enabled = live,
-                shape = chipShape,
-                color = chipTint.copy(alpha = if (live) 0.22f else 0.14f),
-                modifier = Modifier.height(34.dp).tvFocusHighlight(shape = chipShape)
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // The same event on another channel (e.g. the free-to-air simulcast) gets its own chip.
+            for ((index, channel) in (listOf(resolvedChannel) + alternateChannels.take(2)).withIndex()) {
+                Surface(
+                    onClick = { onWatchChannel(channel) },
+                    enabled = live,
+                    shape = chipShape,
+                    color = chipTint.copy(alpha = if (live) 0.22f else 0.14f),
+                    modifier = Modifier.height(34.dp).tvFocusHighlight(shape = chipShape)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = chipTint,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = strings.broadcastOn(resolvedChannel.name.ifBlank { fixture.broadcasterOfficial }),
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = chipTint,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (index == 0) {
+                                strings.broadcastOn(channel.name.ifBlank { fixture.broadcasterOfficial })
+                            } else {
+                                strings.alsoOn(channel.name)
+                            },
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -373,7 +401,7 @@ fun SportsFixtureCard(
 }
 
 @Composable
-private fun TeamLogo(url: String?, name: String, modifier: Modifier = Modifier) {
+private fun TeamLogo(url: String?, name: String, modifier: Modifier = Modifier, fallbackIcon: ImageVector? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     if (!url.isNullOrBlank()) {
         val request = remember(url) {
@@ -397,13 +425,38 @@ private fun TeamLogo(url: String?, name: String, modifier: Modifier = Modifier) 
                 .background(Color(0xFF2C3140)),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = name.take(2).uppercase(),
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
+            if (fallbackIcon != null) {
+                Icon(
+                    imageVector = fallbackIcon,
+                    contentDescription = name,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            } else {
+                Text(
+                    text = name.take(2).uppercase(),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
+    }
+}
+
+/** Icon for a guide sport prefix ("Futsal", "Andebol Fem."); null falls back to the fixture's kind. */
+private fun guideSportIcon(sportLabel: String): ImageVector? {
+    val sport = sportLabel.lowercase()
+    return when {
+        sport.startsWith("futebol americano") || sport.startsWith("rugby") -> Icons.Default.SportsRugby
+        sport.startsWith("fut") -> Icons.Default.SportsSoccer
+        sport.startsWith("andebol") -> Icons.Default.SportsHandball
+        sport.startsWith("hóquei") -> Icons.Default.SportsHockey
+        sport.startsWith("voleibol") -> Icons.Default.SportsVolleyball
+        sport.startsWith("golfe") -> Icons.Default.SportsGolf
+        sport.startsWith("padel") -> Icons.Default.SportsTennis
+        sport.startsWith("combate") || sport.startsWith("judo") -> Icons.Default.SportsMma
+        else -> null
     }
 }
 
