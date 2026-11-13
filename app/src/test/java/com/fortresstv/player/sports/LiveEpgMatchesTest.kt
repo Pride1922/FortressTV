@@ -9,6 +9,34 @@ import org.junit.Test
 import java.time.Instant
 
 class LiveEpgMatchesTest {
+    @Test
+    fun requiresAnUpcomingFixtureToDistinguishMatchesFromUnlabelledReplays() {
+        val now = Instant.parse("2026-11-13T20:00:00Z")
+        val tomorrow = now.plusSeconds(5 * 3600)
+        val channel = PlaylistChannel(0, "PT: Sport TV 3", "", tvgId = "sporttv3.pt")
+        fun programme(title: String, start: Instant) =
+            EpgProgramme("sporttv3.pt", title, null, "Futebol", start.toEpochMilli(), null)
+        val guide = EpgGuide(
+            channels = mapOf("sporttv3.pt" to EpgChannel("sporttv3.pt", "Sport TV 3")),
+            programmes = mapOf("sporttv3.pt" to listOf(
+                programme("Liga das Nações: Países Baixos - Grécia", tomorrow),
+                programme("Resumo: Sérvia - Alemanha", tomorrow),
+                programme("Tunísia - Líbia", now.plusSeconds(86_400))
+            ))
+        )
+        assertEquals(emptyList<Pair<SportsFixture, PlaylistChannel>>(), liveEpgMatches(
+            emptyList(), guide, listOf(channel), emptyMap(), now, upcomingUntil = now.plusSeconds(86_400)
+        ))
+        val scheduled = fixture(tomorrow, FixtureStatus.SCHEDULED).copy(homeTeam = "Netherlands", awayTeam = "Greece")
+        val (match, resolvedChannel) = liveEpgMatches(
+            listOf(scheduled), guide, listOf(channel), emptyMap(), now, upcomingUntil = now.plusSeconds(86_400)
+        ).single()
+        assertEquals(scheduled, match)
+        assertEquals(tomorrow, match.kickoffUtc)
+        assertEquals(FixtureStatus.SCHEDULED, match.status)
+        assertEquals(channel, resolvedChannel)
+    }
+
     private fun fixture(now: Instant, status: FixtureStatus = FixtureStatus.LIVE) = SportsFixture(
         "espn-1", SportsKind.FOOTBALL, "Nations League", null,
         "Italy", "France", null, null, now, "Sport TV 3", status, homeScore = 1, awayScore = 0

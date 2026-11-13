@@ -62,7 +62,6 @@ import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.ui.LocalAppStrings
 import com.fortresstv.player.ui.tvFocusHighlight
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -340,6 +339,7 @@ fun SportsFixtureCard(
             val chipShape = RoundedCornerShape(18.dp)
             Surface(
                 onClick = { onWatchChannel(resolvedChannel) },
+                enabled = live,
                 shape = chipShape,
                 color = chipTint.copy(alpha = if (live) 0.22f else 0.14f),
                 modifier = Modifier.height(34.dp).tvFocusHighlight(shape = chipShape)
@@ -407,15 +407,7 @@ private fun TeamLogo(url: String?, name: String, modifier: Modifier = Modifier) 
 private fun formatKickoffTime(instant: Instant): String {
     val zone = ZoneId.systemDefault()
     val fixtureDateTime = instant.atZone(zone)
-    val fixtureDate = fixtureDateTime.toLocalDate()
-    val today = LocalDate.now(zone)
-    val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-
-    return when (fixtureDate) {
-        today -> "Hoje ${timeFormatter.format(fixtureDateTime)}"
-        today.plusDays(1) -> "Amanhã ${timeFormatter.format(fixtureDateTime)}"
-        else -> DateTimeFormatter.ofPattern("dd/MM HH:mm").format(fixtureDateTime)
-    }
+    return DateTimeFormatter.ofPattern("dd/MM HH:mm").format(fixtureDateTime)
 }
 
 @Composable
@@ -744,6 +736,7 @@ fun MatchDetailsDialog(
                 // 4. Action Button: Watch Live on Channel
                 Button(
                     onClick = onWatchChannel,
+                    enabled = fixture.isLive(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp),

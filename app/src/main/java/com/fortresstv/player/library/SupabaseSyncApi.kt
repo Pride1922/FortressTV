@@ -484,9 +484,12 @@ internal class SupabaseSyncApi(
         accessToken: String? = null
     ): List<com.fortresstv.player.sports.SportsFixture> {
         return runCatching {
+            val now = java.time.Instant.now()
             val text = transport.request(
                 "GET",
-                "/rest/v1/sports_fixtures?select=*&status=neq.finished&order=kickoff_utc.asc&limit=50",
+                "/rest/v1/sports_fixtures?select=*&status=in.(scheduled,live)" +
+                    "&kickoff_utc=gte.${now.minusSeconds(86_400)}" +
+                    "&kickoff_utc=lt.${now.plusSeconds(86_400)}&order=kickoff_utc.asc",
                 null,
                 accessToken,
                 null

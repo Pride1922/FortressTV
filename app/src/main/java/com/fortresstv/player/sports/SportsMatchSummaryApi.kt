@@ -35,7 +35,7 @@ object SportsMatchSummaryApi {
     suspend fun fetchSummary(fixture: SportsFixture): MatchSummaryDetails = withContext(Dispatchers.IO) {
         runCatching {
             val eventId = extractEventId(fixture.id)
-            if (eventId.isBlank()) return@withContext MatchSummaryDetails()
+            if (fixture.id.startsWith("epg-") || eventId.isBlank()) return@withContext MatchSummaryDetails()
 
             val urlString = when {
                 fixture.sport == SportsKind.BASKETBALL || fixture.id.contains("nba") ->

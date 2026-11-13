@@ -70,6 +70,18 @@ const SOCCER_LEAGUES = [
     name: "UEFA Nations League",
     defaultBroadcaster: "",
     logo: null
+  },
+  {
+    slug: "caf.nations_qual",
+    name: "Africa Cup of Nations Qualifying",
+    defaultBroadcaster: "",
+    logo: null
+  },
+  {
+    slug: "esp.copa_del_rey",
+    name: "Copa del Rey",
+    defaultBroadcaster: "",
+    logo: null
   }
 ];
 
@@ -78,14 +90,15 @@ const BROWSER_HEADERS = {
   "Accept": "application/json"
 };
 
-async function fetchSoccerScoreboard(league: typeof SOCCER_LEAGUES[0]): Promise<SportsFixtureRecord[]> {
+async function fetchSoccerScoreboard(league: typeof SOCCER_LEAGUES[0], dates: string): Promise<SportsFixtureRecord[]> {
   try {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${league.slug}/scoreboard`;
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${league.slug}/scoreboard?dates=${dates}&limit=200`;
     const res = await fetch(url, { headers: BROWSER_HEADERS });
     if (!res.ok) return [];
     const data = await res.json();
     const events = data?.events;
     if (!Array.isArray(events)) return [];
+    const competitionLogo = data.leagues?.[0]?.logos?.[0]?.href || league.logo;
 
     const now = new Date();
     const results: SportsFixtureRecord[] = [];
@@ -129,7 +142,7 @@ async function fetchSoccerScoreboard(league: typeof SOCCER_LEAGUES[0]): Promise<
         id: `espn-${ev.id}`,
         sport: "football",
         competition: league.name,
-        competition_logo_url: league.logo,
+        competition_logo_url: competitionLogo,
         home_team: homeTeam,
         away_team: awayTeam,
         home_team_logo_url: homeLogo,
@@ -270,11 +283,13 @@ Deno.serve(async (req: Request) => {
   const allFixtures: SportsFixtureRecord[] = [];
   const now = new Date();
 
-  // 1. Fetch Soccer across all major European leagues
-  for (const league of SOCCER_LEAGUES) {
-    const list = await fetchSoccerScoreboard(league);
-    allFixtures.push(...list);
-  }
+  // Include the previous UTC date for matches still live after midnight.
+  const utcDate = (offset: number) =>
+    new Date(now.getTime() + offset * 86_400_000).toISOString().slice(0, 10).replaceAll("-", "");
+  const soccer = await Promise.all([-1, 0, 1].flatMap(offset =>
+    SOCCER_LEAGUES.map(league => fetchSoccerScoreboard(league, utcDate(offset)))
+  ));
+  allFixtures.push(...new Map(soccer.flat().map(fixture => [fixture.id, fixture] as const)).values());
 
   // 2. Fetch Formula 1
   const f1List = await fetchFormula1Events();
