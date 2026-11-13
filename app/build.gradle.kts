@@ -63,8 +63,11 @@ android {
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // R8: code shrinking, optimization and obfuscation plus resource shrinking, with the
+            // default Android rules. App rules: src/main/keepRules/rules.keep. The `benchmark`
+            // build type below copies this, so it is minified exactly like the release.
             optimization {
-                enable = false
+                enable = true
             }
         }
         create("benchmark") {

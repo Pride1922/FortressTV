@@ -75,6 +75,15 @@ jobs:
         run: |
           bash ./gradlew --no-daemon --max-workers=2 :app:assembleRelease
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+      # Needed to decode crash stack traces of this exact build. Saved before anything is
+      # published: a release without its mapping cannot be debugged later.
+      - name: Save R8 mapping for this release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: FortressTV-release-mapping-${{ github.run_number }}
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 90
       - name: Prepare release bundle
         env:
           RELEASE_NOTES: ${{ inputs.release_notes }}
