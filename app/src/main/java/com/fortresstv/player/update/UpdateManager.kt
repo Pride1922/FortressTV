@@ -282,21 +282,41 @@ object UpdateManager {
     }
 
     fun resumePendingInstall(context: Context) {
+        val apkFile = findPendingInstallToResume(context) ?: return
+        launchResumedInstall(context, apkFile)
+    }
+
+    /**
+     * The disk half of [resumePendingInstall]: returns the downloaded update that is still
+     * waiting for the installer, already verified, or null. Safe to call off the main thread.
+     */
+    fun findPendingInstallToResume(context: Context): File? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
-        ) return
+        ) return null
 
         val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
-        val pendingPath = preferences.getString(PENDING_APK_PATH, null) ?: return
-        if (preferences.getBoolean(INSTALLER_LAUNCHED, false)) return
+        val pendingPath = preferences.getString(PENDING_APK_PATH, null) ?: return null
+        if (preferences.getBoolean(INSTALLER_LAUNCHED, false)) return null
         val apkFile = File(pendingPath)
         if (!apkFile.exists()) {
             clearPendingInstall(context)
-            return
+            return null
         }
 
-        runCatching {
+        return runCatching {
             verifyDownloadedApk(context, apkFile)
+            apkFile
+        }.getOrElse {
+            clearPendingInstall(context)
+            apkFile.delete()
+            null
+        }
+    }
+
+    /** The UI half of [resumePendingInstall]: opens the installer for a file from [findPendingInstallToResume]. */
+    fun launchResumedInstall(context: Context, apkFile: File) {
+        runCatching {
             launchPendingInstaller(context, apkFile)
         }.onFailure {
             clearPendingInstall(context)

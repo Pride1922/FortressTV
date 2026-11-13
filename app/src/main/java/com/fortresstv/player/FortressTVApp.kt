@@ -393,7 +393,10 @@ internal fun FortressTVApp(
     onTransferDeepLinkConsumed: () -> Unit,
     foregroundGeneration: Int,
     inactivityLockTriggered: Boolean = false,
-    onInactivityLockConsumed: () -> Unit = {}
+    onInactivityLockConsumed: () -> Unit = {},
+    // Values already read on the IO thread by StartupWarmup. Each one is only the initial value
+    // of its state; when a value is missing the store is read here, as before.
+    startupWarmup: StartupWarmupState = StartupWarmupState()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -408,13 +411,13 @@ internal fun FortressTVApp(
         SourceSyncWorkflow(context.applicationContext, settings, userLibrary, vodProgressStore, scope)
     }
     val openSubtitlesStore = remember { OpenSubtitlesSettingsStore(context.applicationContext) }
-    var openSubtitlesSettings by remember { mutableStateOf(openSubtitlesStore.loadSettings()) }
+    var openSubtitlesSettings by remember { mutableStateOf(startupWarmup.openSubtitlesSettings ?: openSubtitlesStore.loadSettings()) }
     val tmdbStore = remember { TmdbSettingsStore(context.applicationContext) }
-    var tmdbSettings by remember { mutableStateOf(tmdbStore.loadSettings()) }
+    var tmdbSettings by remember { mutableStateOf(startupWarmup.tmdbSettings ?: tmdbStore.loadSettings()) }
     val introDbStore = remember { TheIntroDbSettingsStore(context.applicationContext) }
-    var introDbSettings by remember { mutableStateOf(introDbStore.loadSettings()) }
+    var introDbSettings by remember { mutableStateOf(startupWarmup.introDbSettings ?: introDbStore.loadSettings()) }
     val omdbStore = remember { OmdbSettingsStore(context.applicationContext) }
-    var omdbSettings by remember { mutableStateOf(omdbStore.loadSettings()) }
+    var omdbSettings by remember { mutableStateOf(startupWarmup.omdbSettings ?: omdbStore.loadSettings()) }
 
     var playlists by remember { mutableStateOf<List<PlaylistProfile>>(emptyList()) }
     var appLanguage by remember { mutableStateOf(AppLanguage.fromSystemLocale()) }
@@ -503,7 +506,9 @@ internal fun FortressTVApp(
     var showEpgUrlDialog by remember { mutableStateOf(false) }
     var showRemoveEpgConfirm by remember { mutableStateOf(false) }
     var hideAdultContent by remember { mutableStateOf(settings.hideAdultContent()) }
-    var parentalPin by remember { mutableStateOf(settings.getParentalPin()) }
+    var parentalPin by remember {
+        mutableStateOf(if (startupWarmup.parentalPinRead) startupWarmup.parentalPin else settings.getParentalPin())
+    }
     var parentalControlEnabled by remember { mutableStateOf(settings.parentalControlEnabled()) }
     var activePinDialog by remember { mutableStateOf<PinDialogMode?>(null) }
     var isAdultContentUnlockedByPin by remember { mutableStateOf(false) }
@@ -522,7 +527,7 @@ internal fun FortressTVApp(
     var currentUserId by remember { mutableStateOf(accountRepository.currentUserId()) }
     val cloudSourceSyncService = remember { com.fortresstv.player.source.CloudSourceSyncService.get(context) }
     val cloudLibrarySyncService = remember { com.fortresstv.player.library.CloudLibrarySyncService.get(context) }
-    val migrationService = remember { com.fortresstv.player.account.LocalDataMigrationService(context) }
+    val migrationService = remember { com.fortresstv.player.account.LocalDataMigrationService(context.applicationContext) }
     val epgSyncWorkflow = remember(context, settings, epgRepository, epgMappingStore, accountRepository, cloudSourceSyncService, scope) {
         EpgSyncWorkflow(context.applicationContext, settings, epgRepository, epgMappingStore, accountRepository, cloudSourceSyncService, scope)
     }
@@ -628,7 +633,8 @@ internal fun FortressTVApp(
         }
 
         val isPrimaryAdult = !activeHouseholdProfile.isChild && (householdProfiles.firstOrNull { !it.isChild }?.id == targetProfileId || householdProfiles.isEmpty())
-        val legacyPrefs = context.getSharedPreferences("fortress_legacy_migration", Context.MODE_PRIVATE)
+        val legacyPrefs = context.applicationContext
+            .getSharedPreferences(StartupWarmup.LEGACY_MIGRATION_PREFS, Context.MODE_PRIVATE)
         val migrationKey = "legacy_local_migrated_v1_$targetProfileId"
         val legacyMigrated = legacyPrefs.getBoolean(migrationKey, false)
         if (!legacyMigrated && isPrimaryAdult && targetProfileId != "restricted_default" && ns != "local") {

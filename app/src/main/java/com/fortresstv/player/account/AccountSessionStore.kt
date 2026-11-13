@@ -27,6 +27,11 @@ internal class AccountSessionStore(context: Context) : SessionPersistence {
         null
     }
 
+    // save() and clear() keep the synchronous commit() on purpose: sign-in and sign-out must be on
+    // disk before they are reported as done (a sign-out lost to a process kill would bring the
+    // session back), and check() turns a failed write into an error instead of hiding it.
+    // AccountRepository calls both from Dispatchers.IO. The one main-thread path was load()
+    // clearing an unreadable session; StartupWarmup now does that first load on the IO thread.
     override fun save(session: AccountSession) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())

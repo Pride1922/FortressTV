@@ -227,6 +227,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Translate
@@ -440,6 +441,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // The check started by the latest onResume; a newer onResume replaces it, so the installer
+    // cannot be opened twice for the same download.
+    private var pendingInstallCheck: Job? = null
+
     private val confirmPictureInPictureDismissed = Runnable {
         if (!isInPictureInPictureMode && !isActivityResumed && !hasWindowFocus()) {
             android.util.Log.d("FortressTV", "PiP dismissed confirmed - stopping audio & video")
@@ -522,7 +527,17 @@ class MainActivity : ComponentActivity() {
         foregroundGeneration++
         isActivityResumed = true
         pictureInPictureHandler.removeCallbacks(confirmPictureInPictureDismissed)
-        UpdateManager.resumePendingInstall(this)
+        // Looking for a downloaded update reads preferences and re-verifies the APK file, so it
+        // runs off the main thread; the installer is still launched from the main thread, and
+        // only if the activity is still in front when the check finishes.
+        val appContext = applicationContext
+        pendingInstallCheck?.cancel()
+        pendingInstallCheck = lifecycleScope.launch {
+            val pendingApk = withContext(Dispatchers.IO) {
+                UpdateManager.findPendingInstallToResume(appContext)
+            } ?: return@launch
+            if (isActivityResumed) UpdateManager.launchResumedInstall(this@MainActivity, pendingApk)
+        }
     }
 
     override fun onPause() {
@@ -553,6 +568,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (BuildConfig.DEBUG) {
+            // Debug builds only: log (never crash on) disk and network use on the main thread.
+            // Filter logcat on the "StrictMode" tag while the app starts.
+            android.os.StrictMode.setThreadPolicy(
+                android.os.StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .detectNetwork()
+                    .penaltyLog()
+                    .build()
+            )
+        }
         super.onCreate(savedInstanceState)
         intent?.data?.let { uri ->
             com.fortresstv.player.trakt.TraktAuthBridge.handleDeepLink(this, uri)
@@ -590,7 +617,7 @@ class MainActivity : ComponentActivity() {
                         .fillMaxSize()
                         .semantics { testTagsAsResourceId = true }
                 ) {
-                    FortressTVApp(
+                    FortressTVStartup(
                         transferDeepLink = transferDeepLink,
                         onTransferDeepLinkConsumed = { transferDeepLink = null },
                         foregroundGeneration = foregroundGeneration,
