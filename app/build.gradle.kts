@@ -4,6 +4,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -79,6 +80,16 @@ android {
             }
             matchingFallbacks += listOf("release")
         }
+        // Build the Baseline Profile generator runs against. The Baseline Profile plugin would
+        // create this type itself as a copy of release, but it only switches off the legacy
+        // isMinifyEnabled flag and leaves `optimization` on, so the recorded profile would name
+        // R8-renamed classes and match nothing. It must not be minified.
+        create("nonMinifiedRelease") {
+            initWith(getByName("release"))
+            optimization {
+                enable = false
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -107,6 +118,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation("io.coil-kt:coil-svg:2.7.0")
     implementation(libs.androidx.profileinstaller)
+    // Build-time only: lets `:app:generateReleaseBaselineProfile` run the :baselineprofile generator.
+    "baselineProfile"(project(":baselineprofile"))
     implementation(libs.nanohttpd)
     implementation(libs.zxing.core)
     testImplementation(libs.junit)

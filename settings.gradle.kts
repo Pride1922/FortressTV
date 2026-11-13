@@ -25,3 +25,4 @@ dependencyResolutionManagement {
 rootProject.name = "FortressTV"
 include(":app")
 include(":macrobenchmark")
+include(":baselineprofile")

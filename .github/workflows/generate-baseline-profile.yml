@@ -1,0 +1,73 @@
+name: Generate baseline profile
+
+# Manual only. Runs the :baselineprofile generator on an emulator and saves the result as an
+# artifact. Nothing is committed: download the artifact, review it and commit it yourself
+# (app/src/main/baseline-prof.txt).
+#
+# The emulator has no source and no account, so this profile covers a cold start up to the
+# welcome screen. For a profile that also covers Home, run scripts/generate-baseline-profile.sh
+# against a device that has a library configured.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-baseline-profile
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36.1' 'build-tools;36.0.0' 'platform-tools'
+      # Hardware acceleration for the emulator on GitHub's Linux runners.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Generate the profile on an API 34 emulator
+        uses: reactivecircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # One command on purpose: the action runs every line of `script` in its own shell.
+          script: bash scripts/generate-baseline-profile.sh
+      - name: Save the generated profile
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: FortressTV-baseline-profile-${{ github.run_number }}
+          path: |
+            work/baseline-profile/baseline-prof.txt
+            work/baseline-profile/startup-prof.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Save the generator log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: FortressTV-baseline-profile-log-${{ github.run_number }}
+          path: work/baseline-profile/instrumentation.txt
+          if-no-files-found: ignore
+          retention-days: 7

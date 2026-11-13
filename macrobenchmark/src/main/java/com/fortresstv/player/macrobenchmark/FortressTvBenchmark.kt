@@ -1,5 +1,6 @@
 package com.fortresstv.player.macrobenchmark
 
+import androidx.benchmark.macro.BaselineProfileMode
 import androidx.benchmark.macro.CompilationMode
 import androidx.benchmark.macro.FrameTimingMetric
 import androidx.benchmark.macro.MacrobenchmarkScope
@@ -26,6 +27,24 @@ class FortressTvBenchmark {
         packageName = PACKAGE_NAME,
         metrics = listOf(StartupTimingMetric()),
         compilationMode = CompilationMode.None(),
+        startupMode = StartupMode.COLD,
+        iterations = 5,
+        setupBlock = { pressHome() }
+    ) {
+        startActivityAndWait()
+        waitForStartupDestination()
+    }
+
+    /**
+     * Cold start with the Baseline Profile packaged in the APK compiled, as on a user's device
+     * once the profile is installed. Compare with [coldStartup], which compiles nothing, to see
+     * what the profile is worth. Fails if the APK contains no Baseline Profile.
+     */
+    @Test
+    fun coldStartupBaselineProfile() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(StartupTimingMetric()),
+        compilationMode = CompilationMode.Partial(baselineProfileMode = BaselineProfileMode.Require),
         startupMode = StartupMode.COLD,
         iterations = 5,
         setupBlock = { pressHome() }
