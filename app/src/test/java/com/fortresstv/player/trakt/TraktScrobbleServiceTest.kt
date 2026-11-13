@@ -305,7 +305,8 @@ class TraktScrobbleServiceTest {
         delay(70L)
         assertEquals(1, pauseCalls.get()) // Dispatched!
 
-        // 6. Stop
+        // Both Media3's ended callback and dialog disposal can report the same stop.
+        service.onPlaybackStopped(85_000L, 100_000L, request)
         service.onPlaybackStopped(85_000L, 100_000L, request)
         delay(30L)
         assertEquals(1, stopCalls.get())

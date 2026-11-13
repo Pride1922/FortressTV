@@ -653,9 +653,9 @@ internal fun FavoriteLibraryScreen(
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 onDismiss = { selectedSeries = null },
-                onPlay = { episode, url ->
+                onPlay = { series, episode, url ->
                     selectedSeries = null
-                    onPlayEpisode(entry.catalog, entry.series, episode, url)
+                    onPlayEpisode(entry.catalog, series, episode, url)
                 }
             )
         }

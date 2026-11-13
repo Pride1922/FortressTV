@@ -388,7 +388,7 @@ internal fun SeriesEpisodesDialog(
     onToggleFollow: () -> Unit,
     onToggleEpisodeWatched: (XtreamEpisode) -> Unit,
     onDismiss: () -> Unit,
-    onPlay: (XtreamEpisode, String) -> Unit,
+    onPlay: (XtreamSeries, XtreamEpisode, String) -> Unit,
     traktNamespace: String = "local",
     onHideOnTrakt: (() -> Unit)? = null
 ) {
@@ -512,6 +512,10 @@ internal fun SeriesEpisodesDialog(
     }
 
     val effectiveTmdbId = tmdbMetadata?.tmdbId ?: series.tmdbId?.toIntOrNull() ?: details?.tmdbId?.toIntOrNull()
+    val playbackSeries = series.copy(
+        tmdbId = effectiveTmdbId?.toString(),
+        imdbId = series.imdbId?.takeIf { it.isNotBlank() } ?: details?.imdbId
+    )
     var seasonMetadata by remember(series.id, selectedSeason, effectiveTmdbId) {
         mutableStateOf<TmdbSeasonMetadata?>(null)
     }
@@ -792,7 +796,7 @@ internal fun SeriesEpisodesDialog(
                     if (nextUnwatchedEpisode != null) {
                         Spacer(Modifier.height(10.dp))
                         Surface(
-                            onClick = { onPlay(nextUnwatchedEpisode, client.episodeStreamUrl(nextUnwatchedEpisode)) },
+                            onClick = { onPlay(playbackSeries, nextUnwatchedEpisode, client.episodeStreamUrl(nextUnwatchedEpisode)) },
                             shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
@@ -910,7 +914,7 @@ internal fun SeriesEpisodesDialog(
                             }
                             TextButton(onClick = {
                                 val first = sortedEpisodes.firstOrNull()
-                                if (first != null) onPlay(first, client.episodeStreamUrl(first))
+                                if (first != null) onPlay(playbackSeries, first, client.episodeStreamUrl(first))
                             }) {
                                 Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
@@ -1012,7 +1016,7 @@ internal fun SeriesEpisodesDialog(
                                     ?: episode.title
 
                                 Surface(
-                                    onClick = { onPlay(episode, client.episodeStreamUrl(episode)) },
+                                    onClick = { onPlay(playbackSeries, episode, client.episodeStreamUrl(episode)) },
                                     shape = RoundedCornerShape(14.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),

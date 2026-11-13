@@ -448,7 +448,9 @@ internal fun MovieDetailsDialog(
     val effectiveTrailer = tmdbMetadata?.trailerUrl ?: details?.trailerUrl
     val watchMovie = {
         onWatch(movie.copy(
-            tmdbId = movie.tmdbId?.takeIf { it.isNotBlank() } ?: details?.tmdbId,
+            tmdbId = movie.tmdbId?.takeIf { it.toIntOrNull()?.let { id -> id > 0 } == true }
+                ?: details?.tmdbId?.takeIf { it.toIntOrNull()?.let { id -> id > 0 } == true }
+                ?: tmdbMetadata?.tmdbId?.toString(),
             imdbId = movie.imdbId?.takeIf { it.isNotBlank() } ?: details?.imdbId
         ))
     }

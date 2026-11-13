@@ -1,7 +1,6 @@
 package com.fortresstv.player.trakt
 
 import android.content.Context
-import com.fortresstv.player.FortressLibrary
 import com.fortresstv.player.VodPlaybackRequest
 import com.fortresstv.player.library.VodProgressKind
 import kotlinx.coroutines.*
@@ -37,7 +36,7 @@ internal open class TraktScrobbleService(
         if (!traktStore.isConnected() || !traktStore.isScrobbleEnabled()) {
             return false
         }
-        val hasVerifiedId = !request.tmdbId.isNullOrBlank() || !request.imdbId.isNullOrBlank()
+        val hasVerifiedId = (request.tmdbId?.toIntOrNull() ?: 0) > 0 || !request.imdbId.isNullOrBlank()
         return when (request.kind) {
             VodProgressKind.MOVIE -> hasVerifiedId
             VodProgressKind.EPISODE -> hasVerifiedId && request.season != null && request.episode != null
@@ -52,7 +51,7 @@ internal open class TraktScrobbleService(
         if (!canScrobble(request)) return
 
         scope.launch {
-            val shouldDispatch = stateMutex.withLock {
+            stateMutex.withLock {
                 // Cancel any pending debounced pause event
                 pendingPauseJob?.cancel()
                 pendingPauseJob = null
@@ -63,16 +62,12 @@ internal open class TraktScrobbleService(
                     kotlin.math.abs(positionMs - lastReportedPositionMs) < 5_000L &&
                     (now - lastReportedActionTimeMs) < 15_000L
                 ) {
-                    return@withLock false
+                    return@withLock
                 }
 
                 lastAction = ScrobbleAction.START
                 lastReportedPositionMs = positionMs
                 lastReportedActionTimeMs = now
-                true
-            }
-
-            if (shouldDispatch) {
                 dispatchScrobble(ScrobbleAction.START, positionMs, durationMs, request)
             }
         }
@@ -104,8 +99,8 @@ internal open class TraktScrobbleService(
                         lastAction = ScrobbleAction.PAUSE
                         lastReportedPositionMs = positionMs
                         lastReportedActionTimeMs = System.currentTimeMillis()
+                        dispatchScrobble(ScrobbleAction.PAUSE, positionMs, durationMs, request)
                     }
-                    dispatchScrobble(ScrobbleAction.PAUSE, positionMs, durationMs, request)
                 }
             }
         }
@@ -115,9 +110,9 @@ internal open class TraktScrobbleService(
      * Emitted when video playback stops, finishes, or the player dialog is dismissed.
      */
     fun onPlaybackStopped(positionMs: Long, durationMs: Long, request: VodPlaybackRequest) {
-        if (!canScrobble(request)) return
+        if (durationMs <= 0L || positionMs <= 0L || !canScrobble(request)) return
 
-        scope.launch(NonCancellable) {
+        scope.launch {
             stateMutex.withLock {
                 pendingPauseJob?.cancel()
                 pendingPauseJob = null
@@ -125,12 +120,12 @@ internal open class TraktScrobbleService(
                 if (lastAction == ScrobbleAction.STOP) {
                     return@withLock
                 }
-                lastAction = ScrobbleAction.STOP
-                lastReportedPositionMs = positionMs
-                lastReportedActionTimeMs = System.currentTimeMillis()
+                if (dispatchScrobble(ScrobbleAction.STOP, positionMs, durationMs, request)) {
+                    lastAction = ScrobbleAction.STOP
+                    lastReportedPositionMs = positionMs
+                    lastReportedActionTimeMs = System.currentTimeMillis()
+                }
             }
-
-            dispatchScrobble(ScrobbleAction.STOP, positionMs, durationMs, request)
         }
     }
 
@@ -139,11 +134,11 @@ internal open class TraktScrobbleService(
         positionMs: Long,
         durationMs: Long,
         request: VodPlaybackRequest
-    ) {
+    ): Boolean {
         val clientId = traktStore.loadClientId()
-        if (clientId.isBlank()) return
+        if (clientId.isBlank()) return false
 
-        val accessToken = traktStore.getValidAccessToken(clientId, client) ?: return
+        val accessToken = traktStore.getValidAccessToken(clientId, client) ?: return false
         val progress = calculateProgressPercent(positionMs, durationMs)
         val payload = buildScrobblePayload(request, progress)
 
@@ -153,7 +148,7 @@ internal open class TraktScrobbleService(
             ScrobbleAction.STOP -> "stop"
         }
 
-        client.scrobble(actionName, payload, accessToken, clientId)
+        return client.scrobble(actionName, payload, accessToken, clientId) is TraktAuthResult.Success
     }
 
     companion object {
@@ -168,7 +163,7 @@ internal open class TraktScrobbleService(
             root.put("progress", kotlin.math.round(progressPercent * 10.0) / 10.0)
 
             val ids = JSONObject()
-            request.tmdbId?.toIntOrNull()?.let { ids.put("tmdb", it) }
+            request.tmdbId?.toIntOrNull()?.takeIf { it > 0 }?.let { ids.put("tmdb", it) }
             request.imdbId?.takeIf { it.isNotBlank() }?.let { ids.put("imdb", it) }
 
             when (request.kind) {

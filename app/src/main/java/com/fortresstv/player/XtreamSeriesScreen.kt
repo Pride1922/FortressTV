@@ -597,9 +597,9 @@ internal fun XtreamSeriesScreen(
                 onToggleFollow = { onToggleFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 onDismiss = { selected = null },
-                onPlay = { episode, url ->
+                onPlay = { series, episode, url ->
                     selected = null
-                    onPlay(entry.catalog, entry.series, episode, url)
+                    onPlay(entry.catalog, series, episode, url)
                 }
             )
         }
