@@ -1,7 +1,7 @@
 {
-  "version": "1.0.6",
-  "versionCode": 66,
-  "notes": "Matches on TV now shows upcoming and live sports from your Portuguese TV guide. Football fixtures include team and competition logos when available. Multi-session events appear once, and finished matches and replays are filtered out.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.6/fortresstv.apk",
-  "sha256": "0B68153EDD596B2BD23D1D1B9A6FE7378353A526BC2ABFD1C740972B7A60E7C5"
+  "version": "1.0.9",
+  "versionCode": 69,
+  "notes": "Fix Trakt playback history reporting by preserving resolved movie and series IDs and preventing duplicate stop reports.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.9/fortresstv.apk",
+  "sha256": "DC441082AAE61F1282648C86B6B122E03729E71AB6B26125DC5EDC23EB422F5B"
 }
