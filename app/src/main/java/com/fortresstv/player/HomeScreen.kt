@@ -536,7 +536,7 @@ internal fun HomeScreen(
         }
     }
     val liveMatches by androidx.compose.runtime.produceState(
-        initialValue = emptyList<Pair<com.fortresstv.player.sports.SportsFixture, PlaylistChannel>>(),
+        initialValue = emptyList<com.fortresstv.player.sports.SportsEpgMatch>(),
         sportsFixtures, epgGuide, channels, epgMappings, epgRepository, epgScheduleCorrectionMinutes, now
     ) {
         val guide = epgGuide
@@ -544,21 +544,18 @@ internal fun HomeScreen(
             val until = now.plusSeconds(86_400)
             val manifest = guide.manifest
             val guides = if (manifest != null && epgRepository != null && epgRepository.manifest.value == manifest) {
-                val zone = java.time.ZoneId.of(manifest.timezoneId)
-                val correction = epgScheduleCorrectionMinutes * 60L
-                val firstDay = now.minusSeconds(correction).atZone(zone).toLocalDate().toEpochDay()
-                val lastDay = until.minusSeconds(correction).minusNanos(1).atZone(zone).toLocalDate().toEpochDay()
-                (firstDay..lastDay).mapNotNull { day ->
+                // Includes the previous day, so a match that started before midnight stays in the row.
+                com.fortresstv.player.sports.epgDaysForMatches(
+                    now, until, epgScheduleCorrectionMinutes, java.time.ZoneId.of(manifest.timezoneId)
+                ).mapNotNull { day ->
                     if (day == guide.epochDay) guide else epgRepository.loadDay(day)?.let {
                         guide.copy(programmes = it.programmes, epochDay = day)
                     }
-                }
+                }.ifEmpty { listOf(guide) }
             } else listOf(guide)
-            guides.flatMap { dayGuide ->
-                com.fortresstv.player.sports.liveEpgMatches(
-                    sportsFixtures, dayGuide, channels, epgMappings, now, epgScheduleCorrectionMinutes, until
-                )
-            }.distinctBy { it.first.id }.sortedBy { it.first.kickoffUtc }
+            com.fortresstv.player.sports.liveEpgMatches(
+                sportsFixtures, guides, channels, epgMappings, now, epgScheduleCorrectionMinutes, until
+            )
         }
     }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }

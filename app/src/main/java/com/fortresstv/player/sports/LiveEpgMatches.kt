@@ -47,6 +47,48 @@ private fun isForeignFeed(label: String): Boolean {
 private fun isForeignGuide(id: String, names: List<String>): Boolean =
     isForeignFeed(id) || !portugalFeed.containsMatchIn(id) && names.any(::isForeignFeed)
 
+/** A fixture paired with the playlist channel showing it. [live] comes from the guide, not the API status. */
+data class SportsEpgMatch(
+    val fixture: SportsFixture,
+    val channel: PlaylistChannel,
+    val live: Boolean
+)
+
+/** Guide day partitions to search: the day before `now` (matches that started before midnight) up to [until]. */
+internal fun epgDaysForMatches(
+    now: Instant,
+    until: Instant,
+    correctionMinutes: Int,
+    zone: java.time.ZoneId
+): LongRange {
+    val correction = correctionMinutes * 60L
+    val firstDay = now.minusSeconds(correction).atZone(zone).toLocalDate().toEpochDay() - 1
+    val lastDay = until.minusSeconds(correction).minusNanos(1).atZone(zone).toLocalDate().toEpochDay()
+    return firstDay..maxOf(firstDay, lastDay)
+}
+
+/** Airing matches first, then by kickoff; one entry per fixture, preferring the airing one. */
+private fun List<SportsEpgMatch>.rankedMatches(): List<SportsEpgMatch> =
+    sortedWith(compareByDescending<SportsEpgMatch> { it.live }.thenBy { it.fixture.kickoffUtc })
+        .distinctBy { it.fixture.id }
+
+/** Matches across several day partitions of the same guide. */
+internal fun liveEpgMatches(
+    fixtures: List<SportsFixture>,
+    guides: List<EpgGuide>,
+    channels: List<PlaylistChannel>,
+    mappings: Map<String, EpgChannelMapping>,
+    now: Instant,
+    correctionMinutes: Int = 0,
+    upcomingUntil: Instant = now
+): List<SportsEpgMatch> = guides.flatMap {
+    liveEpgMatches(fixtures, it, channels, mappings, now, correctionMinutes, upcomingUntil)
+}.rankedMatches()
+
+/**
+ * Fixtures whose matched guide programme is on air at [now], or starts before [upcomingUntil].
+ * The API status only excludes finished/postponed fixtures: it can lag, so "live" is the guide's call.
+ */
 internal fun liveEpgMatches(
     fixtures: List<SportsFixture>,
     guide: EpgGuide,
@@ -55,11 +97,10 @@ internal fun liveEpgMatches(
     now: Instant,
     correctionMinutes: Int = 0,
     upcomingUntil: Instant = now
-): List<Pair<SportsFixture, PlaylistChannel>> {
+): List<SportsEpgMatch> {
     val includeUpcoming = upcomingUntil > now
     val candidates = fixtures.filter {
-        if (includeUpcoming) it.sport == SportsKind.FOOTBALL && it.status == FixtureStatus.SCHEDULED
-        else it.isLive()
+        it.status == FixtureStatus.SCHEDULED || it.status == FixtureStatus.LIVE
     }
     if (candidates.isEmpty()) return emptyList()
     val teamNamesByFixture = candidates.associateWith { teamNames(it.homeTeam) to teamNames(it.awayTeam) }
@@ -100,7 +141,7 @@ internal fun liveEpgMatches(
             val end = (programme.stopEpochMilli ?: (programme.startEpochMilli + 7_200_000L)) + correctionMillis
             val airing = nowMillis in start until end
             val upcoming = start in nowMillis until untilMillis
-            if (!(if (includeUpcoming) upcoming else airing) || replayMarker.containsMatchIn(programme.title)) {
+            if (!(airing || upcoming) || replayMarker.containsMatchIn(programme.title)) {
                 return@programmeMatches emptySequence()
             }
             // Keep a short team name before a dash from being treated as a channel prefix.
@@ -108,12 +149,13 @@ internal fun liveEpgMatches(
             val matched = candidates.firstOrNull { fixture ->
                 val kickoff = fixture.kickoffUtc.toEpochMilli()
                 val (home, away) = teamNamesByFixture.getValue(fixture)
+                // The kickoff must fall inside this broadcast, so a later unlabelled replay never matches.
                 kickoff in (start - 25 * 60_000L) until end &&
-                    (!includeUpcoming || kickoff in nowMillis until untilMillis) &&
+                    (airing || fixture.sport == SportsKind.FOOTBALL) &&
                     home.any { title.contains(it) } && away.any { title.contains(it) }
             }
-            if (matched == null) emptySequence() else sequenceOf(matched to channel)
+            if (matched == null) emptySequence() else sequenceOf(SportsEpgMatch(matched, channel, airing))
         }
     }.toList()
-    return matches.distinctBy { it.first.id }.sortedBy { it.first.kickoffUtc }
+    return matches.rankedMatches()
 }

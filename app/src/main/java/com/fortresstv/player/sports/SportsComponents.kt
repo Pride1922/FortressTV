@@ -67,14 +67,14 @@ import java.time.format.DateTimeFormatter
 
 @Composable
 fun SportsHubSection(
-    playableFixtures: List<Pair<SportsFixture, PlaylistChannel>>,
+    playableFixtures: List<SportsEpgMatch>,
     onWatchChannel: (PlaylistChannel) -> Unit,
     modifier: Modifier = Modifier
 ) {
 
     if (playableFixtures.isEmpty()) return
     val strings = LocalAppStrings.current
-    var selectedMatch by remember { mutableStateOf<Pair<SportsFixture, PlaylistChannel>?>(null) }
+    var selectedMatch by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -103,25 +103,28 @@ fun SportsHubSection(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            items(playableFixtures, key = { it.first.id }) { (fixture, resolvedChannel) ->
+            items(playableFixtures, key = { it.fixture.id }) { match ->
                 SportsFixtureCard(
-                    fixture = fixture,
-                    resolvedChannel = resolvedChannel,
+                    fixture = match.fixture,
+                    resolvedChannel = match.channel,
+                    live = match.live,
                     onWatchChannel = onWatchChannel,
-                    onCardClick = { selectedMatch = fixture to resolvedChannel },
+                    onCardClick = { selectedMatch = match.fixture.id },
                     modifier = Modifier.width(280.dp)
                 )
             }
         }
     }
 
-    selectedMatch?.let { (fixture, channel) ->
+    // Looked up by id so an open dialog follows the match when it goes live or its score changes.
+    playableFixtures.firstOrNull { it.fixture.id == selectedMatch }?.let { match ->
         MatchDetailsDialog(
-            fixture = fixture,
-            resolvedChannel = channel,
+            fixture = match.fixture,
+            resolvedChannel = match.channel,
+            live = match.live,
             onDismiss = { selectedMatch = null },
             onWatchChannel = {
-                onWatchChannel(channel)
+                onWatchChannel(match.channel)
                 selectedMatch = null
             }
         )
@@ -132,6 +135,7 @@ fun SportsHubSection(
 fun SportsFixtureCard(
     fixture: SportsFixture,
     resolvedChannel: PlaylistChannel,
+    live: Boolean,
     onWatchChannel: (PlaylistChannel) -> Unit,
     onCardClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -200,7 +204,7 @@ fun SportsFixtureCard(
                     )
                 }
 
-                if (fixture.isLive()) {
+                if (live) {
                     val liveLabel = if (!fixture.minute.isNullOrBlank() && fixture.minute.lowercase() != "null") {
                         fixture.minute
                     } else {
@@ -334,7 +338,6 @@ fun SportsFixtureCard(
 
             // Where to watch: a compact channel chip, so the match is the focus rather than a big
             // button. Red while the match is live, matching the LIVE badge; cyan otherwise.
-            val live = fixture.isLive()
             val chipTint = if (live) Color(0xFFE53935) else MaterialTheme.colorScheme.primary
             val chipShape = RoundedCornerShape(18.dp)
             Surface(
@@ -414,6 +417,7 @@ private fun formatKickoffTime(instant: Instant): String {
 fun MatchDetailsDialog(
     fixture: SportsFixture,
     resolvedChannel: PlaylistChannel,
+    live: Boolean,
     onDismiss: () -> Unit,
     onWatchChannel: () -> Unit
 ) {
@@ -467,7 +471,7 @@ fun MatchDetailsDialog(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (fixture.isLive()) {
+                        if (live) {
                             val liveText = if (!fixture.minute.isNullOrBlank() && fixture.minute.lowercase() != "null") {
                                 fixture.minute
                             } else {
@@ -712,7 +716,7 @@ fun MatchDetailsDialog(
                                 }
                             }
                         }
-                        fixture.isLive() -> {
+                        live -> {
                             Text(
                                 text = strings.noEventsYet,
                                 color = Color(0xFF707684),
@@ -736,7 +740,7 @@ fun MatchDetailsDialog(
                 // 4. Action Button: Watch Live on Channel
                 Button(
                     onClick = onWatchChannel,
-                    enabled = fixture.isLive(),
+                    enabled = live,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(46.dp),
