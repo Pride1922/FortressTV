@@ -50,14 +50,21 @@ fi
 # The benchmark library writes its results to the test app's media directory.
 "$ADB" pull "/sdcard/Android/media/$TEST_ID/." "$OUT/device/"
 
-baseline="$(find "$OUT/device" -name '*baseline-prof*.txt' | sort | head -n 1)"
+# The library writes each profile twice: "<Test>_<method>-<kind>-prof.txt" and a copy with a
+# timestamp. With includeInStartupProfile = true it writes only the startup profile; that file
+# holds every recorded rule and is also used as the baseline profile (as the Gradle plugin does).
+pick() {
+    find "$OUT/device" -name "*-$1-prof.txt" | sort | head -n 1
+}
+startup="$(pick startup)"
+baseline="$(pick baseline)"
+baseline="${baseline:-$startup}"
 if [ -z "$baseline" ]; then
-    echo "No baseline profile was written by the generator." >&2
+    echo "No baseline or startup profile was written by the generator. Files pulled:" >&2
+    find "$OUT/device" -type f >&2
     exit 1
 fi
 cp "$baseline" "$OUT/baseline-prof.txt"
-
-startup="$(find "$OUT/device" -name '*startup-prof*.txt' | sort | head -n 1)"
 if [ -n "$startup" ]; then
     cp "$startup" "$OUT/startup-prof.txt"
 fi
