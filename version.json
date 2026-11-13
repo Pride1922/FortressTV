@@ -1,7 +1,7 @@
 {
-  "version": "1.0.5",
-  "versionCode": 65,
-  "notes": "Reopening FortressTV from the launcher now resumes the existing screen and its loaded playlist while the app is still running.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.5/fortresstv.apk",
-  "sha256": "68B2EB894331CD421EACB9BDA087629ECEFF5452C9ED9CCCB5E4FE1D1E7C39ED"
+  "version": "1.0.6",
+  "versionCode": 66,
+  "notes": "Matches on TV now shows upcoming and live sports from your Portuguese TV guide. Football fixtures include team and competition logos when available. Multi-session events appear once, and finished matches and replays are filtered out.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.6/fortresstv.apk",
+  "sha256": "0B68153EDD596B2BD23D1D1B9A6FE7378353A526BC2ABFD1C740972B7A60E7C5"
 }
