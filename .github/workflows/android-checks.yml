@@ -38,3 +38,17 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+      # The same R8 configuration as the release (the benchmark build type copies it), signed with
+      # the debug key because pull requests have no keystore. Install this one to test a change
+      # the way users will get it: R8 problems do not show up in the debug APK.
+      - name: Build minified (R8) benchmark APK
+        run: bash ./gradlew --no-daemon --max-workers=2 :app:assembleBenchmark
+      - name: Save minified (R8) benchmark APK and its mapping
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: FortressTV-minified-R8-benchmark-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/benchmark/app-benchmark.apk
+            app/build/outputs/mapping/benchmark/mapping.txt
+          if-no-files-found: error
+          retention-days: 14

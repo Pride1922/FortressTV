@@ -1,12 +1,67 @@
-# Add project specific R8 rules here.
-# AGP will combine all keep rule files in src/main/keepRules to pass to R8
-#
-# For more details, see
+# FortressTV R8 keep rules.
+# AGP combines every *.keep file in src/main/keepRules and passes them to R8, together with the
+# default Android rules (the proguard-android-optimize.txt equivalent, on by default with the
+# `optimization { enable = true }` DSL) and the consumer rules shipped inside each library.
 #   https://d.android.com/r/tools/r8/keep-rules
+#
+# The app itself needs very few rules: it has no reflection, no Class.forName, no @Keep, no
+# reflective JSON mapper (all JSON is org.json with literal keys) and no WebView JavaScript
+# interface. Class names are never written to preferences or sent to Supabase. Everything stored
+# by name is an enum constant name (SourceRole, VodProgressKind, SyncActionType,
+# ConnectionHealthState); R8 never changes the value of Enum.name(), only the Java field names.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# ---- Crash reports ---------------------------------------------------------------------------
+# Keep line numbers so a stack trace can be decoded with mapping.txt (uploaded by the release
+# workflow); hide the real file names.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+
+# ---- Enums stored by name --------------------------------------------------------------------
+# valueOf()/values() are looked up reflectively by java.lang.Enum and EnumMap. The default
+# Android rules already contain this; it is repeated here so that data written by older,
+# non-minified builds keeps reading back even if the default rules are ever switched off.
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+# ---- FFmpeg audio decoder (local AAR: libs/media3-decoder-ffmpeg-1.10.1-mp3.aar) -------------
+# libffmpegJNI.so binds its functions by name (Java_androidx_media3_decoder_ffmpeg_...), looks
+# up the class androidx/media3/decoder/ffmpeg/FfmpegAudioDecoder by name and calls its private
+# growOutputBuffer(SimpleDecoderOutputBuffer, int) from C. The AAR ships consumer rules for the
+# native method names and for growOutputBuffer, but it is a file dependency and a renamed class
+# here means no MP3/AC3 audio, so the whole (7 class) package is kept explicitly as well.
+# includedescriptorclasses also keeps the names of the types in those signatures.
+-keep,includedescriptorclasses class androidx.media3.decoder.ffmpeg.** { *; }
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+
+# ---- Media3 ----------------------------------------------------------------------------------
+# DefaultRenderersFactory (EXTENSION_RENDERER_MODE_ON) creates FfmpegAudioRenderer through
+# Class.forName + this exact constructor. Media3 ships the same rule; the rule above already
+# covers it, this line documents the dependency.
+-keepclassmembers class androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer {
+    <init>(android.os.Handler, androidx.media3.exoplayer.audio.AudioRendererEventListener, androidx.media3.exoplayer.audio.AudioSink);
+}
+# MiBoxRenderersFactory finds the stock video renderer with an exact class comparison
+# (javaClass == MediaCodecVideoRenderer::class.java) and subclasses it. Keep the class itself so
+# R8 can neither merge it with another class nor replace it.
+-keep class androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+
+# ---- NanoHTTPD, ZXing, Coil, coil-svg, Compose, coroutines, OkHttp ---------------------------
+# No rules needed: NanoHTTPD and ZXing core do not use reflection (the transfer server only
+# subclasses NanoHTTPD; ZXing enums are covered by the enum rule above), and Coil, AndroidSVG,
+# Compose, kotlinx.coroutines and OkHttp ship their own consumer rules.
+
+# ---- Build-time only -------------------------------------------------------------------------
+# Optional classes that libraries reference but do not need at run time (compile-only
+# annotations, alternative TLS providers probed by OkHttp). These lines only stop R8 from
+# failing the build with "Missing class"; they keep nothing and change nothing in the APK.
+-dontwarn org.checkerframework.**
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn com.google.j2objc.annotations.**
+-dontwarn javax.annotation.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
