@@ -1,8 +1,11 @@
 package com.fortresstv.player.ui
 
+import android.app.ActivityManager
+import android.content.Context
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -28,6 +32,28 @@ import kotlin.math.min
 
 /** The most a focused item may grow in total width, so wide rows and buttons stay on screen. */
 private val MAX_FOCUS_GROWTH = 24.dp
+
+/** Devices with this much RAM or less (old Mi Box, Fire TV Stick) get the cheap focus style. */
+private const val LOW_END_TOTAL_RAM_BYTES = 2_500L * 1024 * 1024
+
+@Volatile
+private var lowEndDeviceCache: Boolean? = null
+
+/**
+ * True on weak TV boxes (low-RAM flag, or about 2 GB of RAM or less). Their GPUs (Mali-450 on the
+ * Mi Box) redraw a large blurred shadow slowly, and that shadow was redrawn on every focus move, so
+ * they get the ring and a short scale only. Read once per process.
+ */
+internal fun isLowEndDevice(context: Context): Boolean = lowEndDeviceCache ?: run {
+    val manager = context.applicationContext.getSystemService(ActivityManager::class.java)
+    val memory = ActivityManager.MemoryInfo()
+    val lowEnd = manager == null || manager.isLowRamDevice || runCatching {
+        manager.getMemoryInfo(memory)
+        memory.totalMem in 1..LOW_END_TOTAL_RAM_BYTES
+    }.getOrDefault(false)
+    lowEndDeviceCache = lowEnd
+    lowEnd
+}
 
 /**
  * The scale a focused item animates to: [scaleOnFocus], but never more than [maxGrowthPx] wider
@@ -66,11 +92,14 @@ fun Modifier.tvFocusHighlight(
         val density = LocalDensity.current
         val maxGrowthPx = with(density) { MAX_FOCUS_GROWTH.toPx() }
         val glowPx = with(density) { 20.dp.toPx() }
+        val context = LocalContext.current
+        val lowEnd = remember { isLowEndDevice(context) }
 
         val borderColor = focusedBorderColor ?: MaterialTheme.colorScheme.primary
         val animatedScale by animateFloatAsState(
             targetValue = if (isFocused && isTv) focusScale(scaleOnFocus, widthPx, maxGrowthPx) else 1f,
-            animationSpec = spring(
+            // A spring keeps redrawing for ~0.4 s after each move; a weak box gets a short tween instead.
+            animationSpec = if (lowEnd) tween(durationMillis = 90) else spring(
                 dampingRatio = 0.7f,
                 stiffness = Spring.StiffnessMediumLow
             ),
@@ -91,7 +120,7 @@ fun Modifier.tvFocusHighlight(
             .graphicsLayer {
                 scaleX = animatedScale
                 scaleY = animatedScale
-                if (isFocused) {
+                if (isFocused && !lowEnd) {
                     // A coloured shadow reads as a glow (Android 9+; older versions show a plain shadow).
                     shadowElevation = glowPx
                     ambientShadowColor = borderColor
