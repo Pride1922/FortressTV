@@ -306,6 +306,23 @@ class GuideSportsEventsTest {
     }
 
     @Test
+    fun tournamentWithManySessionsIsOneCardForItsLiveOrNextSession() {
+        fun padel(now: String) = events(now).filter { it.fixture.homeTeam == "Dubai P1" }
+
+        // Three "(Direto)" sessions in the next 24 h: only the next one is listed.
+        val upcoming = padel("2026-11-14T11:00:00Z").single()
+        assertFalse(upcoming.live)
+        assertEquals(at("2026-11-14T13:00:00Z"), upcoming.fixture.kickoffUtc)
+
+        // While a session is on, the later ones are hidden.
+        val live = padel("2026-11-14T14:00:00Z").single()
+        assertTrue(live.live)
+
+        // Between sessions, the next one comes back.
+        assertEquals(at("2026-11-14T16:30:00Z"), padel("2026-11-14T16:10:00Z").single().fixture.kickoffUtc)
+    }
+
+    @Test
     fun guideDayIsParsedOnceAcrossRecomputes() {
         // HomeScreen wraps each loaded day in a fresh EpgGuide every 30 s; the programme map is the same.
         events("2026-11-14T20:00:00Z")
@@ -357,6 +374,8 @@ class GuideSportsEventsTest {
             sporttv5.pt|202611150100|202611150300|Combate: Zuffa Boxing 13 Preliminares - Zuffa Boxing (Direto)
             sporttv6.pt|202611140900|202611141200|Judo: Zagreb 1.º Dia - Judo Grand Prix (Direto)
             SPT7HD|202611141300|202611141600|Padel: Dubai P1 - Premier Padel (Direto)
+            SPT7HD|202611141630|202611141830|Padel: Dubai P1 - Premier Padel (Direto)
+            SPT7HD|202611150900|202611151100|Padel: Dubai P1 - Premier Padel (Direto)
             eurosport1.pt|202611150900|202611151000|Esqui Alpino: Taça Mundo - Levi - Slalom Masculino Manga 1 (Direto)
             canal11.pt|202611142030|202611142230|Inglaterra x Portugal - Seleção Sub-21 - Jogo Prep. (Direto)
             canal11.pt|202611151100|202611151300|Futebol Fem.: Portugal x Rep. Irlanda - Torneio Sub-16 (Direto)

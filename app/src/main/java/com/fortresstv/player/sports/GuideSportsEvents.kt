@@ -355,7 +355,16 @@ internal fun guideSportsMatches(
         if (group != null) group += hit else groups += mutableListOf(hit)
     }
 
-    return groups.map { group ->
+    // Tournaments air as many sessions ("Padel: Dubai P1" five times a day): show an event once, its live
+    // session if one is on, otherwise its next one. Otherwise repeats fill the row and push other events out.
+    val liveKeys = groups.filter { group -> group.any { it.airingNow } }.mapTo(HashSet()) { it.first().airing.key }
+    val listedKeys = HashSet<String>()
+    val shown = groups.sortedBy { group -> group.minOf { it.start } }.filter { group ->
+        val key = group.first().airing.key
+        group.any { it.airingNow } || key !in liveKeys && listedKeys.add(key)
+    }
+
+    return shown.map { group ->
         val ordered = group.sortedWith(
             compareByDescending<GuideHit> { it.airingNow }
                 .thenByDescending { it.airing.sportsChannel }
