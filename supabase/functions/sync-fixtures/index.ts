@@ -26,6 +26,19 @@ interface SportsFixtureRecord {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const SYNC_FIXTURES_SECRET = Deno.env.get("SYNC_FIXTURES_SECRET") ?? "";
+
+// Constant-time comparison. Both values are hashed first, so the loop always runs over
+// 32 bytes and neither the length nor the position of the first difference leaks.
+async function secretsMatch(provided: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([provided, expected].map(async value =>
+    new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)))
+  ));
+  let difference = 0;
+  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
+  return difference === 0;
+}
 
 // ESPN Soccer leagues
 const SOCCER_LEAGUES = [
@@ -269,6 +282,21 @@ Deno.serve(async (req: Request) => {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type"
       }
+    });
+  }
+
+  // Deployed with --no-verify-jwt, so the shared secret is the only thing guarding this endpoint.
+  if (!SYNC_FIXTURES_SECRET) {
+    console.error("[sync-fixtures] SYNC_FIXTURES_SECRET is not set; refusing to run.");
+    return new Response(JSON.stringify({ error: "Sync secret is not configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  if (!(await secretsMatch(req.headers.get("x-sync-secret") ?? "", SYNC_FIXTURES_SECRET))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
     });
   }
 
