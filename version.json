@@ -1,7 +1,7 @@
 {
-    "version":  "1.0.12",
-    "versionCode":  72,
-    "notes":  "Improve Home layout and recently watched channel card timers, add 10 preset profile avatars with PIN verification on save, and restrict profile editing to the active user\u0027s own profile.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v1.0.12/fortresstv.apk",
-    "sha256":  "503107D0D885EAF4CD883E0E6BC3220E9BBE32E357FCBA6852F7EC5067F592D7"
+    "version":  "1.0.13",
+    "versionCode":  73,
+    "notes":  "Fix Home shelf and sports card flashing, stabilize channel row keys and logo fallbacks, add ESPN rugby and FIFA U-17/U-20 World Cup support, and add a Manage Sports \u0026 Competitions filter dialog.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v1.0.13/fortresstv.apk",
+    "sha256":  "562B3D6968D443B01DC16908BF00F66B46B5F18940E5CCC3F5220CA4A86EC943"
 }
