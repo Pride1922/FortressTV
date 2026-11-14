@@ -121,11 +121,37 @@ internal object FeaturedShelfMatcher {
     ): List<T> {
         if (popularItems.isEmpty() || limit <= 0) return emptyList()
 
+        val targetPopular = popularItems.filter { it.kind == expectedKind }
+        if (targetPopular.isEmpty()) return emptyList()
+
+        val targetTmdbIds = targetPopular.mapNotNullTo(HashSet()) { normalizeTmdbId(it.tmdbId) }
+        val targetImdbIds = targetPopular.mapNotNullTo(HashSet()) { normalizeImdbId(it.imdbId) }
+        val targetTitles = targetPopular.mapNotNullTo(HashSet()) {
+            TraktRecommendationsService.normalizeTitle(it.title).takeIf(String::isNotEmpty)
+        }
+
         val byTmdb = HashMap<String, IndexedItem<T>>()
         val byImdb = HashMap<String, IndexedItem<T>>()
         val byTitleYear = HashMap<String, IndexedItem<T>>()
 
         for (item in items) {
+            val tmdb = normalizeTmdbId(item.tmdbId)
+            val imdb = normalizeImdbId(item.imdbId)
+            val tmdbHit = tmdb != null && tmdb in targetTmdbIds
+            val imdbHit = imdb != null && imdb in targetImdbIds
+            val normName = if (targetTitles.isNotEmpty()) TraktRecommendationsService.normalizeTitle(item.name) else ""
+            val rawTitleHit = normName.isNotEmpty() && normName in targetTitles
+            var cleanNorm = ""
+            var extractedYear: String? = null
+            var cleanTitleHit = false
+            if (!rawTitleHit && targetTitles.isNotEmpty()) {
+                val (cleanTitle, yr) = TmdbClient.cleanMediaTitle(item.name)
+                extractedYear = yr
+                cleanNorm = TraktRecommendationsService.normalizeTitle(cleanTitle)
+                cleanTitleHit = cleanNorm.isNotEmpty() && cleanNorm in targetTitles
+            }
+            if (!tmdbHit && !imdbHit && !rawTitleHit && !cleanTitleHit) continue
+
             val permitted = ParentalControls.isItemPermitted(
                 name = item.name,
                 categoryOrGroup = item.categoryName,
@@ -136,18 +162,14 @@ internal object FeaturedShelfMatcher {
             )
             if (!permitted) continue
 
-            normalizeTmdbId(item.tmdbId)?.let { byTmdb.putIfAbsent(it, item) }
-            normalizeImdbId(item.imdbId)?.let { byImdb.putIfAbsent(it, item) }
-
-            val normName = TraktRecommendationsService.normalizeTitle(item.name)
-            if (normName.isNotBlank()) {
+            if (tmdbHit) byTmdb.putIfAbsent(tmdb!!, item)
+            if (imdbHit) byImdb.putIfAbsent(imdb!!, item)
+            if (rawTitleHit) {
                 byTitleYear.putIfAbsent("${normName}_${item.year ?: ""}", item)
                 byTitleYear.putIfAbsent("${normName}_", item)
             }
-            val (cleanTitle, extractedYear) = TmdbClient.cleanMediaTitle(item.name)
-            val yr = extractedYear ?: item.year
-            val cleanNorm = TraktRecommendationsService.normalizeTitle(cleanTitle)
-            if (cleanNorm.isNotBlank()) {
+            if (cleanTitleHit) {
+                val yr = extractedYear ?: item.year
                 byTitleYear.putIfAbsent("${cleanNorm}_${yr ?: ""}", item)
                 if (yr != null) {
                     byTitleYear.putIfAbsent("${cleanNorm}_$yr", item)

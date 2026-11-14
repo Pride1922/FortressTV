@@ -21,6 +21,8 @@ internal data class TraktMatchedRecommendations(
 
 internal object TraktRecommendationsService {
     private const val CANDIDATE_LIMIT = 100
+    private val COMBINING_DIACRITICS_REGEX = Regex("\\p{InCombiningDiacriticalMarks}+")
+    private val NON_ALNUM_REGEX = Regex("[^a-z0-9]")
 
     suspend fun syncRecommendations(
         context: Context,
@@ -175,62 +177,68 @@ internal object TraktRecommendationsService {
             return TraktMatchedRecommendations()
         }
 
-        val allMovies = catalogs.flatMap { cat ->
-            val catNames = cat.movieCategories.associate { it.id to it.name }
-            cat.movies
-                .filter { movie ->
-                    ParentalControls.isItemPermitted(
-                        name = movie.name,
-                        categoryOrGroup = catNames[movie.categoryId],
-                        ageRating = movie.ageRating,
-                        hideAdultContent = hideAdultContent,
-                        maximumAge = maximumAge,
-                        blockUnrated = blockUnrated
-                    )
-                }
-                .map { CatalogMovie(cat, it) }
-        }
+        val movieRecs = recommendations.filter { it.kind == TraktWatchlistKind.MOVIE }
+        val showRecs = recommendations.filter { it.kind == TraktWatchlistKind.SHOW }
 
-        val allSeries = catalogs.flatMap { cat ->
-            val catNames = cat.seriesCategories.associate { it.id to it.name }
-            cat.series
-                .filter { series ->
-                    ParentalControls.isItemPermitted(
-                        name = series.name,
-                        categoryOrGroup = catNames[series.categoryId],
-                        ageRating = series.ageRating,
-                        hideAdultContent = hideAdultContent,
-                        maximumAge = maximumAge,
-                        blockUnrated = blockUnrated
-                    )
-                }
-                .map { CatalogSeries(cat, it) }
-        }
+        val recMovieTmdbIds = movieRecs.mapNotNullTo(HashSet()) { it.tmdbId?.takeIf(String::isNotBlank) }
+        val recMovieImdbIds = movieRecs.mapNotNullTo(HashSet()) { it.imdbId?.takeIf(String::isNotBlank)?.lowercase() }
+        val recMovieNormTitles = movieRecs.mapNotNullTo(HashSet()) { normalizeTitle(it.title).takeIf(String::isNotEmpty) }
+
+        val recShowTmdbIds = showRecs.mapNotNullTo(HashSet()) { it.tmdbId?.takeIf(String::isNotBlank) }
+        val recShowImdbIds = showRecs.mapNotNullTo(HashSet()) { it.imdbId?.takeIf(String::isNotBlank)?.lowercase() }
+        val recShowNormTitles = showRecs.mapNotNullTo(HashSet()) { normalizeTitle(it.title).takeIf(String::isNotEmpty) }
 
         val movieByTmdb = mutableMapOf<String, CatalogMovie>()
         val movieByImdb = mutableMapOf<String, CatalogMovie>()
         val movieByTitleYear = mutableMapOf<String, CatalogMovie>()
 
-        for (cm in allMovies) {
-            cm.movie.tmdbId?.takeIf { it.isNotBlank() }?.let { movieByTmdb.putIfAbsent(it, cm) }
-            cm.movie.imdbId?.takeIf { it.isNotBlank() }?.let { movieByImdb.putIfAbsent(it.lowercase(), cm) }
-            val normName = normalizeTitle(cm.movie.name)
-            if (normName.isNotBlank()) {
-                val rawKey = normName + "_" + (cm.movie.year ?: "")
-                movieByTitleYear.putIfAbsent(rawKey, cm)
-                movieByTitleYear.putIfAbsent("${normName}_", cm)
-            }
-
-            val (cleanTitle, extractedYear) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(cm.movie.name)
-            val yr = extractedYear ?: cm.movie.year
-            val cleanNorm = normalizeTitle(cleanTitle)
-            if (cleanNorm.isNotBlank()) {
-                val cleanKey = cleanNorm + "_" + (yr ?: "")
-                movieByTitleYear.putIfAbsent(cleanKey, cm)
-                if (yr != null) {
-                    movieByTitleYear.putIfAbsent("${cleanNorm}_$yr", cm)
+        if (movieRecs.isNotEmpty()) {
+            for (cat in catalogs) {
+                val catNames = cat.movieCategories.associate { it.id to it.name }
+                for (movie in cat.movies) {
+                    val tmdb = movie.tmdbId?.takeIf { it.isNotBlank() }
+                    val imdb = movie.imdbId?.takeIf { it.isNotBlank() }?.lowercase()
+                    val tmdbHit = tmdb != null && tmdb in recMovieTmdbIds
+                    val imdbHit = imdb != null && imdb in recMovieImdbIds
+                    val normName = if (recMovieNormTitles.isNotEmpty()) normalizeTitle(movie.name) else ""
+                    val rawTitleHit = normName.isNotEmpty() && normName in recMovieNormTitles
+                    var cleanNorm = ""
+                    var extractedYear: String? = null
+                    var cleanTitleHit = false
+                    if (!rawTitleHit && recMovieNormTitles.isNotEmpty()) {
+                        val (cleanTitle, yr) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(movie.name)
+                        extractedYear = yr
+                        cleanNorm = normalizeTitle(cleanTitle)
+                        cleanTitleHit = cleanNorm.isNotEmpty() && cleanNorm in recMovieNormTitles
+                    }
+                    if (!tmdbHit && !imdbHit && !rawTitleHit && !cleanTitleHit) continue
+                    if (!ParentalControls.isItemPermitted(
+                            name = movie.name,
+                            categoryOrGroup = catNames[movie.categoryId],
+                            ageRating = movie.ageRating,
+                            hideAdultContent = hideAdultContent,
+                            maximumAge = maximumAge,
+                            blockUnrated = blockUnrated
+                        )
+                    ) continue
+                    val cm = CatalogMovie(cat, movie)
+                    if (tmdbHit) movieByTmdb.putIfAbsent(tmdb!!, cm)
+                    if (imdbHit) movieByImdb.putIfAbsent(imdb!!, cm)
+                    if (rawTitleHit) {
+                        val rawKey = normName + "_" + (movie.year ?: "")
+                        movieByTitleYear.putIfAbsent(rawKey, cm)
+                        movieByTitleYear.putIfAbsent("${normName}_", cm)
+                    }
+                    if (cleanTitleHit) {
+                        val yr = extractedYear ?: movie.year
+                        val cleanKey = cleanNorm + "_" + (yr ?: "")
+                        movieByTitleYear.putIfAbsent(cleanKey, cm)
+                        if (yr != null) {
+                            movieByTitleYear.putIfAbsent("${cleanNorm}_$yr", cm)
+                        }
+                        movieByTitleYear.putIfAbsent("${cleanNorm}_", cm)
+                    }
                 }
-                movieByTitleYear.putIfAbsent("${cleanNorm}_", cm)
             }
         }
 
@@ -238,26 +246,53 @@ internal object TraktRecommendationsService {
         val seriesByImdb = mutableMapOf<String, CatalogSeries>()
         val seriesByTitleYear = mutableMapOf<String, CatalogSeries>()
 
-        for (cs in allSeries) {
-            cs.series.tmdbId?.takeIf { it.isNotBlank() }?.let { seriesByTmdb.putIfAbsent(it, cs) }
-            cs.series.imdbId?.takeIf { it.isNotBlank() }?.let { seriesByImdb.putIfAbsent(it.lowercase(), cs) }
-            val normName = normalizeTitle(cs.series.name)
-            if (normName.isNotBlank()) {
-                val rawKey = normName + "_" + (cs.series.year ?: "")
-                seriesByTitleYear.putIfAbsent(rawKey, cs)
-                seriesByTitleYear.putIfAbsent("${normName}_", cs)
-            }
-
-            val (cleanTitle, extractedYear) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(cs.series.name)
-            val yr = extractedYear ?: cs.series.year
-            val cleanNorm = normalizeTitle(cleanTitle)
-            if (cleanNorm.isNotBlank()) {
-                val cleanKey = cleanNorm + "_" + (yr ?: "")
-                seriesByTitleYear.putIfAbsent(cleanKey, cs)
-                if (yr != null) {
-                    seriesByTitleYear.putIfAbsent("${cleanNorm}_$yr", cs)
+        if (showRecs.isNotEmpty()) {
+            for (cat in catalogs) {
+                val catNames = cat.seriesCategories.associate { it.id to it.name }
+                for (series in cat.series) {
+                    val tmdb = series.tmdbId?.takeIf { it.isNotBlank() }
+                    val imdb = series.imdbId?.takeIf { it.isNotBlank() }?.lowercase()
+                    val tmdbHit = tmdb != null && tmdb in recShowTmdbIds
+                    val imdbHit = imdb != null && imdb in recShowImdbIds
+                    val normName = if (recShowNormTitles.isNotEmpty()) normalizeTitle(series.name) else ""
+                    val rawTitleHit = normName.isNotEmpty() && normName in recShowNormTitles
+                    var cleanNorm = ""
+                    var extractedYear: String? = null
+                    var cleanTitleHit = false
+                    if (!rawTitleHit && recShowNormTitles.isNotEmpty()) {
+                        val (cleanTitle, yr) = com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(series.name)
+                        extractedYear = yr
+                        cleanNorm = normalizeTitle(cleanTitle)
+                        cleanTitleHit = cleanNorm.isNotEmpty() && cleanNorm in recShowNormTitles
+                    }
+                    if (!tmdbHit && !imdbHit && !rawTitleHit && !cleanTitleHit) continue
+                    if (!ParentalControls.isItemPermitted(
+                            name = series.name,
+                            categoryOrGroup = catNames[series.categoryId],
+                            ageRating = series.ageRating,
+                            hideAdultContent = hideAdultContent,
+                            maximumAge = maximumAge,
+                            blockUnrated = blockUnrated
+                        )
+                    ) continue
+                    val cs = CatalogSeries(cat, series)
+                    if (tmdbHit) seriesByTmdb.putIfAbsent(tmdb!!, cs)
+                    if (imdbHit) seriesByImdb.putIfAbsent(imdb!!, cs)
+                    if (rawTitleHit) {
+                        val rawKey = normName + "_" + (series.year ?: "")
+                        seriesByTitleYear.putIfAbsent(rawKey, cs)
+                        seriesByTitleYear.putIfAbsent("${normName}_", cs)
+                    }
+                    if (cleanTitleHit) {
+                        val yr = extractedYear ?: series.year
+                        val cleanKey = cleanNorm + "_" + (yr ?: "")
+                        seriesByTitleYear.putIfAbsent(cleanKey, cs)
+                        if (yr != null) {
+                            seriesByTitleYear.putIfAbsent("${cleanNorm}_$yr", cs)
+                        }
+                        seriesByTitleYear.putIfAbsent("${cleanNorm}_", cs)
+                    }
                 }
-                seriesByTitleYear.putIfAbsent("${cleanNorm}_", cs)
             }
         }
 
@@ -322,8 +357,8 @@ internal object TraktRecommendationsService {
 
     fun normalizeTitle(title: String): String {
         return java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
-            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace(COMBINING_DIACRITICS_REGEX, "")
             .lowercase()
-            .replace(Regex("[^a-z0-9]"), "")
+            .replace(NON_ALNUM_REGEX, "")
     }
 }

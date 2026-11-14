@@ -403,26 +403,29 @@ internal fun XtreamSeriesScreen(
     onRemoveContinueWatching: (VodProgressEntry) -> Unit,
     onToggleFollow: (String, XtreamSeries) -> Unit,
     onToggleEpisodeWatched: (String, XtreamEpisode, XtreamSeries?) -> Unit,
-    onPlay: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit
+    onPlay: (XtreamCatalog, XtreamSeries, XtreamEpisode, String) -> Unit,
+    tabState: SeriesTabState = remember { SeriesTabState() },
+    sharedRecommendedSeries: List<CatalogSeries>? = null,
+    sharedTraktConnected: Boolean? = null
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val isTv = com.fortresstv.player.ui.LocalFormFactor.current.isTelevision
     val omdbSettings = LocalOmdbSettings.current
-    var query by remember { mutableStateOf("") }
-    var appliedQuery by remember { mutableStateOf("") }
-    var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
-    var filterTopRated by remember { mutableStateOf(false) }
-    var filterFresh by remember { mutableStateOf(false) }
-    var filterFollowed by remember { mutableStateOf(false) }
-    var topRatedCount by remember { mutableStateOf(0) }
-    var freshCount by remember { mutableStateOf(0) }
-    var ratedCount by remember { mutableStateOf(0) }
-    var totalCount by remember { mutableStateOf(0) }
-    var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
+    var query by tabState.filters.queryState
+    var appliedQuery by tabState.filters.appliedQueryState
+    var sortOption by tabState.filters.sortOptionState
+    var filterTopRated by tabState.filters.filterTopRatedState
+    var filterFresh by tabState.filters.filterFreshState
+    var filterFollowed by tabState.filters.filterPersonalState
+    var topRatedCount by tabState.topRatedCountState
+    var freshCount by tabState.freshCountState
+    var ratedCount by tabState.ratedCountState
+    var totalCount by tabState.totalCountState
+    var selectedCategory by tabState.filters.selectedCategoryState
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
-    var allMatchingSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
-    var isCatalogLoading by remember { mutableStateOf(true) }
+    var allMatchingSeries by tabState.allMatchingSeriesState
+    var isCatalogLoading by tabState.isCatalogLoadingState
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
         buildVisibleVodCategories(catalogs, hideAdultContent) { it.seriesCategories }
@@ -439,37 +442,42 @@ internal fun XtreamSeriesScreen(
         !filterFollowed
 
     // Trakt Recommendations (series-only) for the default view
-    val traktConnected = remember(traktNamespace, context) {
+    val traktConnected = sharedTraktConnected ?: remember(traktNamespace, context) {
         com.fortresstv.player.trakt.TraktSettingsStore(context.applicationContext, traktNamespace).isConnected()
     }
-    var traktRecItems by remember(traktNamespace) {
+    var localTraktRecItems by remember(traktNamespace) {
         mutableStateOf<List<com.fortresstv.player.trakt.TraktRecommendationItem>>(emptyList())
     }
-    LaunchedEffect(traktNamespace, traktConnected) {
-        if (!traktConnected) {
-            traktRecItems = emptyList()
+    LaunchedEffect(traktNamespace, traktConnected, sharedRecommendedSeries) {
+        if (sharedRecommendedSeries != null || !traktConnected) {
+            localTraktRecItems = emptyList()
             return@LaunchedEffect
         }
         val recStore = com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace)
-        traktRecItems = withContext(Dispatchers.IO) { recStore.loadRecommendations() }
+        localTraktRecItems = withContext(Dispatchers.IO) { recStore.loadRecommendations() }
         com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context.applicationContext, traktNamespace)
-            .onSuccess { traktRecItems = it }
+            .onSuccess { localTraktRecItems = it }
     }
-    var recommendedSeries by remember(traktNamespace) { mutableStateOf<List<CatalogSeries>>(emptyList()) }
-    LaunchedEffect(isDefaultView, traktConnected, traktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated) {
-        if (!isDefaultView || !traktConnected || traktRecItems.isEmpty() || catalogs.isEmpty()) {
-            recommendedSeries = emptyList()
+    var localRecommendedSeries by remember(traktNamespace) { mutableStateOf<List<CatalogSeries>>(emptyList()) }
+    LaunchedEffect(isDefaultView, traktConnected, localTraktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated, sharedRecommendedSeries) {
+        if (sharedRecommendedSeries != null || !isDefaultView || !traktConnected || localTraktRecItems.isEmpty() || catalogs.isEmpty()) {
+            localRecommendedSeries = emptyList()
             return@LaunchedEffect
         }
-        recommendedSeries = withContext(Dispatchers.Default) {
+        localRecommendedSeries = withContext(Dispatchers.Default) {
             com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
-                recommendations = traktRecItems,
+                recommendations = localTraktRecItems,
                 catalogs = catalogs,
                 hideAdultContent = hideAdultContent,
                 maximumAge = maximumAge,
                 blockUnrated = blockUnrated
             ).series
         }
+    }
+    val recommendedSeries = if (!isDefaultView || !traktConnected) {
+        emptyList()
+    } else {
+        sharedRecommendedSeries ?: localRecommendedSeries
     }
 
     // Series progress for resumable episode & cached all-episodes-watched status
@@ -481,44 +489,67 @@ internal fun XtreamSeriesScreen(
             .distinctBy { "${it.sourceId}:${it.seriesId}" }
             .associate { "${it.sourceId}:${it.seriesId}" to it.progressFraction }
     }
-    var fullyWatchedSeriesKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
-    LaunchedEffect(catalogs, profiles, watchedItemIds) {
-        if (watchedItemIds.isEmpty() || catalogs.isEmpty()) {
+    var fullyWatchedSeriesKeys by tabState.fullyWatchedSeriesKeysState
+    LaunchedEffect(catalogs, profiles, watchedItemIds, tabState) {
+        if (!tabState.needsWatchedRecompute(catalogs, profiles, watchedItemIds)) return@LaunchedEffect
+        if (catalogs.isEmpty()) {
+            tabState.cachedSeriesEpisodeIds = emptyMap()
             fullyWatchedSeriesKeys = emptySet()
+            tabState.markEpisodeCacheComputed(catalogs, profiles)
+            tabState.markWatchedComputed(watchedItemIds)
             return@LaunchedEffect
         }
-        fullyWatchedSeriesKeys = withContext(Dispatchers.IO) {
-            val watchedKeys = HashSet<String>()
-            for (catalog in catalogs) {
-                val source = profiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream ?: continue
-                val client = XtreamClient(context.applicationContext, catalog.sourceId, source)
-                for (series in catalog.series) {
-                    val details = client.loadCachedSeriesDetails(series.id) ?: continue
-                    if (details.episodes.isNotEmpty() && details.episodes.all { it.libraryId(catalog.sourceId) in watchedItemIds }) {
-                        watchedKeys.add("${catalog.sourceId}:${series.id}")
+        if (tabState.needsEpisodeCacheRecompute(catalogs, profiles)) {
+            tabState.cachedSeriesEpisodeIds = withContext(Dispatchers.IO) {
+                val map = HashMap<String, List<String>>()
+                for (catalog in catalogs) {
+                    val source = profiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream ?: continue
+                    val client = XtreamClient(context.applicationContext, catalog.sourceId, source)
+                    for (series in catalog.series) {
+                        val details = client.loadCachedSeriesDetails(series.id) ?: continue
+                        if (details.episodes.isNotEmpty()) {
+                            map["${catalog.sourceId}:${series.id}"] = details.episodes.map { it.libraryId(catalog.sourceId) }
+                        }
                     }
                 }
+                map
             }
-            watchedKeys
+            tabState.markEpisodeCacheComputed(catalogs, profiles)
         }
+        if (watchedItemIds.isEmpty() || tabState.cachedSeriesEpisodeIds.isEmpty()) {
+            fullyWatchedSeriesKeys = emptySet()
+        } else {
+            val episodeIdsBySeries = tabState.cachedSeriesEpisodeIds
+            fullyWatchedSeriesKeys = withContext(Dispatchers.Default) {
+                episodeIdsBySeries.entries
+                    .filter { (_, epIds) -> epIds.all { it in watchedItemIds } }
+                    .mapTo(HashSet()) { it.key }
+            }
+        }
+        tabState.markWatchedComputed(watchedItemIds)
     }
 
-    val followedMatcher = remember(followedSeriesIds) {
-        if (followedSeriesIds.isEmpty()) null else com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
-    }
-    val followedCount = remember(allMatchingSeries, followedMatcher) {
-        if (followedMatcher == null) 0
-        else allMatchingSeries.count { entry ->
-            followedMatcher.matches(entry.series.libraryId(entry.catalog.sourceId), entry.series.id.toString())
+    var followedCount by tabState.followedCountState
+    var followedSeries by tabState.followedSeriesState
+    LaunchedEffect(allMatchingSeries, followedSeriesIds, tabState) {
+        if (!tabState.needsFollowedRecompute(allMatchingSeries, followedSeriesIds)) return@LaunchedEffect
+        if (followedSeriesIds.isEmpty() || allMatchingSeries.isEmpty()) {
+            followedCount = 0
+            followedSeries = emptyList()
+            tabState.markFollowedComputed(allMatchingSeries, followedSeriesIds)
+            return@LaunchedEffect
         }
-    }
-    val visibleSeries = remember(allMatchingSeries, filterFollowed, followedMatcher) {
-        if (!filterFollowed) allMatchingSeries
-        else if (followedMatcher == null) emptyList()
-        else allMatchingSeries.filter { entry ->
-            followedMatcher.matches(entry.series.libraryId(entry.catalog.sourceId), entry.series.id.toString())
+        val filtered = withContext(Dispatchers.Default) {
+            val matcher = com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
+            allMatchingSeries.filter { entry ->
+                matcher.matches(entry.series.libraryId(entry.catalog.sourceId), entry.series.id.toString())
+            }
         }
+        followedSeries = filtered
+        followedCount = filtered.size
+        tabState.markFollowedComputed(allMatchingSeries, followedSeriesIds)
     }
+    val visibleSeries = if (filterFollowed) followedSeries else allMatchingSeries
 
     val enrichmentRefreshToken = rememberLowCoverageRatingEnrichment(
         catalogs = catalogs,
@@ -531,8 +562,10 @@ internal fun XtreamSeriesScreen(
         ratingOf = { it.series.rating },
         targetOf = { com.fortresstv.player.omdb.OmdbPreFetchTarget("series", it.series.name, it.series.year, it.series.imdbId) }
     )
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken) {
-        isCatalogLoading = true
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken, tabState) {
+        val computeParams = listOf(appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken)
+        if (!tabState.needsRecompute(catalogs, computeParams)) return@LaunchedEffect
+        if (allMatchingSeries.isEmpty()) isCatalogLoading = true
         val result = withContext(Dispatchers.Default) {
             val hasOmdb = OmdbMetadataResolver.hasAnyCached()
             filterAndSortVodItems(
@@ -566,9 +599,13 @@ internal fun XtreamSeriesScreen(
         ratedCount = result.ratedCount
         totalCount = result.totalCount
         isCatalogLoading = false
+        tabState.markComputed(catalogs, computeParams)
     }
-    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterFollowed) {
-        if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterFollowed, tabState) {
+        val scrollParams = listOf(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterFollowed)
+        if (tabState.consumeScrollReset(scrollParams) && gridState.firstVisibleItemIndex > 0) {
+            gridState.scrollToItem(0)
+        }
     }
 
     val showContinueWatchingShelf = isDefaultView && continueWatching.isNotEmpty()

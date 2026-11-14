@@ -655,9 +655,34 @@ internal fun FortressLibrary(
     var requestedChannelFullscreen by remember { mutableStateOf(false) }
     var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
     var openHomeSearch by remember { mutableStateOf(false) }
-    // Keep catalogue positions alive while the user moves between primary destinations.
+    // Keep catalogue positions and tab state alive while the user moves between primary destinations.
+    val homeListState = rememberLazyListState()
     val movieGridState = rememberLazyGridState()
     val seriesGridState = rememberLazyGridState()
+    val movieContinueWatching = remember(progressEntries) {
+        progressEntries.filter { it.kind == VodProgressKind.MOVIE }
+    }
+    val seriesContinueWatching = remember(progressEntries) {
+        progressEntries.filter { it.kind == VodProgressKind.EPISODE }
+    }
+    val shelvesState = remember(traktNamespace, scope) {
+        HomeShelvesStateHolder(context.applicationContext, traktNamespace, scope)
+    }
+    val seriesTabState = remember(traktNamespace) { SeriesTabState() }
+    val moviesTabState = remember(traktNamespace) { MoviesTabState() }
+    val sharedTraktConnected = shelvesState.traktConnected
+    LaunchedEffect(shelvesState, sharedTraktConnected) {
+        shelvesState.ensureCoreTraktSynced()
+    }
+    LaunchedEffect(shelvesState, sharedTraktConnected, xtreamCatalogs, hideAdultContent, maximumAge, blockUnrated, shelvesState.traktRecItems) {
+        shelvesState.recomputeRecommendations(
+            showTraktRecs = sharedTraktConnected,
+            catalogs = xtreamCatalogs,
+            hideAdultContent = hideAdultContent,
+            maximumAge = maximumAge,
+            blockUnrated = blockUnrated
+        )
+    }
 
     val effectivePlaylist = remember(playlist, hideAdultContent) {
         if (!hideAdultContent) playlist
@@ -864,7 +889,9 @@ internal fun FortressLibrary(
                     },
                     homeHiddenSections = homeHiddenSections,
                     homeSectionOrder = homeSectionOrder,
-                    onOpenCustomizeHome = onOpenCustomizeHome
+                    onOpenCustomizeHome = onOpenCustomizeHome,
+                    sharedShelvesState = shelvesState,
+                    homeListState = homeListState
                 )
                 LibraryDestination.LIVE_TV -> ChannelBrowser(
                     playlist = if (activeHouseholdProfile?.isChild == true) effectivePlaylist else playlist,
@@ -983,7 +1010,7 @@ internal fun FortressLibrary(
                     catalogs = xtreamCatalogs,
                     profiles = xtreamProfiles,
                     contentFocusRequester = contentFocusRequester,
-                    continueWatching = progressEntries.filter { it.kind == VodProgressKind.MOVIE },
+                    continueWatching = movieContinueWatching,
                     progressEntries = progressEntries,
                     watchedItemIds = watchedItemIds,
                     onContinueWatching = onResumeEntry,
@@ -1007,7 +1034,10 @@ internal fun FortressLibrary(
                             val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
                             vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
                         }
-                    }
+                    },
+                    tabState = moviesTabState,
+                    sharedRecommendedMovies = shelvesState.matchedTraktRecs.movies,
+                    sharedTraktConnected = sharedTraktConnected
                 )
                 LibraryDestination.SERIES -> XtreamSeriesScreen(
                     catalogs = xtreamCatalogs,
@@ -1020,7 +1050,7 @@ internal fun FortressLibrary(
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
                     traktNamespace = traktNamespace,
-                    continueWatching = progressEntries.filter { it.kind == VodProgressKind.EPISODE },
+                    continueWatching = seriesContinueWatching,
                     progressEntries = progressEntries,
                     onContinueWatching = onResumeEntry,
                     onRemoveContinueWatching = onRemoveContinueWatchingEntry,
@@ -1048,7 +1078,10 @@ internal fun FortressLibrary(
                             tmdbId = series.tmdbId,
                             imdbId = series.imdbId
                         )
-                    }
+                    },
+                    tabState = seriesTabState,
+                    sharedRecommendedSeries = shelvesState.matchedTraktRecs.series,
+                    sharedTraktConnected = sharedTraktConnected
                 )
                 LibraryDestination.FAVORITES -> FavoriteLibraryScreen(
                     channels = homeFavoriteChannels,

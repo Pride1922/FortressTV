@@ -67,29 +67,59 @@ internal object TraktWatchlistService {
             return TraktMatchedWatchlist()
         }
 
-        val allMovies = catalogs.flatMap { cat -> cat.movies.map { CatalogMovie(cat, it) } }
-        val allSeries = catalogs.flatMap { cat -> cat.series.map { CatalogSeries(cat, it) } }
+        val movieItems = watchlist.filter { it.kind == TraktWatchlistKind.MOVIE }
+        val showItems = watchlist.filter { it.kind == TraktWatchlistKind.SHOW }
+
+        val targetMovieTmdb = movieItems.mapNotNullTo(HashSet()) { it.tmdbId?.takeIf(String::isNotBlank) }
+        val targetMovieImdb = movieItems.mapNotNullTo(HashSet()) { it.imdbId?.takeIf(String::isNotBlank)?.lowercase() }
+        val targetMovieTitles = movieItems.mapNotNullTo(HashSet()) { normalizeTitle(it.title).takeIf(String::isNotEmpty) }
+
+        val targetShowTmdb = showItems.mapNotNullTo(HashSet()) { it.tmdbId?.takeIf(String::isNotBlank) }
+        val targetShowImdb = showItems.mapNotNullTo(HashSet()) { it.imdbId?.takeIf(String::isNotBlank)?.lowercase() }
+        val targetShowTitles = showItems.mapNotNullTo(HashSet()) { normalizeTitle(it.title).takeIf(String::isNotEmpty) }
 
         val movieByTmdb = mutableMapOf<String, CatalogMovie>()
         val movieByImdb = mutableMapOf<String, CatalogMovie>()
         val movieByTitleYear = mutableMapOf<String, CatalogMovie>()
 
-        for (cm in allMovies) {
-            cm.movie.tmdbId?.takeIf { it.isNotBlank() }?.let { movieByTmdb.putIfAbsent(it, cm) }
-            cm.movie.imdbId?.takeIf { it.isNotBlank() }?.let { movieByImdb.putIfAbsent(it.lowercase(), cm) }
-            val key = normalizeTitle(cm.movie.name) + "_" + (cm.movie.year ?: "")
-            movieByTitleYear.putIfAbsent(key, cm)
+        if (movieItems.isNotEmpty()) {
+            for (cat in catalogs) {
+                for (movie in cat.movies) {
+                    val tmdb = movie.tmdbId?.takeIf { it.isNotBlank() }
+                    val imdb = movie.imdbId?.takeIf { it.isNotBlank() }?.lowercase()
+                    val tmdbHit = tmdb != null && tmdb in targetMovieTmdb
+                    val imdbHit = imdb != null && imdb in targetMovieImdb
+                    val norm = if (targetMovieTitles.isNotEmpty()) normalizeTitle(movie.name) else ""
+                    val titleHit = norm.isNotEmpty() && norm in targetMovieTitles
+                    if (!tmdbHit && !imdbHit && !titleHit) continue
+                    val cm = CatalogMovie(cat, movie)
+                    if (tmdbHit) movieByTmdb.putIfAbsent(tmdb!!, cm)
+                    if (imdbHit) movieByImdb.putIfAbsent(imdb!!, cm)
+                    if (titleHit) movieByTitleYear.putIfAbsent(norm + "_" + (movie.year ?: ""), cm)
+                }
+            }
         }
 
         val seriesByTmdb = mutableMapOf<String, CatalogSeries>()
         val seriesByImdb = mutableMapOf<String, CatalogSeries>()
         val seriesByTitleYear = mutableMapOf<String, CatalogSeries>()
 
-        for (cs in allSeries) {
-            cs.series.tmdbId?.takeIf { it.isNotBlank() }?.let { seriesByTmdb.putIfAbsent(it, cs) }
-            cs.series.imdbId?.takeIf { it.isNotBlank() }?.let { seriesByImdb.putIfAbsent(it.lowercase(), cs) }
-            val key = normalizeTitle(cs.series.name) + "_" + (cs.series.year ?: "")
-            seriesByTitleYear.putIfAbsent(key, cs)
+        if (showItems.isNotEmpty()) {
+            for (cat in catalogs) {
+                for (series in cat.series) {
+                    val tmdb = series.tmdbId?.takeIf { it.isNotBlank() }
+                    val imdb = series.imdbId?.takeIf { it.isNotBlank() }?.lowercase()
+                    val tmdbHit = tmdb != null && tmdb in targetShowTmdb
+                    val imdbHit = imdb != null && imdb in targetShowImdb
+                    val norm = if (targetShowTitles.isNotEmpty()) normalizeTitle(series.name) else ""
+                    val titleHit = norm.isNotEmpty() && norm in targetShowTitles
+                    if (!tmdbHit && !imdbHit && !titleHit) continue
+                    val cs = CatalogSeries(cat, series)
+                    if (tmdbHit) seriesByTmdb.putIfAbsent(tmdb!!, cs)
+                    if (imdbHit) seriesByImdb.putIfAbsent(imdb!!, cs)
+                    if (titleHit) seriesByTitleYear.putIfAbsent(norm + "_" + (series.year ?: ""), cs)
+                }
+            }
         }
 
         val matchedMovies = mutableListOf<CatalogMovie>()
@@ -183,7 +213,9 @@ internal object TraktWatchlistService {
         }
     }
 
+    private val NON_ALNUM_REGEX = Regex("[^a-z0-9]")
+
     fun normalizeTitle(title: String): String {
-        return title.lowercase().replace(Regex("[^a-z0-9]"), "")
+        return title.lowercase().replace(NON_ALNUM_REGEX, "")
     }
 }

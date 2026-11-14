@@ -47,16 +47,28 @@ internal object TraktWatchedSyncService {
         var matchedCount = 0
 
         if (userLibrary != null && catalogs.isNotEmpty() && watchedMovies.isNotEmpty()) {
-            val allMovies = catalogs.flatMap { cat -> cat.movies.map { CatalogMovie(cat, it) } }
+            val targetTmdb = watchedMovies.mapNotNullTo(HashSet()) { it.tmdbId?.takeIf(String::isNotBlank) }
+            val targetImdb = watchedMovies.mapNotNullTo(HashSet()) { it.imdbId?.takeIf(String::isNotBlank)?.lowercase() }
+            val targetTitles = watchedMovies.mapNotNullTo(HashSet()) { normalizeTitle(it.title).takeIf(String::isNotEmpty) }
+
             val movieByTmdb = mutableMapOf<String, CatalogMovie>()
             val movieByImdb = mutableMapOf<String, CatalogMovie>()
             val movieByTitleYear = mutableMapOf<String, CatalogMovie>()
 
-            for (cm in allMovies) {
-                cm.movie.tmdbId?.takeIf { it.isNotBlank() }?.let { movieByTmdb.putIfAbsent(it, cm) }
-                cm.movie.imdbId?.takeIf { it.isNotBlank() }?.let { movieByImdb.putIfAbsent(it.lowercase(), cm) }
-                val key = normalizeTitle(cm.movie.name) + "_" + (cm.movie.year ?: "")
-                movieByTitleYear.putIfAbsent(key, cm)
+            for (cat in catalogs) {
+                for (movie in cat.movies) {
+                    val tmdb = movie.tmdbId?.takeIf { it.isNotBlank() }
+                    val imdb = movie.imdbId?.takeIf { it.isNotBlank() }?.lowercase()
+                    val tmdbHit = tmdb != null && tmdb in targetTmdb
+                    val imdbHit = imdb != null && imdb in targetImdb
+                    val norm = if (targetTitles.isNotEmpty()) normalizeTitle(movie.name) else ""
+                    val titleHit = norm.isNotEmpty() && norm in targetTitles
+                    if (!tmdbHit && !imdbHit && !titleHit) continue
+                    val cm = CatalogMovie(cat, movie)
+                    if (tmdbHit) movieByTmdb.putIfAbsent(tmdb!!, cm)
+                    if (imdbHit) movieByImdb.putIfAbsent(imdb!!, cm)
+                    if (titleHit) movieByTitleYear.putIfAbsent(norm + "_" + (movie.year ?: ""), cm)
+                }
             }
 
             val currentWatched = userLibrary.watchedItemIds().toMutableSet()
@@ -232,7 +244,9 @@ internal object TraktWatchedSyncService {
         return matchedEpisodes
     }
 
+    private val NON_ALNUM_REGEX = Regex("[^a-z0-9]")
+
     fun normalizeTitle(title: String): String {
-        return title.lowercase().replace(Regex("[^a-z0-9]"), "")
+        return title.lowercase().replace(NON_ALNUM_REGEX, "")
     }
 }

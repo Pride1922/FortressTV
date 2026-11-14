@@ -403,26 +403,29 @@ internal fun XtreamMoviesScreen(
     traktNamespace: String = "default",
     onToggleWatchlist: (String, XtreamMovie) -> Unit,
     onToggleMovieWatched: (String, XtreamMovie) -> Unit,
-    onPlay: (XtreamCatalog, XtreamMovie) -> Unit
+    onPlay: (XtreamCatalog, XtreamMovie) -> Unit,
+    tabState: MoviesTabState = remember { MoviesTabState() },
+    sharedRecommendedMovies: List<CatalogMovie>? = null,
+    sharedTraktConnected: Boolean? = null
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val isTv = com.fortresstv.player.ui.LocalFormFactor.current.isTelevision
     val omdbSettings = LocalOmdbSettings.current
-    var query by remember { mutableStateOf("") }
-    var appliedQuery by remember { mutableStateOf("") }
-    var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
-    var filterTopRated by remember { mutableStateOf(false) }
-    var filterFresh by remember { mutableStateOf(false) }
-    var filterWatchlist by remember { mutableStateOf(false) }
-    var topRatedCount by remember { mutableStateOf(0) }
-    var freshCount by remember { mutableStateOf(0) }
-    var ratedCount by remember { mutableStateOf(0) }
-    var totalCount by remember { mutableStateOf(0) }
-    var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
+    var query by tabState.filters.queryState
+    var appliedQuery by tabState.filters.appliedQueryState
+    var sortOption by tabState.filters.sortOptionState
+    var filterTopRated by tabState.filters.filterTopRatedState
+    var filterFresh by tabState.filters.filterFreshState
+    var filterWatchlist by tabState.filters.filterPersonalState
+    var topRatedCount by tabState.topRatedCountState
+    var freshCount by tabState.freshCountState
+    var ratedCount by tabState.ratedCountState
+    var totalCount by tabState.totalCountState
+    var selectedCategory by tabState.filters.selectedCategoryState
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
-    var allMatchingMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
-    var isCatalogLoading by remember { mutableStateOf(true) }
+    var allMatchingMovies by tabState.allMatchingMoviesState
+    var isCatalogLoading by tabState.isCatalogLoadingState
     val progressByKey = remember(progressEntries) { progressEntries.associateBy(VodProgressEntry::key) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
@@ -440,31 +443,31 @@ internal fun XtreamMoviesScreen(
         !filterWatchlist
 
     // Trakt Recommendations (movies-only) for the default view
-    val traktConnected = remember(traktNamespace, context) {
+    val traktConnected = sharedTraktConnected ?: remember(traktNamespace, context) {
         com.fortresstv.player.trakt.TraktSettingsStore(context.applicationContext, traktNamespace).isConnected()
     }
-    var traktRecItems by remember(traktNamespace) {
+    var localTraktRecItems by remember(traktNamespace) {
         mutableStateOf<List<com.fortresstv.player.trakt.TraktRecommendationItem>>(emptyList())
     }
-    LaunchedEffect(traktNamespace, traktConnected) {
-        if (!traktConnected) {
-            traktRecItems = emptyList()
+    LaunchedEffect(traktNamespace, traktConnected, sharedRecommendedMovies) {
+        if (sharedRecommendedMovies != null || !traktConnected) {
+            localTraktRecItems = emptyList()
             return@LaunchedEffect
         }
         val recStore = com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace)
-        traktRecItems = withContext(Dispatchers.IO) { recStore.loadRecommendations() }
+        localTraktRecItems = withContext(Dispatchers.IO) { recStore.loadRecommendations() }
         com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context.applicationContext, traktNamespace)
-            .onSuccess { traktRecItems = it }
+            .onSuccess { localTraktRecItems = it }
     }
-    var recommendedMovies by remember(traktNamespace) { mutableStateOf<List<CatalogMovie>>(emptyList()) }
-    LaunchedEffect(isDefaultView, traktConnected, traktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated) {
-        if (!isDefaultView || !traktConnected || traktRecItems.isEmpty() || catalogs.isEmpty()) {
-            recommendedMovies = emptyList()
+    var localRecommendedMovies by remember(traktNamespace) { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    LaunchedEffect(isDefaultView, traktConnected, localTraktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated, sharedRecommendedMovies) {
+        if (sharedRecommendedMovies != null || !isDefaultView || !traktConnected || localTraktRecItems.isEmpty() || catalogs.isEmpty()) {
+            localRecommendedMovies = emptyList()
             return@LaunchedEffect
         }
-        recommendedMovies = withContext(Dispatchers.Default) {
+        localRecommendedMovies = withContext(Dispatchers.Default) {
             com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
-                recommendations = traktRecItems,
+                recommendations = localTraktRecItems,
                 catalogs = catalogs,
                 hideAdultContent = hideAdultContent,
                 maximumAge = maximumAge,
@@ -472,23 +475,33 @@ internal fun XtreamMoviesScreen(
             ).movies
         }
     }
+    val recommendedMovies = if (!isDefaultView || !traktConnected) {
+        emptyList()
+    } else {
+        sharedRecommendedMovies ?: localRecommendedMovies
+    }
 
-    val watchlistMatcher = remember(movieWatchlistIds) {
-        if (movieWatchlistIds.isEmpty()) null else com.fortresstv.player.library.FastIdMatcher(movieWatchlistIds)
-    }
-    val watchlistCount = remember(allMatchingMovies, watchlistMatcher) {
-        if (watchlistMatcher == null) 0
-        else allMatchingMovies.count { entry ->
-            watchlistMatcher.matches(entry.movie.libraryId(entry.catalog.sourceId), entry.movie.id.toString())
+    var watchlistCount by tabState.watchlistCountState
+    var watchlistMovies by tabState.watchlistMoviesState
+    LaunchedEffect(allMatchingMovies, movieWatchlistIds, tabState) {
+        if (!tabState.needsWatchlistRecompute(allMatchingMovies, movieWatchlistIds)) return@LaunchedEffect
+        if (movieWatchlistIds.isEmpty() || allMatchingMovies.isEmpty()) {
+            watchlistCount = 0
+            watchlistMovies = emptyList()
+            tabState.markWatchlistComputed(allMatchingMovies, movieWatchlistIds)
+            return@LaunchedEffect
         }
-    }
-    val visibleMovies = remember(allMatchingMovies, filterWatchlist, watchlistMatcher) {
-        if (!filterWatchlist) allMatchingMovies
-        else if (watchlistMatcher == null) emptyList()
-        else allMatchingMovies.filter { entry ->
-            watchlistMatcher.matches(entry.movie.libraryId(entry.catalog.sourceId), entry.movie.id.toString())
+        val filtered = withContext(Dispatchers.Default) {
+            val matcher = com.fortresstv.player.library.FastIdMatcher(movieWatchlistIds)
+            allMatchingMovies.filter { entry ->
+                matcher.matches(entry.movie.libraryId(entry.catalog.sourceId), entry.movie.id.toString())
+            }
         }
+        watchlistMovies = filtered
+        watchlistCount = filtered.size
+        tabState.markWatchlistComputed(allMatchingMovies, movieWatchlistIds)
     }
+    val visibleMovies = if (filterWatchlist) watchlistMovies else allMatchingMovies
 
     val enrichmentRefreshToken = rememberLowCoverageRatingEnrichment(
         catalogs = catalogs,
@@ -501,8 +514,10 @@ internal fun XtreamMoviesScreen(
         ratingOf = { it.movie.rating },
         targetOf = { com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", it.movie.name, it.movie.year, it.movie.imdbId) }
     )
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken) {
-        isCatalogLoading = true
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken, tabState) {
+        val computeParams = listOf(appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken)
+        if (!tabState.needsRecompute(catalogs, computeParams)) return@LaunchedEffect
+        if (allMatchingMovies.isEmpty()) isCatalogLoading = true
         val result = withContext(Dispatchers.Default) {
             val hasOmdb = OmdbMetadataResolver.hasAnyCached()
             filterAndSortVodItems(
@@ -537,9 +552,13 @@ internal fun XtreamMoviesScreen(
         ratedCount = result.ratedCount
         totalCount = result.totalCount
         isCatalogLoading = false
+        tabState.markComputed(catalogs, computeParams)
     }
-    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterWatchlist) {
-        if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterWatchlist, tabState) {
+        val scrollParams = listOf(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterWatchlist)
+        if (tabState.consumeScrollReset(scrollParams) && gridState.firstVisibleItemIndex > 0) {
+            gridState.scrollToItem(0)
+        }
     }
 
     val showContinueWatchingShelf = isDefaultView && continueWatching.isNotEmpty()

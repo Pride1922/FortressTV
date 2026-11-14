@@ -503,7 +503,9 @@ internal fun HomeScreen(
     onNavigateToDestination: (LibraryDestination) -> Unit,
     homeHiddenSections: Set<String> = emptySet(),
     homeSectionOrder: List<String> = com.fortresstv.player.ui.HomeSectionId.defaultOrder,
-    onOpenCustomizeHome: () -> Unit = {}
+    onOpenCustomizeHome: () -> Unit = {},
+    sharedShelvesState: HomeShelvesStateHolder? = null,
+    homeListState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState()
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -574,7 +576,7 @@ internal fun HomeScreen(
         ProfileRepository.get(context.applicationContext).activeProfile
     }.collectAsState()
     val currentProfileId = currentProfile.id
-    val shelvesState = remember(traktNamespace, coroutineScope) {
+    val shelvesState = sharedShelvesState ?: remember(traktNamespace, coroutineScope) {
         HomeShelvesStateHolder(context.applicationContext, traktNamespace, coroutineScope)
     }
     val omdbSettings = com.fortresstv.player.omdb.LocalOmdbSettings.current
@@ -594,7 +596,7 @@ internal fun HomeScreen(
     }
 
     LaunchedEffect(shelvesState, traktConnected) {
-        shelvesState.syncCoreTrakt()
+        shelvesState.ensureCoreTraktSynced()
     }
 
     LaunchedEffect(shelvesState, traktConnected, showFeaturedSeries) {
@@ -615,8 +617,8 @@ internal fun HomeScreen(
     }
 
     val matchedTraktRecs = shelvesState.matchedTraktRecs
-    LaunchedEffect(shelvesState, showTraktRecs, catalogs, hideAdultContent, maximumAge, blockUnrated, shelvesState.traktRecItems) {
-        shelvesState.recomputeRecommendations(showTraktRecs, catalogs, hideAdultContent, maximumAge, blockUnrated)
+    LaunchedEffect(shelvesState, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated, shelvesState.traktRecItems) {
+        shelvesState.recomputeRecommendations(traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated)
     }
 
     val featuredSeriesShelf = shelvesState.featuredSeriesShelf
@@ -653,9 +655,12 @@ internal fun HomeScreen(
         if (visibleShelves.isEmpty()) add("empty")
         if (compactSearch) add("customize")
     }
-    val homeListState = rememberLazyListState()
+    var lastSectionOrder by remember { mutableStateOf(homeSectionOrder) }
     LaunchedEffect(homeSectionOrder) {
-        homeListState.requestScrollToItem(0)
+        if (lastSectionOrder != homeSectionOrder) {
+            lastSectionOrder = homeSectionOrder
+            homeListState.requestScrollToItem(0)
+        }
     }
 
     fun openSearch() {

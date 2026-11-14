@@ -134,8 +134,28 @@ internal class HomeShelvesStateHolder(
     private var featuredMoviesJob: Job? = null
     private var omdbPrefetchJob: Job? = null
 
+    private var lastSyncedConnected: Boolean? = null
+    private var lastPopularShowsKey: Pair<Boolean, Boolean>? = null
+    private var lastPopularMoviesKey: Pair<Boolean, Boolean>? = null
+    private var lastRecsCatalogs: List<XtreamCatalog>? = null
+    private var lastRecsParams: List<Any?>? = null
+    private var lastWatchlistCatalogs: List<XtreamCatalog>? = null
+    private var lastWatchlistParams: List<Any?>? = null
+    private var lastFeaturedSeriesCatalogs: List<XtreamCatalog>? = null
+    private var lastFeaturedSeriesParams: List<Any?>? = null
+    private var lastFeaturedMoviesCatalogs: List<XtreamCatalog>? = null
+    private var lastFeaturedMoviesParams: List<Any?>? = null
+
+    fun ensureCoreTraktSynced() {
+        val connected = traktConnected
+        if (lastSyncedConnected == connected) return
+        lastSyncedConnected = connected
+        syncCoreTrakt()
+    }
+
     fun syncCoreTrakt() {
         coreSyncJob?.cancel()
+        lastSyncedConnected = traktConnected
         if (!traktConnected) {
             traktWatchlistItems = emptyList()
             traktRecItems = emptyList()
@@ -159,6 +179,9 @@ internal class HomeShelvesStateHolder(
     }
 
     fun syncPopularShows(enabled: Boolean) {
+        val key = traktConnected to enabled
+        if (lastPopularShowsKey == key) return
+        lastPopularShowsKey = key
         popularShowsJob?.cancel()
         if (!traktConnected || !enabled) {
             traktPopularItems = emptyList()
@@ -172,6 +195,9 @@ internal class HomeShelvesStateHolder(
     }
 
     fun syncPopularMovies(enabled: Boolean) {
+        val key = traktConnected to enabled
+        if (lastPopularMoviesKey == key) return
+        lastPopularMoviesKey = key
         popularMoviesJob?.cancel()
         if (!traktConnected || !enabled) {
             traktPopularMovieItems = emptyList()
@@ -189,8 +215,14 @@ internal class HomeShelvesStateHolder(
     }
 
     fun recomputeWatchlist(showTraktWatchlist: Boolean, catalogs: List<XtreamCatalog>) {
-        watchlistMatchJob?.cancel()
         val items = traktWatchlistItems
+        val params = listOf(showTraktWatchlist, items)
+        if (sameCatalogRefs(lastWatchlistCatalogs, catalogs) && lastWatchlistParams == params) {
+            return
+        }
+        lastWatchlistCatalogs = catalogs
+        lastWatchlistParams = params
+        watchlistMatchJob?.cancel()
         if (!showTraktWatchlist || items.isEmpty()) {
             matchedTraktWatchlist = TraktMatchedWatchlist()
             return
@@ -209,9 +241,15 @@ internal class HomeShelvesStateHolder(
         maximumAge: Int?,
         blockUnrated: Boolean
     ) {
-        recsMatchJob?.cancel()
         val items = traktRecItems
-        if (!showTraktRecs || items.isEmpty()) {
+        val params = listOf(showTraktRecs, items, hideAdultContent, maximumAge, blockUnrated)
+        if (sameCatalogRefs(lastRecsCatalogs, catalogs) && lastRecsParams == params) {
+            return
+        }
+        lastRecsCatalogs = catalogs
+        lastRecsParams = params
+        recsMatchJob?.cancel()
+        if (!showTraktRecs || items.isEmpty() || catalogs.isEmpty()) {
             matchedTraktRecs = TraktMatchedRecommendations()
             return
         }
@@ -235,13 +273,19 @@ internal class HomeShelvesStateHolder(
         maximumAge: Int?,
         blockUnrated: Boolean
     ) {
+        val popular = traktPopularItems
+        val connected = traktConnected
+        val params = listOf(showFeaturedSeries, connected, popular, hideAdultContent, maximumAge, blockUnrated)
+        if (sameCatalogRefs(lastFeaturedSeriesCatalogs, catalogs) && lastFeaturedSeriesParams == params) {
+            return
+        }
+        lastFeaturedSeriesCatalogs = catalogs
+        lastFeaturedSeriesParams = params
         featuredSeriesJob?.cancel()
         if (!showFeaturedSeries || catalogs.isEmpty()) {
             featuredSeriesShelf = FeaturedSeriesShelf()
             return
         }
-        val popular = traktPopularItems
-        val connected = traktConnected
         featuredSeriesJob = scope.launch {
             featuredSeriesShelf = withContext(Dispatchers.Default) {
                 val firstSeenStore = SeriesFirstSeenStore(appContext.filesDir)
@@ -268,13 +312,19 @@ internal class HomeShelvesStateHolder(
         maximumAge: Int?,
         blockUnrated: Boolean
     ) {
+        val popular = traktPopularMovieItems
+        val connected = traktConnected
+        val params = listOf(showFeaturedMovies, connected, popular, hideAdultContent, maximumAge, blockUnrated)
+        if (sameCatalogRefs(lastFeaturedMoviesCatalogs, catalogs) && lastFeaturedMoviesParams == params) {
+            return
+        }
+        lastFeaturedMoviesCatalogs = catalogs
+        lastFeaturedMoviesParams = params
         featuredMoviesJob?.cancel()
         if (!showFeaturedMovies || catalogs.isEmpty()) {
             featuredMoviesShelf = FeaturedMoviesShelf()
             return
         }
-        val popular = traktPopularMovieItems
-        val connected = traktConnected
         featuredMoviesJob = scope.launch {
             featuredMoviesShelf = withContext(Dispatchers.Default) {
                 val firstSeenStore = MoviesFirstSeenStore(appContext.filesDir)
