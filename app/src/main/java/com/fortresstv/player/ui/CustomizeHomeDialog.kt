@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -142,7 +143,10 @@ fun CustomizeHomeDialog(
                             color = Color(0xFF9EA3B0)
                         )
                     }
-                    IconButton(onClick = onDismiss) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.04f)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = strings.close,
@@ -185,7 +189,12 @@ fun CustomizeHomeDialog(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f).clickable { onToggleSection(id) }.padding(vertical = 7.dp)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .tvFocusHighlight(shape = RoundedCornerShape(8.dp), scaleOnFocus = 1.01f)
+                                    .clickable { onToggleSection(id) }
+                                    .padding(horizontal = 4.dp, vertical = 7.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -210,16 +219,25 @@ fun CustomizeHomeDialog(
                                 )
                             }
 
-                            IconButton(onClick = { move(index - 1) }, enabled = index > 0) {
+                            IconButton(
+                                onClick = { move(index - 1) },
+                                enabled = index > 0,
+                                modifier = Modifier.tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.04f)
+                            ) {
                                 Icon(Icons.Default.KeyboardArrowUp, contentDescription = strings.moveHomeSectionUp(label))
                             }
-                            IconButton(onClick = { move(index + 1) }, enabled = index < items.lastIndex) {
+                            IconButton(
+                                onClick = { move(index + 1) },
+                                enabled = index < items.lastIndex,
+                                modifier = Modifier.tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.04f)
+                            ) {
                                 Icon(Icons.Default.KeyboardArrowDown, contentDescription = strings.moveHomeSectionDown(label))
                             }
 
                             Switch(
                                 checked = isVisible,
                                 onCheckedChange = { onToggleSection(id) },
+                                modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(16.dp), scaleOnFocus = 1.03f),
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
                                     checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -234,7 +252,10 @@ fun CustomizeHomeDialog(
                 Spacer(Modifier.height(18.dp))
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.02f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(text = strings.close, fontWeight = FontWeight.Bold)

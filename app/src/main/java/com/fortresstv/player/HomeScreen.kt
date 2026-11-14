@@ -1016,12 +1016,18 @@ internal fun HomeScreen(
                                     }
                                 }
                             }
-                            if (!compactSearch) IconButton(onClick = onOpenCustomizeHome) {
+                            if (!compactSearch) IconButton(
+                                onClick = onOpenCustomizeHome,
+                                modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.04f)
+                            ) {
                                 Icon(Icons.Default.Tune, contentDescription = strings.customizeHome)
                             }
                         }
                     }
-                    "customize" -> TextButton(onClick = onOpenCustomizeHome) { Text(strings.customizeHome) }
+                    "customize" -> TextButton(
+                        onClick = onOpenCustomizeHome,
+                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.03f)
+                    ) { Text(strings.customizeHome) }
 
                     "empty" -> {
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -1398,7 +1404,10 @@ internal fun HomeScreen(
                                 )
                             }
                             if (canManageHiddenRecommendations) {
-                                TextButton(onClick = { showHiddenRecommendations = true }) {
+                                TextButton(
+                                    onClick = { showHiddenRecommendations = true },
+                                    modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.03f)
+                                ) {
                                     Text(strings.traktHiddenRecommendations)
                                 }
                             }
