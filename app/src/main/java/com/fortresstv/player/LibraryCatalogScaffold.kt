@@ -412,6 +412,7 @@ internal fun LibraryCatalogScaffold(
     fastScrollItems: List<String> = emptyList(),
     onFastScrollJump: (suspend (Int) -> Unit)? = null,
     header: @Composable () -> Unit = {},
+    scrollableHeader: (androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit)? = null,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit
 ) {
     val strings = LocalAppStrings.current
@@ -987,7 +988,10 @@ internal fun LibraryCatalogScaffold(
                             horizontalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
                             verticalArrangement = Arrangement.spacedBy(if (isTv) 8.dp else 12.dp),
                             modifier = Modifier.fillMaxSize().testTag(gridTestTag),
-                            content = content
+                            content = {
+                                scrollableHeader?.invoke(this)
+                                content()
+                            }
                         )
 
                         if (showFastScroller && onFastScrollJump != null) {

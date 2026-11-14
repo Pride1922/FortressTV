@@ -103,6 +103,9 @@ interface Strings {
     val unwatched: String
     fun playNextEpisode(season: Int, episode: Int): String
     val allEpisodesWatched: String
+    val allAvailableEpisodesWatched: String
+    val followedFilter: String
+    val watchlistFilter: String
     val restartSeries: String
     fun unwatchedEpisodesCount(count: Int): String
     fun seasonUnwatchedCount(count: Int): String
@@ -691,6 +694,9 @@ object EnglishStrings : Strings {
     override val unwatched = "Unwatched"
     override fun playNextEpisode(season: Int, episode: Int) = "Play Next (S${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')})"
     override val allEpisodesWatched = "All episodes watched"
+    override val allAvailableEpisodesWatched = "All available episodes watched"
+    override val followedFilter = "Followed"
+    override val watchlistFilter = "Watchlist"
     override val restartSeries = "Restart Series"
     override fun unwatchedEpisodesCount(count: Int) = "$count ${if (count == 1) "unwatched" else "unwatched"}"
     override fun seasonUnwatchedCount(count: Int) = "$count ${if (count == 1) "unwatched" else "unwatched"}"
@@ -1282,6 +1288,9 @@ object PortugueseStrings : Strings {
     override val unwatched = "Não visto"
     override fun playNextEpisode(season: Int, episode: Int) = "Ver seguinte (T${season.toString().padStart(2, '0')} E${episode.toString().padStart(2, '0')})"
     override val allEpisodesWatched = "Todos os episódios vistos"
+    override val allAvailableEpisodesWatched = "Todos os episódios disponíveis vistos"
+    override val followedFilter = "A seguir"
+    override val watchlistFilter = "Para ver"
     override val restartSeries = "Recomeçar série"
     override fun unwatchedEpisodesCount(count: Int) = if (count == 1) "1 por ver" else "$count por ver"
     override fun seasonUnwatchedCount(count: Int) = if (count == 1) "1 por ver" else "$count por ver"

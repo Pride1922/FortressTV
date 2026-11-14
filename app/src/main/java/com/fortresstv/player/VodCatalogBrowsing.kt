@@ -239,7 +239,8 @@ internal fun VodRatingFilterChipsRow(
     onToggleTopRated: () -> Unit,
     filterFresh: Boolean,
     freshCount: Int,
-    onToggleFresh: () -> Unit
+    onToggleFresh: () -> Unit,
+    extraChips: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {}
 ) {
     val strings = LocalAppStrings.current
     Row(
@@ -299,5 +300,6 @@ internal fun VodRatingFilterChipsRow(
                 }
             }
         }
+        extraChips()
     }
 }

@@ -72,6 +72,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -90,6 +91,8 @@ import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -393,6 +396,7 @@ internal fun XtreamSeriesScreen(
     gridState: LazyGridState,
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
+    traktNamespace: String = "default",
     continueWatching: List<VodProgressEntry>,
     progressEntries: List<VodProgressEntry>,
     onContinueWatching: (VodProgressEntry) -> Unit,
@@ -403,19 +407,21 @@ internal fun XtreamSeriesScreen(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val isTv = com.fortresstv.player.ui.LocalFormFactor.current.isTelevision
     val omdbSettings = LocalOmdbSettings.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
     var filterTopRated by remember { mutableStateOf(false) }
     var filterFresh by remember { mutableStateOf(false) }
+    var filterFollowed by remember { mutableStateOf(false) }
     var topRatedCount by remember { mutableStateOf(0) }
     var freshCount by remember { mutableStateOf(0) }
     var ratedCount by remember { mutableStateOf(0) }
     var totalCount by remember { mutableStateOf(0) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selected by remember { mutableStateOf<CatalogSeries?>(null) }
-    var visibleSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
+    var allMatchingSeries by remember { mutableStateOf<List<CatalogSeries>>(emptyList()) }
     var isCatalogLoading by remember { mutableStateOf(true) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
@@ -425,6 +431,95 @@ internal fun XtreamSeriesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
+
+    val isDefaultView = appliedQuery.isBlank() &&
+        selectedCategory == null &&
+        !filterTopRated &&
+        !filterFresh &&
+        !filterFollowed
+
+    // Trakt Recommendations (series-only) for the default view
+    val traktConnected = remember(traktNamespace, context) {
+        com.fortresstv.player.trakt.TraktSettingsStore(context.applicationContext, traktNamespace).isConnected()
+    }
+    var traktRecItems by remember(traktNamespace) {
+        mutableStateOf<List<com.fortresstv.player.trakt.TraktRecommendationItem>>(emptyList())
+    }
+    LaunchedEffect(traktNamespace, traktConnected) {
+        if (!traktConnected) {
+            traktRecItems = emptyList()
+            return@LaunchedEffect
+        }
+        val recStore = com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace)
+        traktRecItems = withContext(Dispatchers.IO) { recStore.loadRecommendations() }
+        com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context.applicationContext, traktNamespace)
+            .onSuccess { traktRecItems = it }
+    }
+    var recommendedSeries by remember(traktNamespace) { mutableStateOf<List<CatalogSeries>>(emptyList()) }
+    LaunchedEffect(isDefaultView, traktConnected, traktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated) {
+        if (!isDefaultView || !traktConnected || traktRecItems.isEmpty() || catalogs.isEmpty()) {
+            recommendedSeries = emptyList()
+            return@LaunchedEffect
+        }
+        recommendedSeries = withContext(Dispatchers.Default) {
+            com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
+                recommendations = traktRecItems,
+                catalogs = catalogs,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated
+            ).series
+        }
+    }
+
+    // Series progress for resumable episode & cached all-episodes-watched status
+    val seriesProgressByKey = remember(progressEntries) {
+        progressEntries
+            .asSequence()
+            .filter { it.kind == VodProgressKind.EPISODE && it.seriesId != null && it.progressFraction > 0f }
+            .sortedByDescending { it.updatedAtMs }
+            .distinctBy { "${it.sourceId}:${it.seriesId}" }
+            .associate { "${it.sourceId}:${it.seriesId}" to it.progressFraction }
+    }
+    var fullyWatchedSeriesKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(catalogs, profiles, watchedItemIds) {
+        if (watchedItemIds.isEmpty() || catalogs.isEmpty()) {
+            fullyWatchedSeriesKeys = emptySet()
+            return@LaunchedEffect
+        }
+        fullyWatchedSeriesKeys = withContext(Dispatchers.IO) {
+            val watchedKeys = HashSet<String>()
+            for (catalog in catalogs) {
+                val source = profiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream ?: continue
+                val client = XtreamClient(context.applicationContext, catalog.sourceId, source)
+                for (series in catalog.series) {
+                    val details = client.loadCachedSeriesDetails(series.id) ?: continue
+                    if (details.episodes.isNotEmpty() && details.episodes.all { it.libraryId(catalog.sourceId) in watchedItemIds }) {
+                        watchedKeys.add("${catalog.sourceId}:${series.id}")
+                    }
+                }
+            }
+            watchedKeys
+        }
+    }
+
+    val followedMatcher = remember(followedSeriesIds) {
+        if (followedSeriesIds.isEmpty()) null else com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
+    }
+    val followedCount = remember(allMatchingSeries, followedMatcher) {
+        if (followedMatcher == null) 0
+        else allMatchingSeries.count { entry ->
+            followedMatcher.matches(entry.series.libraryId(entry.catalog.sourceId), entry.series.id.toString())
+        }
+    }
+    val visibleSeries = remember(allMatchingSeries, filterFollowed, followedMatcher) {
+        if (!filterFollowed) allMatchingSeries
+        else if (followedMatcher == null) emptyList()
+        else allMatchingSeries.filter { entry ->
+            followedMatcher.matches(entry.series.libraryId(entry.catalog.sourceId), entry.series.id.toString())
+        }
+    }
+
     val enrichmentRefreshToken = rememberLowCoverageRatingEnrichment(
         catalogs = catalogs,
         visibleItems = visibleSeries,
@@ -465,16 +560,51 @@ internal fun XtreamSeriesScreen(
                 unwrap = { it.series }
             )
         }
-        visibleSeries = result.items
+        allMatchingSeries = result.items
         topRatedCount = result.topRatedCount
         freshCount = result.freshCount
         ratedCount = result.ratedCount
         totalCount = result.totalCount
         isCatalogLoading = false
     }
-    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterFollowed) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
+
+    val showContinueWatchingShelf = isDefaultView && continueWatching.isNotEmpty()
+    val showRecommendedShelf = isDefaultView && traktConnected && recommendedSeries.isNotEmpty()
+    val scrollableHeaderCount = (if (showContinueWatchingShelf) 1 else 0) + (if (showRecommendedShelf) 1 else 0)
+
+    // TV focus tracking: restore focus to the opened card on dialog dismiss, and move focus into grid when a shelf disappears
+    var lastOpenedCardKey by remember { mutableStateOf<String?>(null) }
+    var wasDialogOpen by remember { mutableStateOf(false) }
+    val cardFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    var focusedInContinueWatching by remember { mutableStateOf(false) }
+    var focusedInRecommended by remember { mutableStateOf(false) }
+    var prevShowCw by remember { mutableStateOf(showContinueWatchingShelf) }
+    var prevShowRec by remember { mutableStateOf(showRecommendedShelf) }
+
+    LaunchedEffect(selected) {
+        val isOpen = selected != null
+        if (wasDialogOpen && !isOpen && isTv) {
+            delay(60)
+            val requester = lastOpenedCardKey?.let { cardFocusRequesters[it] } ?: contentFocusRequester
+            runCatching { requester.requestFocus() }
+        }
+        wasDialogOpen = isOpen
+    }
+
+    LaunchedEffect(showContinueWatchingShelf, showRecommendedShelf) {
+        val cwDisappeared = prevShowCw && !showContinueWatchingShelf && focusedInContinueWatching
+        val recDisappeared = prevShowRec && !showRecommendedShelf && focusedInRecommended
+        prevShowCw = showContinueWatchingShelf
+        prevShowRec = showRecommendedShelf
+        if (isTv && (cwDisappeared || recDisappeared) && visibleSeries.isNotEmpty()) {
+            delay(50)
+            runCatching { contentFocusRequester.requestFocus() }
+        }
+    }
+
     val ratingCacheVersion = rememberVodOmdbPrefetchVersion(
         gridState = gridState,
         visibleItems = visibleSeries,
@@ -504,39 +634,155 @@ internal fun XtreamSeriesScreen(
         gridTestTag = "series_grid",
         fastScrollItems = fastScrollNames,
         onFastScrollJump = { targetIndex ->
-            gridState.scrollToItem(targetIndex)
+            gridState.scrollToItem(targetIndex + scrollableHeaderCount)
         },
         header = {
-            ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
             VodRatingFilterChipsRow(
                 filterTopRated = filterTopRated,
                 topRatedCount = topRatedCount,
                 onToggleTopRated = { filterTopRated = !filterTopRated },
                 filterFresh = filterFresh,
                 freshCount = freshCount,
-                onToggleFresh = { filterFresh = !filterFresh }
+                onToggleFresh = { filterFresh = !filterFresh },
+                extraChips = {
+                    if (followedCount > 0 || filterFollowed) {
+                        Surface(
+                            onClick = { filterFollowed = !filterFollowed },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (filterFollowed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, if (filterFollowed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                            modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bookmark,
+                                    contentDescription = null,
+                                    tint = if (filterFollowed) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "${strings.followedFilter} · $followedCount",
+                                    color = if (filterFollowed) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (filterFollowed) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
             )
-        }
+        },
+        scrollableHeader = if (scrollableHeaderCount > 0) {
+            {
+                if (showContinueWatchingShelf) {
+                    item(key = "series_continue_watching_shelf", span = { GridItemSpan(maxLineSpan) }) {
+                        CompactContinueWatchingShelf(
+                            entries = continueWatching,
+                            onClick = onContinueWatching,
+                            onRemove = onRemoveContinueWatching,
+                            onShelfFocusChanged = { focusedInContinueWatching = it }
+                        )
+                    }
+                }
+                if (showRecommendedShelf) {
+                    item(key = "series_recommended_shelf", span = { GridItemSpan(maxLineSpan) }) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .onFocusChanged { focusedInRecommended = it.hasFocus }
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.ThumbUp,
+                                    contentDescription = null,
+                                    tint = Color(0xFFED1C24),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = strings.traktRecommendations,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(recommendedSeries, key = { "series_rec:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
+                                    val seriesKey = "${entry.catalog.sourceId}:${entry.series.id}"
+                                    val recCardKey = "rec:$seriesKey"
+                                    val cardRequester = remember(recCardKey) {
+                                        cardFocusRequesters.getOrPut(recCardKey) { FocusRequester() }
+                                    }
+                                    val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                        } else null
+                                    }
+                                    val rating = formatEffectiveRatingBadge(cachedOmdb?.imdbRating, entry.series.rating)
+                                    val isSeriesWatched = seriesKey in fullyWatchedSeriesKeys
+                                    VodPosterCard(
+                                        title = entry.series.name,
+                                        posterUrl = entry.series.coverUrl,
+                                        subtitle = formatVodMetadata(entry.series.year, rating),
+                                        imdbRating = rating,
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                        isWatched = isSeriesWatched,
+                                        watchedContentDescription = if (isSeriesWatched) strings.allAvailableEpisodesWatched else null,
+                                        progressFraction = seriesProgressByKey[seriesKey],
+                                        modifier = Modifier
+                                            .width(120.dp)
+                                            .focusRequester(cardRequester),
+                                        onClick = {
+                                            lastOpenedCardKey = recCardKey
+                                            selected = entry
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else null
     ) {
         gridItemsIndexed(
             visibleSeries,
             key = { _, entry -> "${entry.catalog.sourceId}:${entry.series.id}" },
             contentType = { _, _ -> "series_poster" }
         ) { index, entry ->
+            val seriesKey = "${entry.catalog.sourceId}:${entry.series.id}"
+            val cardRequester = remember(seriesKey) {
+                cardFocusRequesters.getOrPut(seriesKey) { FocusRequester() }
+            }
             val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
                 if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
                     OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
                 } else null
             }
             val rating = formatEffectiveRatingBadge(cachedOmdb?.imdbRating, entry.series.rating)
+            val isSeriesWatched = seriesKey in fullyWatchedSeriesKeys
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
                 subtitle = formatVodMetadata(entry.series.year, rating),
                 imdbRating = rating,
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
-                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
-                onClick = { selected = entry }
+                isWatched = isSeriesWatched,
+                watchedContentDescription = if (isSeriesWatched) strings.allAvailableEpisodesWatched else null,
+                progressFraction = seriesProgressByKey[seriesKey],
+                modifier = Modifier
+                    .then(if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier)
+                    .focusRequester(cardRequester),
+                onClick = {
+                    lastOpenedCardKey = seriesKey
+                    selected = entry
+                }
             )
         }
     }

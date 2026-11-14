@@ -229,6 +229,13 @@ class XtreamClient(
         return parseSeriesDetails(json)
     }
 
+    fun loadCachedSeriesDetails(seriesId: Int): XtreamSeriesDetails? {
+        val file = detailCacheFile("get_series_info", mapOf("series_id" to seriesId.toString())) ?: return null
+        if (!file.exists()) return null
+        val json = runCatching { file.readText() }.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching { parseSeriesDetails(json) }.getOrNull()
+    }
+
     suspend fun loadMovieDetails(movieId: Int): XtreamMovieDetails {
         val json = request("get_vod_info", mapOf("vod_id" to movieId.toString()))
         return parseMovieDetails(json)

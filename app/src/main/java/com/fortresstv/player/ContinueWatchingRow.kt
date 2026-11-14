@@ -766,3 +766,134 @@ internal fun ContinueWatchingRow(
     }
 }
 
+/**
+ * Compact horizontal shelf for Continue Watching used inside scrollable VOD grids.
+ */
+@Composable
+internal fun CompactContinueWatchingShelf(
+    entries: List<VodProgressEntry>,
+    onClick: (VodProgressEntry) -> Unit,
+    onRemove: (VodProgressEntry) -> Unit,
+    firstItemFocusRequester: FocusRequester? = null,
+    onShelfFocusChanged: ((Boolean) -> Unit)? = null
+) {
+    val distinctEntries = remember(entries) { entries.filter { it.title.isNotBlank() }.distinctBy { it.key } }
+    if (distinctEntries.isEmpty()) return
+    val strings = LocalAppStrings.current
+    val isTv = LocalFormFactor.current.isTelevision
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp)
+            .onFocusChanged { onShelfFocusChanged?.invoke(it.hasFocus) }
+    ) {
+        Text(
+            text = strings.continueWatching,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            itemsIndexed(distinctEntries, key = { _, it -> "compact_cw_${it.key}" }) { index, entry ->
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .width(236.dp)
+                        .then(if (index == 0 && firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
+                        .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.03f else 1.0f)
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onClick(entry) }
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (!entry.posterUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = entry.posterUrl,
+                                    contentDescription = entry.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .width(42.dp)
+                                        .height(60.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = entry.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                val episodeText = if (entry.season != null && entry.episode != null) {
+                                    strings.episodeLabel(entry.season, entry.episode)
+                                } else null
+                                val remainingMs = (entry.durationMs - entry.positionMs).coerceAtLeast(0L)
+                                val remainingMins = (remainingMs / 60_000L).toInt()
+                                val subtext = buildString {
+                                    if (episodeText != null) append(episodeText)
+                                    if (entry.progressFraction > 0f && remainingMins > 0) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append("${remainingMins}m")
+                                    } else if (entry.progressFraction == 0f && entry.kind == VodProgressKind.EPISODE) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append(strings.nextEpisode)
+                                    }
+                                }
+                                if (subtext.isNotEmpty()) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = subtext,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { onRemove(entry) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.1f)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = strings.removeFromContinueWatching,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                        if (entry.progressFraction > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(entry.progressFraction)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

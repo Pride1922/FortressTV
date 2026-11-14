@@ -72,6 +72,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -90,6 +91,8 @@ import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -397,25 +400,28 @@ internal fun XtreamMoviesScreen(
     blockUnrated: Boolean = false,
     gridState: LazyGridState,
     movieWatchlistIds: Set<String>,
+    traktNamespace: String = "default",
     onToggleWatchlist: (String, XtreamMovie) -> Unit,
     onToggleMovieWatched: (String, XtreamMovie) -> Unit,
     onPlay: (XtreamCatalog, XtreamMovie) -> Unit
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val isTv = com.fortresstv.player.ui.LocalFormFactor.current.isTelevision
     val omdbSettings = LocalOmdbSettings.current
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
     var filterTopRated by remember { mutableStateOf(false) }
     var filterFresh by remember { mutableStateOf(false) }
+    var filterWatchlist by remember { mutableStateOf(false) }
     var topRatedCount by remember { mutableStateOf(0) }
     var freshCount by remember { mutableStateOf(0) }
     var ratedCount by remember { mutableStateOf(0) }
     var totalCount by remember { mutableStateOf(0) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
-    var visibleMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    var allMatchingMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
     var isCatalogLoading by remember { mutableStateOf(true) }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy(VodProgressEntry::key) }
     val showSourceNames = catalogs.size > 1
@@ -426,9 +432,67 @@ internal fun XtreamMoviesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
+
+    val isDefaultView = appliedQuery.isBlank() &&
+        selectedCategory == null &&
+        !filterTopRated &&
+        !filterFresh &&
+        !filterWatchlist
+
+    // Trakt Recommendations (movies-only) for the default view
+    val traktConnected = remember(traktNamespace, context) {
+        com.fortresstv.player.trakt.TraktSettingsStore(context.applicationContext, traktNamespace).isConnected()
+    }
+    var traktRecItems by remember(traktNamespace) {
+        mutableStateOf<List<com.fortresstv.player.trakt.TraktRecommendationItem>>(emptyList())
+    }
+    LaunchedEffect(traktNamespace, traktConnected) {
+        if (!traktConnected) {
+            traktRecItems = emptyList()
+            return@LaunchedEffect
+        }
+        val recStore = com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace)
+        traktRecItems = withContext(Dispatchers.IO) { recStore.loadRecommendations() }
+        com.fortresstv.player.trakt.TraktRecommendationsService.syncRecommendations(context.applicationContext, traktNamespace)
+            .onSuccess { traktRecItems = it }
+    }
+    var recommendedMovies by remember(traktNamespace) { mutableStateOf<List<CatalogMovie>>(emptyList()) }
+    LaunchedEffect(isDefaultView, traktConnected, traktRecItems, catalogs, hideAdultContent, maximumAge, blockUnrated) {
+        if (!isDefaultView || !traktConnected || traktRecItems.isEmpty() || catalogs.isEmpty()) {
+            recommendedMovies = emptyList()
+            return@LaunchedEffect
+        }
+        recommendedMovies = withContext(Dispatchers.Default) {
+            com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
+                recommendations = traktRecItems,
+                catalogs = catalogs,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated
+            ).movies
+        }
+    }
+
+    val watchlistMatcher = remember(movieWatchlistIds) {
+        if (movieWatchlistIds.isEmpty()) null else com.fortresstv.player.library.FastIdMatcher(movieWatchlistIds)
+    }
+    val watchlistCount = remember(allMatchingMovies, watchlistMatcher) {
+        if (watchlistMatcher == null) 0
+        else allMatchingMovies.count { entry ->
+            watchlistMatcher.matches(entry.movie.libraryId(entry.catalog.sourceId), entry.movie.id.toString())
+        }
+    }
+    val visibleMovies = remember(allMatchingMovies, filterWatchlist, watchlistMatcher) {
+        if (!filterWatchlist) allMatchingMovies
+        else if (watchlistMatcher == null) emptyList()
+        else allMatchingMovies.filter { entry ->
+            watchlistMatcher.matches(entry.movie.libraryId(entry.catalog.sourceId), entry.movie.id.toString())
+        }
+    }
+
     val enrichmentRefreshToken = rememberLowCoverageRatingEnrichment(
         catalogs = catalogs,
-        visibleItems = visibleMovies,
+        visibleItems = allMatchingMovies,
         ratedCount = ratedCount,
         totalCount = totalCount,
         omdbSettings = omdbSettings,
@@ -467,16 +531,51 @@ internal fun XtreamMoviesScreen(
                 unwrap = { it.movie }
             )
         }
-        visibleMovies = result.items
+        allMatchingMovies = result.items
         topRatedCount = result.topRatedCount
         freshCount = result.freshCount
         ratedCount = result.ratedCount
         totalCount = result.totalCount
         isCatalogLoading = false
     }
-    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
+    LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh, filterWatchlist) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
+
+    val showContinueWatchingShelf = isDefaultView && continueWatching.isNotEmpty()
+    val showRecommendedShelf = isDefaultView && traktConnected && recommendedMovies.isNotEmpty()
+    val scrollableHeaderCount = (if (showContinueWatchingShelf) 1 else 0) + (if (showRecommendedShelf) 1 else 0)
+
+    // TV focus tracking: restore focus to the opened card on dialog dismiss, and move focus into grid when a shelf disappears
+    var lastOpenedCardKey by remember { mutableStateOf<String?>(null) }
+    var wasDialogOpen by remember { mutableStateOf(false) }
+    val cardFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    var focusedInContinueWatching by remember { mutableStateOf(false) }
+    var focusedInRecommended by remember { mutableStateOf(false) }
+    var prevShowCw by remember { mutableStateOf(showContinueWatchingShelf) }
+    var prevShowRec by remember { mutableStateOf(showRecommendedShelf) }
+
+    LaunchedEffect(selectedMovie) {
+        val isOpen = selectedMovie != null
+        if (wasDialogOpen && !isOpen && isTv) {
+            delay(60)
+            val requester = lastOpenedCardKey?.let { cardFocusRequesters[it] } ?: contentFocusRequester
+            runCatching { requester.requestFocus() }
+        }
+        wasDialogOpen = isOpen
+    }
+
+    LaunchedEffect(showContinueWatchingShelf, showRecommendedShelf) {
+        val cwDisappeared = prevShowCw && !showContinueWatchingShelf && focusedInContinueWatching
+        val recDisappeared = prevShowRec && !showRecommendedShelf && focusedInRecommended
+        prevShowCw = showContinueWatchingShelf
+        prevShowRec = showRecommendedShelf
+        if (isTv && (cwDisappeared || recDisappeared) && visibleMovies.isNotEmpty()) {
+            delay(50)
+            runCatching { contentFocusRequester.requestFocus() }
+        }
+    }
+
     val ratingCacheVersion = rememberVodOmdbPrefetchVersion(
         gridState = gridState,
         visibleItems = visibleMovies,
@@ -506,25 +605,138 @@ internal fun XtreamMoviesScreen(
         gridTestTag = "movies_grid",
         fastScrollItems = fastScrollNames,
         onFastScrollJump = { targetIndex ->
-            gridState.scrollToItem(targetIndex)
+            gridState.scrollToItem(targetIndex + scrollableHeaderCount)
         },
         header = {
-            ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
             VodRatingFilterChipsRow(
                 filterTopRated = filterTopRated,
                 topRatedCount = topRatedCount,
                 onToggleTopRated = { filterTopRated = !filterTopRated },
                 filterFresh = filterFresh,
                 freshCount = freshCount,
-                onToggleFresh = { filterFresh = !filterFresh }
+                onToggleFresh = { filterFresh = !filterFresh },
+                extraChips = {
+                    if (watchlistCount > 0 || filterWatchlist) {
+                        Surface(
+                            onClick = { filterWatchlist = !filterWatchlist },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (filterWatchlist) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, if (filterWatchlist) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                            modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bookmark,
+                                    contentDescription = null,
+                                    tint = if (filterWatchlist) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "${strings.watchlistFilter} · $watchlistCount",
+                                    color = if (filterWatchlist) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (filterWatchlist) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
             )
-        }
+        },
+        scrollableHeader = if (scrollableHeaderCount > 0) {
+            {
+                if (showContinueWatchingShelf) {
+                    item(key = "movies_continue_watching_shelf", span = { GridItemSpan(maxLineSpan) }) {
+                        CompactContinueWatchingShelf(
+                            entries = continueWatching,
+                            onClick = onContinueWatching,
+                            onRemove = onRemoveContinueWatching,
+                            onShelfFocusChanged = { focusedInContinueWatching = it }
+                        )
+                    }
+                }
+                if (showRecommendedShelf) {
+                    item(key = "movies_recommended_shelf", span = { GridItemSpan(maxLineSpan) }) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .onFocusChanged { focusedInRecommended = it.hasFocus }
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.ThumbUp,
+                                    contentDescription = null,
+                                    tint = Color(0xFFED1C24),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = strings.traktRecommendations,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(recommendedMovies, key = { "movie_rec:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
+                                    val movieKey = "${entry.catalog.sourceId}:${entry.movie.id}"
+                                    val recCardKey = "rec:$movieKey"
+                                    val cardRequester = remember(recCardKey) {
+                                        cardFocusRequesters.getOrPut(recCardKey) { FocusRequester() }
+                                    }
+                                    val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                    val client = remember(entry.catalog.sourceId) {
+                                        val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+                                        source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
+                                    }
+                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                        } else null
+                                    }
+                                    val rating = formatEffectiveRatingBadge(cachedOmdb?.imdbRating, entry.movie.rating)
+                                    VodPosterCard(
+                                        title = entry.movie.name,
+                                        posterUrl = entry.movie.posterUrl,
+                                        subtitle = formatVodMetadata(entry.movie.year, rating),
+                                        imdbRating = rating,
+                                        rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                        isWatched = libraryId in watchedItemIds,
+                                        progressFraction = progressByKey[libraryId]?.progressFraction,
+                                        loadPosterFallback = if (entry.movie.posterUrl.isNullOrBlank()) {
+                                            client?.let { c -> { c.loadMovieDetails(entry.movie.id).posterUrl } }
+                                        } else null,
+                                        modifier = Modifier
+                                            .width(120.dp)
+                                            .focusRequester(cardRequester),
+                                        onClick = {
+                                            lastOpenedCardKey = recCardKey
+                                            selectedMovie = entry
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else null
     ) {
         gridItemsIndexed(
             visibleMovies,
             key = { _, entry -> "${entry.catalog.sourceId}:${entry.movie.id}" },
             contentType = { _, _ -> "movie_poster" }
         ) { index, entry ->
+            val movieKey = "${entry.catalog.sourceId}:${entry.movie.id}"
+            val cardRequester = remember(movieKey) {
+                cardFocusRequesters.getOrPut(movieKey) { FocusRequester() }
+            }
             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
             val client = remember(entry.catalog.sourceId) {
                 val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
@@ -547,8 +759,13 @@ internal fun XtreamMoviesScreen(
                 loadPosterFallback = if (entry.movie.posterUrl.isNullOrBlank()) {
                     client?.let { c -> { c.loadMovieDetails(entry.movie.id).posterUrl } }
                 } else null,
-                modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
-                onClick = { selectedMovie = entry }
+                modifier = Modifier
+                    .then(if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier)
+                    .focusRequester(cardRequester),
+                onClick = {
+                    lastOpenedCardKey = movieKey
+                    selectedMovie = entry
+                }
             )
         }
     }

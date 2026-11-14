@@ -387,6 +387,7 @@ internal fun VodPosterCard(
     imdbRating: String? = null,
     rottenTomatoes: String? = null,
     isWatched: Boolean = false,
+    watchedContentDescription: String? = null,
     progressFraction: Float? = null,
     modifier: Modifier = Modifier,
     loadPosterFallback: (suspend () -> String?)? = null,
@@ -542,7 +543,7 @@ internal fun VodPosterCard(
                     ) {
                         Icon(
                             Icons.Default.CheckCircle,
-                            contentDescription = strings.watched,
+                            contentDescription = watchedContentDescription ?: strings.watched,
                             modifier = Modifier.padding(4.dp).size(18.dp)
                         )
                     }

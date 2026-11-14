@@ -993,6 +993,7 @@ internal fun FortressLibrary(
                     blockUnrated = blockUnrated,
                     gridState = movieGridState,
                     movieWatchlistIds = movieWatchlistIds,
+                    traktNamespace = traktNamespace,
                     onToggleWatchlist = onToggleMovieWatchlist,
                     onToggleMovieWatched = { sourceId, movie ->
                         val key = movie.libraryId(sourceId)
@@ -1018,6 +1019,7 @@ internal fun FortressLibrary(
                     gridState = seriesGridState,
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
+                    traktNamespace = traktNamespace,
                     continueWatching = progressEntries.filter { it.kind == VodProgressKind.EPISODE },
                     progressEntries = progressEntries,
                     onContinueWatching = onResumeEntry,
