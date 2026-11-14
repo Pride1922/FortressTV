@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
@@ -42,7 +43,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.fortresstv.player.profile.ProfileEditDialog
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,10 +119,33 @@ internal fun LibraryHomeHeader(
                     )
                 }
             }
+            var editingOwnProfile by remember { mutableStateOf<HouseholdProfile?>(null) }
+            val headerScope = rememberCoroutineScope()
+            val headerRepository = ProfileRepository.get(LocalContext.current)
+            val allProfiles by headerRepository.profiles.collectAsState()
+            editingOwnProfile?.let { target ->
+                ProfileEditDialog(
+                    profile = target,
+                    existingProfiles = allProfiles,
+                    onSave = { saved, unlockToken ->
+                        headerScope.launch {
+                            runCatching { headerRepository.saveProfile(saved, unlockToken) }
+                            editingOwnProfile = null
+                        }
+                    },
+                    onDismiss = { editingOwnProfile = null }
+                )
+            }
             ProfileMenu(
                 expanded = profileOpen,
                 onClose = { profileOpen = false },
                 profile = profile,
+                onEditOwnProfile = if (profile != null && profile.id != RESTRICTED_PROFILE_ID) {
+                    {
+                        profileOpen = false
+                        editingOwnProfile = profile
+                    }
+                } else null,
                 onSwitchProfile = onSwitchProfile,
                 onSettings = onSettings,
                 onCloseApp = onCloseApp,
@@ -137,6 +164,7 @@ private fun ProfileMenu(
     expanded: Boolean,
     onClose: () -> Unit,
     profile: HouseholdProfile?,
+    onEditOwnProfile: (() -> Unit)? = null,
     onSwitchProfile: (() -> Unit)?,
     onSettings: () -> Unit,
     onCloseApp: () -> Unit,
@@ -202,6 +230,21 @@ private fun ProfileMenu(
                             if (profile.isChild) copy.childProfile else copy.adultProfile,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (onEditOwnProfile != null) {
+                    IconButton(
+                        onClick = onEditOwnProfile,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = copy.editProfile,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

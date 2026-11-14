@@ -420,11 +420,14 @@ internal fun HomeContinueWatchingShelf(
                 // store the portrait poster, so it doubles as the backdrop. The remove button sits in the
                 // footer, not over the image, so a TV remote can reach it with "down".
                 val progressLabel = if (nextEpisode) strings.nextEpisode else "${(entry.progressFraction * 100).toInt()}%"
-                Column(Modifier.width(cardWidth)) {
+                Box(
+                    Modifier
+                        .width(cardWidth)
+                        .aspectRatio(16f / 9f)
+                ) {
                     Box(
                         Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(16f / 9f)
+                            .matchParentSize()
                             .focusProperties {
                                 if (index == 0 && sidebarFocusRequester != null) left = sidebarFocusRequester
                             }
@@ -472,7 +475,7 @@ internal fun HomeContinueWatchingShelf(
                                 }
                             }
                             Column(
-                                Modifier.weight(1f).fillMaxHeight(),
+                                Modifier.weight(1f).fillMaxHeight().padding(end = 22.dp),
                                 verticalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -493,12 +496,25 @@ internal fun HomeContinueWatchingShelf(
                                         )
                                     }
                                 }
-                                Surface(shape = CircleShape, color = colors.primary, modifier = Modifier.size(30.dp)) {
-                                    Icon(
-                                        Icons.Default.PlayArrow,
-                                        contentDescription = null,
-                                        tint = colors.onPrimary,
-                                        modifier = Modifier.padding(5.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(shape = CircleShape, color = colors.primary, modifier = Modifier.size(28.dp)) {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            tint = colors.onPrimary,
+                                            modifier = Modifier.padding(4.dp)
+                                        )
+                                    }
+                                    Text(
+                                        progressLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (nextEpisode) colors.primary else Color.White.copy(alpha = 0.85f),
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -520,23 +536,23 @@ internal fun HomeContinueWatchingShelf(
                             }
                         }
                     }
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        onClick = { onRemove(entry) },
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.55f),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(28.dp)
+                            .tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)
                     ) {
-                        Text(
-                            progressLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (nextEpisode) colors.primary else colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = { onRemove(entry) },
-                            modifier = Modifier.size(36.dp).tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = strings.removeFromContinueWatching, modifier = Modifier.size(16.dp))
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = strings.removeFromContinueWatching,
+                                tint = Color.White.copy(alpha = 0.9f),
+                                modifier = Modifier.size(15.dp)
+                            )
                         }
                     }
                 }

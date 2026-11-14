@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ChildCare
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.People
@@ -26,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -58,11 +60,27 @@ internal fun ProfilesTab(
         ProfileStrings(languageTag.startsWith("pt"))
     }
     val activeProfile by repository.activeProfile.collectAsState()
+    val profiles by repository.profiles.collectAsState()
     val scope = rememberCoroutineScope()
 
     var showSelectionDialog by remember { mutableStateOf(false) }
     var showManagementDialog by remember { mutableStateOf(false) }
     var showPinDialogForManagement by remember { mutableStateOf(false) }
+    var editingOwnProfile by remember { mutableStateOf<HouseholdProfile?>(null) }
+
+    editingOwnProfile?.let { target ->
+        ProfileEditDialog(
+            profile = target,
+            existingProfiles = profiles,
+            onSave = { saved, unlockToken ->
+                scope.launch {
+                    runCatching { repository.saveProfile(saved, unlockToken) }
+                    editingOwnProfile = null
+                }
+            },
+            onDismiss = { editingOwnProfile = null }
+        )
+    }
     var showPinSetupDialog by remember { mutableStateOf(false) }
     var showPinRemoveDialog by remember { mutableStateOf(false) }
 
@@ -163,6 +181,19 @@ internal fun ProfilesTab(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                }
+
+                if (activeProfile.id != "restricted_default") {
+                    IconButton(
+                        onClick = { editingOwnProfile = activeProfile },
+                        modifier = Modifier.tvFocusHighlight(shape = CircleShape, scaleOnFocus = 1.08f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = copy.editProfile,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
         }

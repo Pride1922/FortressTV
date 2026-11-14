@@ -372,6 +372,7 @@ internal fun ProfileManagementDialog(
         ProfileStrings(languageTag.startsWith("pt"))
     }
     val profiles by repository.profiles.collectAsState()
+    val activeProfile by repository.activeProfile.collectAsState()
     val scope = rememberCoroutineScope()
 
     var editingProfile by remember { mutableStateOf<HouseholdProfile?>(null) }
@@ -519,11 +520,13 @@ internal fun ProfileManagementDialog(
                                     )
                                 }
 
-                                IconButton(
-                                    onClick = { editingProfile = prof },
-                                    modifier = Modifier.tvFocusHighlight()
-                                ) {
-                                    Icon(Icons.Default.Edit, contentDescription = copy.editProfile)
+                                if (prof.id == activeProfile.id) {
+                                    IconButton(
+                                        onClick = { editingProfile = prof },
+                                        modifier = Modifier.tvFocusHighlight()
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = copy.editProfile)
+                                    }
                                 }
 
                                 if (profiles.size > 1) {
@@ -605,8 +608,11 @@ internal fun ProfileEditDialog(
     var maximumAge by remember { mutableIntStateOf(profile?.maximumAge ?: 12) }
     var blockUnrated by remember { mutableStateOf(profile?.blockUnrated ?: true) }
     var hideAdultContent by remember { mutableStateOf(profile?.hideAdultContent ?: (kind == ProfileKind.CHILD)) }
+    var avatarUrl by remember { mutableStateOf(profile?.avatarUrl) }
     var isSaving by remember { mutableStateOf(false) }
     var showPinDialogForAdultToggle by remember { mutableStateOf(false) }
+    var showPinDialogForSave by remember { mutableStateOf(false) }
+    var pendingSaveResult by remember { mutableStateOf<HouseholdProfile?>(null) }
     var explicitUnlockToken by remember { mutableStateOf<String?>(null) }
 
     val trimmedName = name.trim()
@@ -628,6 +634,26 @@ internal fun ProfileEditDialog(
             },
             onDismiss = {
                 showPinDialogForAdultToggle = false
+            }
+        )
+    }
+
+    if (showPinDialogForSave) {
+        ParentalPinDialog(
+            mode = HouseholdPinDialogMode.VERIFY,
+            onSuccess = { unlockToken ->
+                explicitUnlockToken = unlockToken
+                showPinDialogForSave = false
+                val pending = pendingSaveResult
+                pendingSaveResult = null
+                if (pending != null) {
+                    isSaving = true
+                    onSave(pending, unlockToken)
+                }
+            },
+            onDismiss = {
+                showPinDialogForSave = false
+                pendingSaveResult = null
             }
         )
     }
@@ -665,6 +691,50 @@ internal fun ProfileEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // Avatar Picker
+                Text("Avatar", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val customExternalUrl = profile?.avatarUrl?.takeIf {
+                        it.isNotBlank() && ProfileAvatarPresets.resolveDrawableRes(it) == null
+                    }
+                    val avatarOptions = buildList<String?> {
+                        add(null) // Default initial avatar
+                        if (customExternalUrl != null) add(customExternalUrl)
+                        ProfileAvatarPresets.presets.forEach { add(it.id) }
+                    }
+                    avatarOptions.forEach { optionUrl ->
+                        val isSelected = avatarUrl == optionUrl
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable(enabled = !isSaving) { avatarUrl = optionUrl }
+                                .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.06f)
+                                .padding(3.dp)
+                        ) {
+                            ProfileAvatar(
+                                name = trimmedName.ifBlank { "F" },
+                                isChild = kind == ProfileKind.CHILD,
+                                size = 50.dp,
+                                fontSize = 22.sp,
+                                shape = RoundedCornerShape(10.dp),
+                                usePalette = true,
+                                avatarUrl = optionUrl
+                            )
+                        }
+                    }
+                }
 
                 // Profile Kind: Adult / Child
                 Text(copy.profile, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -785,7 +855,6 @@ internal fun ProfileEditDialog(
                         enabled = trimmedName.isNotEmpty() && !isDuplicateName && !isSaving,
                         onClick = {
                             if (isSaving) return@Button
-                            isSaving = true
                             val result = HouseholdProfile(
                                 id = profile?.id ?: java.util.UUID.randomUUID().toString(),
                                 name = trimmedName,
@@ -793,8 +862,16 @@ internal fun ProfileEditDialog(
                                 language = language,
                                 hideAdultContent = if (kind == ProfileKind.CHILD) true else hideAdultContent,
                                 maximumAge = if (kind == ProfileKind.CHILD) maximumAge else null,
-                                blockUnrated = if (kind == ProfileKind.CHILD) true else blockUnrated
+                                blockUnrated = if (kind == ProfileKind.CHILD) true else blockUnrated,
+                                avatarUrl = avatarUrl
                             )
+                            val status = repository.getPinStatus()
+                            if (status.hasPin && !repository.isAdultUnlocked() && explicitUnlockToken == null) {
+                                pendingSaveResult = result
+                                showPinDialogForSave = true
+                                return@Button
+                            }
+                            isSaving = true
                             onSave(result, explicitUnlockToken)
                         },
                         modifier = Modifier.tvFocusHighlight()

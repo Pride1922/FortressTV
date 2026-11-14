@@ -650,8 +650,8 @@ internal fun HomeScreen(
         }
     }
     val homeRows = buildList {
+        add("shortcuts")
         addAll(visibleShelves)
-        add(if (visibleShelves.isEmpty()) 0 else 1, "shortcuts")
         if (visibleShelves.isEmpty()) add("empty")
         if (compactSearch) add("customize")
     }
@@ -1206,8 +1206,8 @@ internal fun HomeScreen(
                                         color = MaterialTheme.colorScheme.surfaceVariant,
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                                         modifier = Modifier
-                                            .width(240.dp)
-                                            .height(112.dp)
+                                            .width(236.dp)
+                                            .heightIn(min = 100.dp)
                                             .focusProperties {
                                                 if (index == 0 && sidebarFocusRequester != null) {
                                                     left = sidebarFocusRequester
@@ -1224,10 +1224,10 @@ internal fun HomeScreen(
                                             }
                                             .tvFocusHighlight(shape = RoundedCornerShape(12.dp), scaleOnFocus = if (isTv) 1.04f else 1.0f)
                                     ) {
-                                        Column(Modifier.fillMaxSize().padding(12.dp)) {
+                                        Column(Modifier.fillMaxSize().padding(10.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(32.dp))
-                                                Spacer(Modifier.width(10.dp))
+                                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(28.dp))
+                                                Spacer(Modifier.width(8.dp))
                                                 Text(
                                                     channel.name,
                                                     fontWeight = FontWeight.SemiBold,
@@ -1237,7 +1237,7 @@ internal fun HomeScreen(
                                                 )
                                             }
                                             if (currentProgramme != null) {
-                                                Spacer(Modifier.height(8.dp))
+                                                Spacer(Modifier.height(4.dp))
                                                 Text(
                                                     currentProgramme.title,
                                                     fontSize = 13.sp,
@@ -1386,8 +1386,29 @@ internal fun HomeScreen(
                     }
 
                     com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS -> {
+                        var recFilterTab by remember(traktNamespace) { mutableIntStateOf(0) }
+                        val hasRecMovies = matchedTraktRecs.movies.isNotEmpty()
+                        val hasRecSeries = matchedTraktRecs.series.isNotEmpty()
+                        val recCards = remember(matchedTraktRecs, recFilterTab) {
+                            when {
+                                recFilterTab == 1 && hasRecMovies -> matchedTraktRecs.movies.map { "movie" to it }
+                                recFilterTab == 2 && hasRecSeries -> matchedTraktRecs.series.map { "series" to it }
+                                else -> {
+                                    val combined = ArrayList<Pair<String, Any>>(matchedTraktRecs.totalCount)
+                                    val maxSize = maxOf(matchedTraktRecs.movies.size, matchedTraktRecs.series.size)
+                                    for (i in 0 until maxSize) {
+                                        if (i < matchedTraktRecs.movies.size) combined.add("movie" to matchedTraktRecs.movies[i])
+                                        if (i < matchedTraktRecs.series.size) combined.add("series" to matchedTraktRecs.series[i])
+                                    }
+                                    combined
+                                }
+                            }
+                        }
                         Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Icon(
                                     Icons.Default.ThumbUp,
                                     contentDescription = null,
@@ -1407,70 +1428,103 @@ internal fun HomeScreen(
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                Spacer(Modifier.weight(1f))
+                                if (canManageHiddenRecommendations) {
+                                    TextButton(
+                                        onClick = { showHiddenRecommendations = true },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.03f)
+                                    ) {
+                                        Text(strings.traktHiddenRecommendations, fontSize = 13.sp)
+                                    }
+                                }
                             }
-                            if (canManageHiddenRecommendations) {
-                                TextButton(
-                                    onClick = { showHiddenRecommendations = true },
-                                    modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(10.dp), scaleOnFocus = 1.03f)
-                                ) {
-                                    Text(strings.traktHiddenRecommendations)
+                            if (hasRecMovies && hasRecSeries) {
+                                Spacer(Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val tabOptions = listOf(
+                                        0 to strings.allCategories,
+                                        1 to "${strings.navMovies} (${matchedTraktRecs.movies.size})",
+                                        2 to "${if (matchedTraktRecs.seriesAreTrending) strings.traktTrendingSeries else strings.navSeries} (${matchedTraktRecs.series.size})"
+                                    )
+                                    tabOptions.forEach { (tabId, label) ->
+                                        val selectedTab = recFilterTab == tabId
+                                        Surface(
+                                            onClick = { recFilterTab = tabId },
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = if (selectedTab) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (selectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                            ),
+                                            modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(999.dp), scaleOnFocus = 1.04f)
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (selectedTab) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (selectedTab) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                             if (matchedTraktRecs.includesTrending) {
+                                Spacer(Modifier.height(4.dp))
                                 Text(strings.traktIncludesTrending, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Spacer(Modifier.height(10.dp))
                             if (matchedTraktRecs.isEmpty) {
                                 Text(strings.traktRecommendationsEmpty, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            if (matchedTraktRecs.movies.isNotEmpty()) {
-                                Text(strings.navMovies, style = MaterialTheme.typography.titleSmall)
-                                Spacer(Modifier.height(6.dp))
+                            } else {
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    items(matchedTraktRecs.movies, key = { "trakt_rec_movie:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
-                                        val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                        val cachedOmdb = remember(entry.movie.id) {
-                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    items(
+                                        items = recCards,
+                                        key = { (kind, payload) ->
+                                            if (kind == "movie") {
+                                                val entry = payload as CatalogMovie
+                                                "trakt_rec_movie:${entry.catalog.sourceId}:${entry.movie.id}"
+                                            } else {
+                                                val entry = payload as CatalogSeries
+                                                "trakt_rec_series:${entry.catalog.sourceId}:${entry.series.id}"
+                                            }
                                         }
-                                        VodPosterCard(
-                                            title = entry.movie.name,
-                                            posterUrl = entry.movie.posterUrl,
-                                            subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                            imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
-                                            rottenTomatoes = cachedOmdb?.rottenTomatoes,
-                                            isWatched = libraryId in watchedItemIds,
-                                            progressFraction = progressByKey[libraryId]?.progressFraction,
-                                            onClick = { selectedMovie = entry },
-                                            modifier = Modifier.width(120.dp)
-                                        )
+                                    ) { (kind, payload) ->
+                                        if (kind == "movie") {
+                                            val entry = payload as CatalogMovie
+                                            val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
+                                            val cachedOmdb = remember(entry.movie.id) {
+                                                OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                            }
+                                            VodPosterCard(
+                                                title = entry.movie.name,
+                                                posterUrl = entry.movie.posterUrl,
+                                                subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
+                                                imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                                rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                                isWatched = libraryId in watchedItemIds,
+                                                progressFraction = progressByKey[libraryId]?.progressFraction,
+                                                onClick = { selectedMovie = entry },
+                                                modifier = Modifier.width(120.dp)
+                                            )
+                                        } else {
+                                            val entry = payload as CatalogSeries
+                                            val cachedOmdb = remember(entry.series.id) {
+                                                OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                            }
+                                            VodPosterCard(
+                                                title = entry.series.name,
+                                                posterUrl = entry.series.coverUrl,
+                                                subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
+                                                imdbRating = cachedOmdb?.imdbRating,
+                                                rottenTomatoes = cachedOmdb?.rottenTomatoes,
+                                                onClick = { selectedSeries = entry },
+                                                modifier = Modifier.width(120.dp)
+                                            )
+                                        }
                                     }
                                 }
-                                Spacer(Modifier.height(12.dp))
-                            }
-                            if (matchedTraktRecs.series.isNotEmpty()) {
-                                Text(
-                                    if (matchedTraktRecs.seriesAreTrending) strings.traktTrendingSeries else strings.navSeries,
-                                    style = MaterialTheme.typography.titleSmall
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    items(matchedTraktRecs.series, key = { "trakt_rec_series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
-                                        val cachedOmdb = remember(entry.series.id) {
-                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
-                                        }
-                                        VodPosterCard(
-                                            title = entry.series.name,
-                                            posterUrl = entry.series.coverUrl,
-                                            subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                            imdbRating = cachedOmdb?.imdbRating,
-                                            rottenTomatoes = cachedOmdb?.rottenTomatoes,
-                                            onClick = { selectedSeries = entry },
-                                            modifier = Modifier.width(120.dp)
-                                        )
-                                    }
-                                }
-                            } else if (matchedTraktRecs.movies.isNotEmpty()) {
-                                Text(strings.traktSeriesRecommendationsEmpty, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }

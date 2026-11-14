@@ -1,12 +1,13 @@
 package com.fortresstv.player.profile
 
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -18,12 +19,42 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.fortresstv.player.R
+
+internal data class ProfileAvatarPreset(
+    val id: String,
+    @param:DrawableRes val drawableRes: Int
+)
+
+internal object ProfileAvatarPresets {
+    val presets: List<ProfileAvatarPreset> = listOf(
+        ProfileAvatarPreset("preset:shield", R.drawable.avatar_shield),
+        ProfileAvatarPreset("preset:fox", R.drawable.avatar_fox),
+        ProfileAvatarPreset("preset:robot", R.drawable.avatar_robot),
+        ProfileAvatarPreset("preset:astronaut", R.drawable.avatar_astronaut),
+        ProfileAvatarPreset("preset:cat", R.drawable.avatar_cat),
+        ProfileAvatarPreset("preset:owl", R.drawable.avatar_owl),
+        ProfileAvatarPreset("preset:popcorn", R.drawable.avatar_popcorn),
+        ProfileAvatarPreset("preset:dino", R.drawable.avatar_dino),
+        ProfileAvatarPreset("preset:panda", R.drawable.avatar_panda),
+        ProfileAvatarPreset("preset:wolf", R.drawable.avatar_wolf)
+    )
+
+    private val byId = presets.associateBy { it.id }
+
+    @DrawableRes
+    fun resolveDrawableRes(avatarUrl: String?): Int? {
+        if (avatarUrl.isNullOrBlank()) return null
+        return byId[avatarUrl]?.drawableRes
+    }
+}
 
 // Vibrant, Netflix-style avatar palette
 private val AvatarPalette = listOf(
@@ -75,20 +106,30 @@ fun ProfileAvatar(
                 tint = contentColor,
                 modifier = Modifier.size(size * 0.55f)
             )
-        } else if (!avatarUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = avatarUrl,
-                contentDescription = name,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
         } else {
-            Text(
-                text = initial,
-                color = contentColor,
-                fontSize = fontSize,
-                fontWeight = FontWeight.Bold
-            )
+            val presetRes = ProfileAvatarPresets.resolveDrawableRes(avatarUrl)
+            if (presetRes != null) {
+                Image(
+                    painter = painterResource(presetRes),
+                    contentDescription = name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (!avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = avatarUrl,
+                    contentDescription = name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text(
+                    text = initial,
+                    color = contentColor,
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
