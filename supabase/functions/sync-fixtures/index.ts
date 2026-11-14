@@ -7,7 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 interface SportsFixtureRecord {
   id: string;
-  sport: "football" | "motorsport" | "basketball" | "tennis" | "other";
+  sport: "football" | "motorsport" | "basketball" | "tennis" | "rugby" | "other";
   competition: string;
   competition_logo_url: string | null;
   home_team: string;
@@ -95,7 +95,32 @@ const SOCCER_LEAGUES = [
     name: "Copa del Rey",
     defaultBroadcaster: "",
     logo: null
+  },
+  {
+    slug: "fifa.world.u17",
+    name: "FIFA Under-17 World Cup",
+    defaultBroadcaster: "",
+    logo: null
+  },
+  {
+    slug: "fifa.world.u20",
+    name: "FIFA Under-20 World Cup",
+    defaultBroadcaster: "",
+    logo: null
   }
+];
+
+const RUGBY_LEAGUES = [
+  { slug: "17567", name: "Nations Championship", defaultBroadcaster: "Sport TV" },
+  { slug: "289234", name: "International Test Match", defaultBroadcaster: "" },
+  { slug: "180659", name: "Six Nations", defaultBroadcaster: "Sport TV 1" },
+  { slug: "244293", name: "The Rugby Championship", defaultBroadcaster: "Sport TV" },
+  { slug: "164205", name: "Rugby World Cup", defaultBroadcaster: "Sport TV" },
+  { slug: "270557", name: "United Rugby Championship", defaultBroadcaster: "Sport TV" },
+  { slug: "271937", name: "European Rugby Champions Cup", defaultBroadcaster: "Sport TV" },
+  { slug: "267979", name: "Gallagher Prem", defaultBroadcaster: "Sport TV" },
+  { slug: "270559", name: "French Top 14", defaultBroadcaster: "Sport TV" },
+  { slug: "242041", name: "Super Rugby Pacific", defaultBroadcaster: "" }
 ];
 
 const BROWSER_HEADERS = {
@@ -273,6 +298,71 @@ async function fetchNbaEvents(): Promise<SportsFixtureRecord[]> {
   }
 }
 
+async function fetchRugbyScoreboard(league: typeof RUGBY_LEAGUES[0], dates: string): Promise<SportsFixtureRecord[]> {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/rugby/${league.slug}/scoreboard?dates=${dates}&limit=100`;
+    const res = await fetch(url, { headers: BROWSER_HEADERS });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const events = data?.events;
+    if (!Array.isArray(events)) return [];
+    const competitionLogo = data.leagues?.[0]?.logos?.[0]?.href || null;
+
+    const now = new Date();
+    const results: SportsFixtureRecord[] = [];
+
+    for (const ev of events) {
+      const comp = ev.competitions?.[0];
+      if (!comp) continue;
+
+      const competitors = comp.competitors;
+      if (!Array.isArray(competitors) || competitors.length < 2) continue;
+
+      const homeComp = competitors.find((c: any) => c.homeAway === "home") ?? competitors[0];
+      const awayComp = competitors.find((c: any) => c.homeAway === "away") ?? competitors[1];
+
+      const homeTeam = homeComp.team?.displayName || homeComp.team?.name || "Home";
+      const awayTeam = awayComp.team?.displayName || awayComp.team?.name || "Away";
+      const homeLogo = homeComp.team?.logo || null;
+      const awayLogo = awayComp.team?.logo || null;
+
+      const state = comp.status?.type?.state;
+      const status: "scheduled" | "live" | "finished" =
+        state === "in" ? "live" : state === "post" ? "finished" : "scheduled";
+
+      const shortDetail = comp.status?.type?.shortDetail;
+      const minute = status === "live" ? (shortDetail || "EM DIRETO") : null;
+
+      const homeScore = homeComp.score ? parseInt(homeComp.score, 10) : null;
+      const awayScore = awayComp.score ? parseInt(awayComp.score, 10) : null;
+
+      results.push({
+        id: `espn-rugby-${ev.id}`,
+        sport: "rugby",
+        competition: league.name,
+        competition_logo_url: competitionLogo,
+        home_team: homeTeam,
+        away_team: awayTeam,
+        home_team_logo_url: homeLogo,
+        away_team_logo_url: awayLogo,
+        kickoff_utc: new Date(ev.date).toISOString(),
+        broadcaster_official: league.defaultBroadcaster,
+        status,
+        minute,
+        home_score: !isNaN(Number(homeScore)) ? homeScore : null,
+        away_score: !isNaN(Number(awayScore)) ? awayScore : null,
+        venue: comp.venue?.fullName || null,
+        updated_at: now.toISOString()
+      });
+    }
+
+    return results;
+  } catch (err) {
+    console.error(`Error fetching ESPN rugby scoreboard for ${league.name}:`, err);
+    return [];
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -327,7 +417,13 @@ Deno.serve(async (req: Request) => {
   const nbaList = await fetchNbaEvents();
   allFixtures.push(...nbaList);
 
-  console.log(`[sync-fixtures] Collected ${allFixtures.length} real fixtures across football, F1, and NBA.`);
+  // 4. Fetch Rugby
+  const rugby = await Promise.all([-1, 0, 1].flatMap(offset =>
+    RUGBY_LEAGUES.map(league => fetchRugbyScoreboard(league, utcDate(offset)))
+  ));
+  allFixtures.push(...new Map(rugby.flat().map(fixture => [fixture.id, fixture] as const)).values());
+
+  console.log(`[sync-fixtures] Collected ${allFixtures.length} real fixtures across football, F1, NBA, and rugby.`);
 
   if (allFixtures.length === 0) {
     return new Response(JSON.stringify({ success: true, count: 0, message: "No upcoming events found from upstream feeds" }), {
@@ -358,7 +454,7 @@ Deno.serve(async (req: Request) => {
   return new Response(JSON.stringify({
     success: true,
     syncedCount: allFixtures.length,
-    sports: ["football", "motorsport", "basketball"],
+    sports: ["football", "motorsport", "basketball", "rugby"],
     timestamp: now.toISOString()
   }), {
     headers: { "Content-Type": "application/json" }

@@ -8,6 +8,7 @@ enum class SportsKind {
     MOTORSPORT,
     BASKETBALL,
     TENNIS,
+    RUGBY,
     OTHER
 }
 
@@ -45,6 +46,7 @@ data class SportsFixture(
                 "motorsport", "f1", "motogp" -> SportsKind.MOTORSPORT
                 "basketball" -> SportsKind.BASKETBALL
                 "tennis" -> SportsKind.TENNIS
+                "rugby", "rugby union", "rugby league" -> SportsKind.RUGBY
                 else -> SportsKind.OTHER
             }
             val statusStr = json.optString("status", "scheduled").lowercase()

@@ -36,8 +36,10 @@ import androidx.compose.material.icons.filled.SportsRugby
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.SportsTennis
 import androidx.compose.material.icons.filled.SportsVolleyball
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -72,64 +74,167 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+internal object SportsFilterCatalog {
+    fun sportKey(kind: SportsKind): String = "sport:${kind.name.lowercase()}"
+
+    fun competitionKey(competition: String): String =
+        "comp:${competition.trim().lowercase()}"
+
+    val supportedCompetitions: List<Pair<SportsKind, String>> = listOf(
+        SportsKind.FOOTBALL to "Primeira Liga",
+        SportsKind.FOOTBALL to "Premier League",
+        SportsKind.FOOTBALL to "La Liga",
+        SportsKind.FOOTBALL to "Serie A",
+        SportsKind.FOOTBALL to "UEFA Champions League",
+        SportsKind.FOOTBALL to "UEFA Europa League",
+        SportsKind.FOOTBALL to "UEFA Nations League",
+        SportsKind.FOOTBALL to "Copa del Rey",
+        SportsKind.FOOTBALL to "Africa Cup of Nations Qualifying",
+        SportsKind.FOOTBALL to "FIFA Under-17 World Cup",
+        SportsKind.FOOTBALL to "FIFA Under-20 World Cup",
+        SportsKind.RUGBY to "Nations Championship",
+        SportsKind.RUGBY to "International Test Match",
+        SportsKind.RUGBY to "Six Nations",
+        SportsKind.RUGBY to "The Rugby Championship",
+        SportsKind.RUGBY to "Rugby World Cup",
+        SportsKind.RUGBY to "United Rugby Championship",
+        SportsKind.RUGBY to "European Rugby Champions Cup",
+        SportsKind.RUGBY to "Gallagher Prem",
+        SportsKind.RUGBY to "French Top 14",
+        SportsKind.RUGBY to "Super Rugby Pacific",
+        SportsKind.MOTORSPORT to "Formula 1",
+        SportsKind.BASKETBALL to "NBA"
+    )
+}
+
+internal fun filterSportsMatches(
+    matches: List<SportsEpgMatch>,
+    hiddenFilters: Set<String>
+): List<SportsEpgMatch> {
+    if (hiddenFilters.isEmpty()) return matches
+    return matches.filter { match ->
+        val sportHidden = SportsFilterCatalog.sportKey(match.fixture.sport) in hiddenFilters
+        val comp = match.fixture.competition.trim()
+        val compHidden = comp.isNotEmpty() && SportsFilterCatalog.competitionKey(comp) in hiddenFilters
+        !sportHidden && !compHidden
+    }
+}
+
 @Composable
 fun SportsHubSection(
     playableFixtures: List<SportsEpgMatch>,
     onWatchChannel: (PlaylistChannel) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    hiddenSportsFilters: Set<String> = emptySet(),
+    onToggleSportsFilter: ((String) -> Unit)? = null
 ) {
 
     if (playableFixtures.isEmpty()) return
     val strings = LocalAppStrings.current
     var selectedMatch by remember { mutableStateOf<String?>(null) }
+    var showManageDialog by remember { mutableStateOf(false) }
+    val filteredFixtures = remember(playableFixtures, hiddenSportsFilters) {
+        filterSportsMatches(playableFixtures, hiddenSportsFilters)
+    }
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(
-                imageVector = Icons.Default.Sports,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = strings.liveMatches,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Sports,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = strings.liveMatches,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+            if (onToggleSportsFilter != null) {
+                val chipShape = RoundedCornerShape(16.dp)
+                Surface(
+                    onClick = { showManageDialog = true },
+                    shape = chipShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.tvFocusHighlight(shape = chipShape)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = strings.manageSports,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
         }
 
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(playableFixtures, key = { it.fixture.id }) { match ->
-                SportsFixtureCard(
-                    fixture = match.fixture,
-                    resolvedChannel = match.channel,
-                    live = match.live,
-                    onWatchChannel = onWatchChannel,
-                    // The details dialog is a two-team scoreboard; a single event (golf, tennis) has none.
-                    onCardClick = if (match.fixture.awayTeam.isBlank()) null else {
-                        { selectedMatch = match.fixture.id }
-                    },
-                    modifier = Modifier.width(280.dp),
-                    sportLabel = match.sportLabel,
-                    alternateChannels = match.alternateChannels
-                )
+        if (filteredFixtures.isEmpty()) {
+            Text(
+                text = strings.noFollowedSportsMatches,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        } else {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(filteredFixtures, key = { it.fixture.id }) { match ->
+                    val onCardClick = remember(match.fixture.id, match.fixture.awayTeam) {
+                        if (match.fixture.awayTeam.isBlank()) null else {
+                            { selectedMatch = match.fixture.id }
+                        }
+                    }
+                    SportsFixtureCard(
+                        fixture = match.fixture,
+                        resolvedChannel = match.channel,
+                        live = match.live,
+                        onWatchChannel = onWatchChannel,
+                        // The details dialog is a two-team scoreboard; a single event (golf, tennis) has none.
+                        onCardClick = onCardClick,
+                        modifier = Modifier.width(280.dp),
+                        sportLabel = match.sportLabel,
+                        alternateChannels = match.alternateChannels
+                    )
+                }
             }
         }
     }
 
+    if (showManageDialog && onToggleSportsFilter != null) {
+        ManageSportsDialog(
+            hiddenFilters = hiddenSportsFilters,
+            onToggleFilter = onToggleSportsFilter,
+            onDismiss = { showManageDialog = false }
+        )
+    }
+
     // Looked up by id so an open dialog follows the match when it goes live or its score changes.
-    playableFixtures.firstOrNull { it.fixture.id == selectedMatch }?.let { match ->
+    filteredFixtures.firstOrNull { it.fixture.id == selectedMatch }?.let { match ->
         MatchDetailsDialog(
             fixture = match.fixture,
             resolvedChannel = match.channel,
@@ -165,10 +270,11 @@ fun SportsFixtureCard(
         SportsKind.MOTORSPORT -> Icons.Default.SportsMotorsports
         SportsKind.BASKETBALL -> Icons.Default.SportsBasketball
         SportsKind.TENNIS -> Icons.Default.SportsTennis
+        SportsKind.RUGBY -> Icons.Default.SportsRugby
         SportsKind.OTHER -> Icons.Default.Sports
     }
-    // Guide-only events have no crests: the sport's icon stands in for them.
-    val crestFallback = sportIcon.takeIf { sportLabel != null }
+    // Guide-only events and rugby have no crests or use sport icon fallback.
+    val crestFallback = sportIcon.takeIf { sportLabel != null || fixture.sport == SportsKind.RUGBY }
     val heading = if (sportLabel == null) fixture.competition else {
         listOf(sportLabel, fixture.competition).filter(String::isNotBlank).joinToString(" · ")
     }
@@ -198,12 +304,33 @@ fun SportsFixtureCard(
                     modifier = Modifier.weight(1f, fill = false)
                 ) {
                     if (!fixture.competitionLogoUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = fixture.competitionLogoUrl,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            contentScale = ContentScale.Fit
-                        )
+                        val compLogoContext = androidx.compose.ui.platform.LocalContext.current
+                        val compLogoRequest = remember(fixture.competitionLogoUrl) {
+                            coil.request.ImageRequest.Builder(compLogoContext)
+                                .data(fixture.competitionLogoUrl)
+                                .crossfade(false)
+                                .build()
+                        }
+                        var showCompFallback by remember(fixture.competitionLogoUrl) { mutableStateOf(false) }
+                        Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                            AsyncImage(
+                                model = compLogoRequest,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                contentScale = ContentScale.Fit,
+                                onLoading = { showCompFallback = true },
+                                onSuccess = { showCompFallback = false },
+                                onError = { showCompFallback = true }
+                            )
+                            if (showCompFallback) {
+                                Icon(
+                                    imageVector = sportIcon,
+                                    contentDescription = null,
+                                    tint = Color(0xFF9EA3B0),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(6.dp))
                     } else {
                         Icon(
@@ -403,42 +530,52 @@ fun SportsFixtureCard(
 @Composable
 private fun TeamLogo(url: String?, name: String, modifier: Modifier = Modifier, fallbackIcon: ImageVector? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    if (!url.isNullOrBlank()) {
-        val request = remember(url) {
-            coil.request.ImageRequest.Builder(context)
-                .data(url)
-                .setHeader("User-Agent", "Mozilla/5.0")
-                .crossfade(true)
-                .build()
+    var showFallback by remember(url) { mutableStateOf(url.isNullOrBlank()) }
+    Box(
+        modifier = modifier.size(38.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (!url.isNullOrBlank()) {
+            val request = remember(url) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(url)
+                    .setHeader("User-Agent", "Mozilla/5.0")
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = request,
+                contentDescription = name,
+                modifier = Modifier.size(38.dp),
+                contentScale = ContentScale.Fit,
+                onLoading = { showFallback = true },
+                onSuccess = { showFallback = false },
+                onError = { showFallback = true }
+            )
         }
-        AsyncImage(
-            model = request,
-            contentDescription = name,
-            modifier = modifier.size(38.dp),
-            contentScale = ContentScale.Fit
-        )
-    } else {
-        Box(
-            modifier = modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF2C3140)),
-            contentAlignment = Alignment.Center
-        ) {
-            if (fallbackIcon != null) {
-                Icon(
-                    imageVector = fallbackIcon,
-                    contentDescription = name,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            } else {
-                Text(
-                    text = name.take(2).uppercase(),
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
+        if (showFallback) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF2C3140)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (fallbackIcon != null) {
+                    Icon(
+                        imageVector = fallbackIcon,
+                        contentDescription = name,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                } else {
+                    Text(
+                        text = name.take(2).uppercase(),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -457,6 +594,145 @@ private fun guideSportIcon(sportLabel: String): ImageVector? {
         sport.startsWith("padel") -> Icons.Default.SportsTennis
         sport.startsWith("combate") || sport.startsWith("judo") -> Icons.Default.SportsMma
         else -> null
+    }
+}
+
+@Composable
+private fun ManageSportsDialog(
+    hiddenFilters: Set<String>,
+    onToggleFilter: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val sports = listOf(
+        SportsKind.FOOTBALL to strings.sportFootball,
+        SportsKind.RUGBY to strings.sportRugby,
+        SportsKind.MOTORSPORT to strings.sportMotorsport,
+        SportsKind.BASKETBALL to strings.sportBasketball,
+        SportsKind.TENNIS to strings.sportTennis,
+        SportsKind.OTHER to strings.sportOther
+    )
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(460.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .border(1.dp, Color(0xFF2A2E39), RoundedCornerShape(16.dp)),
+            color = Color(0xFF14171F),
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = strings.manageSportsTitle,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            tint = Color(0xFF9EA3B0)
+                        )
+                    }
+                }
+                Text(
+                    text = strings.manageSportsDescription,
+                    color = Color(0xFF9EA3B0),
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = strings.sportsCategories,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                    for ((kind, label) in sports) {
+                        val key = SportsFilterCatalog.sportKey(kind)
+                        val checked = key !in hiddenFilters
+                        Surface(
+                            onClick = { onToggleFilter(key) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Transparent,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(text = label, color = Color.White, fontSize = 14.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = Color(0xFF252A36))
+                    Spacer(Modifier.height(8.dp))
+
+                    Text(
+                        text = strings.supportedCompetitions,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                    for ((kind, competition) in SportsFilterCatalog.supportedCompetitions) {
+                        val key = SportsFilterCatalog.competitionKey(competition)
+                        val sportEnabled = SportsFilterCatalog.sportKey(kind) !in hiddenFilters
+                        val checked = sportEnabled && key !in hiddenFilters
+                        Surface(
+                            onClick = { onToggleFilter(key) },
+                            enabled = sportEnabled,
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Transparent,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .tvFocusHighlight(shape = RoundedCornerShape(8.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null, enabled = sportEnabled)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = competition,
+                                    color = if (sportEnabled) Color.White else Color(0xFF6B7280),
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

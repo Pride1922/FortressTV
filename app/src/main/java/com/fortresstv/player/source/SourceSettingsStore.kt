@@ -361,6 +361,16 @@ class SourceSettingsStore internal constructor(
         preferences.edit().putStringSet(key, hidden).apply()
     }
 
+    fun hiddenSportsFilters(profileId: String? = null): Set<String> {
+        val key = if (!profileId.isNullOrBlank()) "hidden_sports_filters_$profileId" else "hidden_sports_filters"
+        return preferences.getStringSet(key, emptySet())?.toSet() ?: emptySet()
+    }
+
+    fun setHiddenSportsFilters(hidden: Set<String>, profileId: String? = null) {
+        val key = if (!profileId.isNullOrBlank()) "hidden_sports_filters_$profileId" else "hidden_sports_filters"
+        preferences.edit().putStringSet(key, hidden.toSet()).apply()
+    }
+
     fun homeSectionOrder(profileId: String): List<String> =
         com.fortresstv.player.ui.HomeSectionId.ordered(
             preferences.getString("home_section_order_$profileId", null)?.split(',').orEmpty()

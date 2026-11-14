@@ -5,6 +5,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.EpgGuide
+import com.fortresstv.player.epg.EpgRepository
 import com.fortresstv.player.library.FastIdMatcher
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.omdb.OmdbMetadataResolver
@@ -12,6 +15,10 @@ import com.fortresstv.player.omdb.OmdbPreFetchTarget
 import com.fortresstv.player.omdb.OmdbSettings
 import com.fortresstv.player.playlist.PlaylistChannel
 import com.fortresstv.player.profile.ParentalControls
+import com.fortresstv.player.sports.SportsEpgMatch
+import com.fortresstv.player.sports.SportsFixture
+import com.fortresstv.player.sports.epgDaysForMatches
+import com.fortresstv.player.sports.matchesOnTv
 import com.fortresstv.player.trakt.FeaturedMoviesShelf
 import com.fortresstv.player.trakt.FeaturedMoviesShelfResolver
 import com.fortresstv.player.trakt.FeaturedSeriesShelf
@@ -39,6 +46,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * Pure shelf builders shared by [FortressLibrary] and unit tests.
@@ -50,7 +59,9 @@ internal object HomeLibraryShelfBuilder {
     ): List<PlaylistChannel> {
         if (favoriteChannelIds.isEmpty()) return emptyList()
         val matcher = FastIdMatcher(favoriteChannelIds)
-        return channels.filter { ch -> matcher.matches(ch.libraryId(), ch.sourceItemId) }
+        return channels
+            .filter { ch -> matcher.matches(ch.libraryId(), ch.sourceItemId) }
+            .distinctBy { "${it.sourceId}:${it.sourceItemId}" }
     }
 
     fun buildRecentChannels(
@@ -63,7 +74,7 @@ internal object HomeLibraryShelfBuilder {
             channels.firstOrNull { ch ->
                 ch.libraryId() == id || "${ch.sourceId}:${ch.sourceItemId}" == id || ch.sourceItemId == id || ch.sourceItemId == raw
             }
-        }
+        }.distinctBy { "${it.sourceId}:${it.sourceItemId}" }
     }
 
     fun buildFollowedSeries(
@@ -122,6 +133,8 @@ internal class HomeShelvesStateHolder(
         private set
     var featuredMoviesShelf by mutableStateOf(FeaturedMoviesShelf())
         private set
+    var liveMatches by mutableStateOf(emptyList<SportsEpgMatch>())
+        private set
     var ratingCacheVersion by mutableIntStateOf(0)
         private set
 
@@ -132,6 +145,7 @@ internal class HomeShelvesStateHolder(
     private var recsMatchJob: Job? = null
     private var featuredSeriesJob: Job? = null
     private var featuredMoviesJob: Job? = null
+    private var liveMatchesJob: Job? = null
     private var omdbPrefetchJob: Job? = null
 
     private var lastSyncedConnected: Boolean? = null
@@ -145,6 +159,7 @@ internal class HomeShelvesStateHolder(
     private var lastFeaturedSeriesParams: List<Any?>? = null
     private var lastFeaturedMoviesCatalogs: List<XtreamCatalog>? = null
     private var lastFeaturedMoviesParams: List<Any?>? = null
+    private var lastLiveMatchesParams: List<Any?>? = null
 
     fun ensureCoreTraktSynced() {
         val connected = traktConnected
@@ -360,6 +375,57 @@ internal class HomeShelvesStateHolder(
         omdbPrefetchJob = scope.launch {
             OmdbMetadataResolver.prefetchCuratedBatch(appContext, omdbSettings, targets)
             ratingCacheVersion++
+        }
+    }
+
+    fun recomputeLiveMatches(
+        sportsFixtures: List<SportsFixture>,
+        epgGuide: EpgGuide?,
+        channels: List<PlaylistChannel>,
+        epgMappings: Map<String, EpgChannelMapping>,
+        epgRepository: EpgRepository?,
+        epgScheduleCorrectionMinutes: Int,
+        now: Instant
+    ) {
+        val params = listOf<Any?>(
+            sportsFixtures,
+            epgGuide,
+            channels,
+            epgMappings,
+            epgRepository,
+            epgScheduleCorrectionMinutes,
+            now.epochSecond / 30L
+        )
+        if (lastLiveMatchesParams == params) return
+        lastLiveMatchesParams = params
+        liveMatchesJob?.cancel()
+        if (epgGuide == null) {
+            if (liveMatches.isNotEmpty()) liveMatches = emptyList()
+            return
+        }
+        liveMatchesJob = scope.launch {
+            val updated = withContext(Dispatchers.Default) {
+                val until = now.plusSeconds(86_400)
+                val manifest = epgGuide.manifest
+                val guides = if (manifest != null && epgRepository != null && epgRepository.manifest.value == manifest) {
+                    // Includes the previous day, so a match that started before midnight stays in the row.
+                    epgDaysForMatches(
+                        now, until, epgScheduleCorrectionMinutes, ZoneId.of(manifest.timezoneId)
+                    ).mapNotNull { day ->
+                        if (day == epgGuide.epochDay) epgGuide else epgRepository.loadDay(day)?.let {
+                            epgGuide.copy(programmes = it.programmes, epochDay = day)
+                        }
+                    }.ifEmpty { listOf(epgGuide) }
+                } else {
+                    listOf(epgGuide)
+                }
+                matchesOnTv(
+                    sportsFixtures, guides, channels, epgMappings, now, epgScheduleCorrectionMinutes, until
+                )
+            }
+            if (liveMatches != updated) {
+                liveMatches = updated
+            }
         }
     }
 }

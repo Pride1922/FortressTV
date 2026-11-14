@@ -563,9 +563,14 @@ internal suspend fun resolveAllSeriesEpisodesPlayback(
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun <T> loadHomeShelf(visible: Boolean, vararg inputs: Any?, load: () -> List<T>): List<T> {
-    val shelf = remember(visible, *inputs) { mutableStateOf(emptyList<T>()) }
-    LaunchedEffect(shelf) {
-        if (visible) shelf.value = withContext(Dispatchers.Default) { load() }
+    val shelf = remember { mutableStateOf(emptyList<T>()) }
+    val lastLoadedInputs = remember { mutableStateOf<List<Any?>?>(null) }
+    val inputKey = inputs.toList()
+    LaunchedEffect(visible, *inputs) {
+        if (visible && lastLoadedInputs.value != inputKey) {
+            shelf.value = withContext(Dispatchers.Default) { load() }
+            lastLoadedInputs.value = inputKey
+        }
     }
     return shelf.value
 }
@@ -612,6 +617,8 @@ internal fun FortressLibrary(
     watchedItemIds: Set<String>,
     homeHiddenSections: Set<String> = emptySet(),
     homeSectionOrder: List<String> = com.fortresstv.player.ui.HomeSectionId.defaultOrder,
+    hiddenSportsFilters: Set<String> = emptySet(),
+    onToggleSportsFilter: ((String) -> Unit)? = null,
     onOpenCustomizeHome: () -> Unit = {},
     xtreamCatalogs: List<XtreamCatalog>,
     xtreamProfiles: List<PlaylistProfile>,
@@ -889,6 +896,8 @@ internal fun FortressLibrary(
                     },
                     homeHiddenSections = homeHiddenSections,
                     homeSectionOrder = homeSectionOrder,
+                    hiddenSportsFilters = hiddenSportsFilters,
+                    onToggleSportsFilter = onToggleSportsFilter,
                     onOpenCustomizeHome = onOpenCustomizeHome,
                     sharedShelvesState = shelvesState,
                     homeListState = homeListState

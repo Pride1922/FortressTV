@@ -197,7 +197,7 @@ class GuideSportsEventsTest {
 
         val match = events("2026-11-14T20:30:00Z").titled("França", "África do Sul").single()
         assertEquals("Rugby", match.sportLabel)
-        assertEquals(SportsKind.OTHER, match.fixture.sport)
+        assertEquals(SportsKind.RUGBY, match.fixture.sport)
         assertEquals(emptyList<PlaylistChannel>(), match.alternateChannels)
     }
 

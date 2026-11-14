@@ -1,7 +1,7 @@
 {
-  "version": "1.0.9",
-  "versionCode": 69,
-  "notes": "Fix Trakt playback history reporting by preserving resolved movie and series IDs and preventing duplicate stop reports.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v1.0.9/fortresstv.apk",
-  "sha256": "DC441082AAE61F1282648C86B6B122E03729E71AB6B26125DC5EDC23EB422F5B"
+    "version":  "1.0.12",
+    "versionCode":  72,
+    "notes":  "Improve Home layout and recently watched channel card timers, add 10 preset profile avatars with PIN verification on save, and restrict profile editing to the active user\u0027s own profile.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v1.0.12/fortresstv.apk",
+    "sha256":  "503107D0D885EAF4CD883E0E6BC3220E9BBE32E357FCBA6852F7EC5067F592D7"
 }

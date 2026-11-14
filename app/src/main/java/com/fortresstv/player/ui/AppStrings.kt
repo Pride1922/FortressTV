@@ -202,6 +202,18 @@ interface Strings {
     fun failoverSourceSwitched(sourceName: String): String
     val sportsHub: String
     val liveMatches: String
+    val manageSports: String
+    val manageSportsTitle: String
+    val manageSportsDescription: String
+    val noFollowedSportsMatches: String
+    val sportsCategories: String
+    val supportedCompetitions: String
+    val sportFootball: String
+    val sportRugby: String
+    val sportMotorsport: String
+    val sportBasketball: String
+    val sportTennis: String
+    val sportOther: String
     val watchLive: String
     val liveNow: String
     fun broadcastOn(channel: String): String
@@ -793,6 +805,18 @@ object EnglishStrings : Strings {
     override fun failoverSourceSwitched(sourceName: String) = "Switched to backup source: $sourceName"
     override val sportsHub = "Sports Hub"
     override val liveMatches = "Matches on TV"
+    override val manageSports = "Manage"
+    override val manageSportsTitle = "Sports & Competitions"
+    override val manageSportsDescription = "Choose which sports and supported competitions appear in Matches on TV."
+    override val noFollowedSportsMatches = "No matches match your followed competitions."
+    override val sportsCategories = "Sports"
+    override val supportedCompetitions = "Supported Competitions"
+    override val sportFootball = "Football"
+    override val sportRugby = "Rugby"
+    override val sportMotorsport = "Motorsport"
+    override val sportBasketball = "Basketball"
+    override val sportTennis = "Tennis"
+    override val sportOther = "Other Sports"
     override val watchLive = "Watch Live"
     override val liveNow = "Live Now"
     override fun broadcastOn(channel: String) = "Live on $channel"
@@ -1387,6 +1411,18 @@ object PortugueseStrings : Strings {
     override fun failoverSourceSwitched(sourceName: String) = "Comutado para fonte alternativa: $sourceName"
     override val sportsHub = "Desporto"
     override val liveMatches = "Jogos na TV"
+    override val manageSports = "Gerir"
+    override val manageSportsTitle = "Desportos e Competições"
+    override val manageSportsDescription = "Escolha os desportos e competições suportadas a mostrar em Jogos na TV."
+    override val noFollowedSportsMatches = "Nenhum jogo corresponde às competições seguidas."
+    override val sportsCategories = "Desportos"
+    override val supportedCompetitions = "Competições Suportadas"
+    override val sportFootball = "Futebol"
+    override val sportRugby = "Râguebi"
+    override val sportMotorsport = "Desporto Motorizado"
+    override val sportBasketball = "Basquetebol"
+    override val sportTennis = "Ténis"
+    override val sportOther = "Outros Desportos"
     override val watchLive = "Ver em Direto"
     override val liveNow = "Em Direto"
     override fun broadcastOn(channel: String) = "Em direto na $channel"

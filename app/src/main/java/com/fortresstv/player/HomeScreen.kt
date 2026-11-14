@@ -503,6 +503,8 @@ internal fun HomeScreen(
     onNavigateToDestination: (LibraryDestination) -> Unit,
     homeHiddenSections: Set<String> = emptySet(),
     homeSectionOrder: List<String> = com.fortresstv.player.ui.HomeSectionId.defaultOrder,
+    hiddenSportsFilters: Set<String> = emptySet(),
+    onToggleSportsFilter: ((String) -> Unit)? = null,
     onOpenCustomizeHome: () -> Unit = {},
     sharedShelvesState: HomeShelvesStateHolder? = null,
     homeListState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState()
@@ -533,41 +535,12 @@ internal fun HomeScreen(
 
     val sportsRepo = remember(context) { com.fortresstv.player.sports.SportsRepository.get(context) }
     val sportsFixtures by sportsRepo.fixtures.collectAsState()
+    var now by remember { mutableStateOf(java.time.Instant.now()) }
     LaunchedEffect(sportsRepo) {
         while (true) {
             sportsRepo.refresh()
-            delay(30_000L)
-        }
-    }
-    var now by remember { mutableStateOf(java.time.Instant.now()) }
-    LaunchedEffect(Unit) {
-        while (true) {
             now = java.time.Instant.now()
             delay(30_000L)
-        }
-    }
-    val liveMatches by androidx.compose.runtime.produceState(
-        initialValue = emptyList<com.fortresstv.player.sports.SportsEpgMatch>(),
-        sportsFixtures, epgGuide, channels, epgMappings, epgRepository, epgScheduleCorrectionMinutes, now
-    ) {
-        val guide = epgGuide
-        value = if (guide == null) emptyList() else withContext(Dispatchers.Default) {
-            val until = now.plusSeconds(86_400)
-            val manifest = guide.manifest
-            val guides = if (manifest != null && epgRepository != null && epgRepository.manifest.value == manifest) {
-                // Includes the previous day, so a match that started before midnight stays in the row.
-                com.fortresstv.player.sports.epgDaysForMatches(
-                    now, until, epgScheduleCorrectionMinutes, java.time.ZoneId.of(manifest.timezoneId)
-                ).mapNotNull { day ->
-                    if (day == guide.epochDay) guide else epgRepository.loadDay(day)?.let {
-                        guide.copy(programmes = it.programmes, epochDay = day)
-                    }
-                }.ifEmpty { listOf(guide) }
-            } else listOf(guide)
-            // Guide events first (parsed once per loaded day), ESPN fixtures as enrichment.
-            com.fortresstv.player.sports.matchesOnTv(
-                sportsFixtures, guides, channels, epgMappings, now, epgScheduleCorrectionMinutes, until
-            )
         }
     }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }
@@ -578,6 +551,27 @@ internal fun HomeScreen(
     val currentProfileId = currentProfile.id
     val shelvesState = sharedShelvesState ?: remember(traktNamespace, coroutineScope) {
         HomeShelvesStateHolder(context.applicationContext, traktNamespace, coroutineScope)
+    }
+    val liveMatches = shelvesState.liveMatches
+    LaunchedEffect(
+        shelvesState,
+        sportsFixtures,
+        epgGuide,
+        channels,
+        epgMappings,
+        epgRepository,
+        epgScheduleCorrectionMinutes,
+        now
+    ) {
+        shelvesState.recomputeLiveMatches(
+            sportsFixtures = sportsFixtures,
+            epgGuide = epgGuide,
+            channels = channels,
+            epgMappings = epgMappings,
+            epgRepository = epgRepository,
+            epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
+            now = now
+        )
     }
     val omdbSettings = com.fortresstv.player.omdb.LocalOmdbSettings.current
     val ratingCacheVersion = shelvesState.ratingCacheVersion
@@ -1079,8 +1073,11 @@ internal fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val favRowState = rememberLazyListState()
                             LazyRow(state = favRowState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                itemsIndexed(favoriteChannels, key = { index, it -> "fav_now:${it.sourceId}:${it.sourceItemId}_$index" }) { index, channel ->
+                                itemsIndexed(favoriteChannels, key = { _, it -> "fav_now:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
                                     val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
+                                    val epgChannel = remember(channel.tvgId, channel.name, epgGuide) {
+                                        epgGuide?.findChannel(channel.tvgId, channel.name)
+                                    }
                                     val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId) {
                                         epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)
                                     }
@@ -1120,7 +1117,7 @@ internal fun HomeScreen(
                                     ) {
                                         Column(Modifier.fillMaxSize().padding(12.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(36.dp))
+                                                ChannelLogo(channel, epgChannel, modifier = Modifier.size(36.dp))
                                                 Spacer(Modifier.width(10.dp))
                                                 Text(
                                                     channel.name,
@@ -1188,8 +1185,11 @@ internal fun HomeScreen(
                                     .withZone(java.time.ZoneId.systemDefault())
                             }
                             LazyRow(state = recentRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(recentChannelsList, key = { index, it -> "recent:${it.sourceId}:${it.sourceItemId}_$index" }) { index, channel ->
+                                itemsIndexed(recentChannelsList, key = { _, it -> "recent:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
                                     val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
+                                    val epgChannel = remember(channel.tvgId, channel.name, epgGuide) {
+                                        epgGuide?.findChannel(channel.tvgId, channel.name)
+                                    }
                                     val currentProgramme = remember(
                                         channel.tvgId, channel.name, epgGuide, scheduleNow,
                                         epgScheduleCorrectionMinutes, manualXmltvId
@@ -1207,7 +1207,7 @@ internal fun HomeScreen(
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
                                         modifier = Modifier
                                             .width(236.dp)
-                                            .heightIn(min = 100.dp)
+                                            .height(104.dp)
                                             .focusProperties {
                                                 if (index == 0 && sidebarFocusRequester != null) {
                                                     left = sidebarFocusRequester
@@ -1226,7 +1226,7 @@ internal fun HomeScreen(
                                     ) {
                                         Column(Modifier.fillMaxSize().padding(10.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                ChannelLogo(channel, epgGuide?.findChannel(channel.tvgId, channel.name), modifier = Modifier.size(28.dp))
+                                                ChannelLogo(channel, epgChannel, modifier = Modifier.size(28.dp))
                                                 Spacer(Modifier.width(8.dp))
                                                 Text(
                                                     channel.name,
@@ -1317,7 +1317,9 @@ internal fun HomeScreen(
                     com.fortresstv.player.ui.HomeSectionId.SPORTS -> {
                         com.fortresstv.player.sports.SportsHubSection(
                             playableFixtures = liveMatches,
-                            onWatchChannel = onWatchChannel
+                            onWatchChannel = onWatchChannel,
+                            hiddenSportsFilters = hiddenSportsFilters,
+                            onToggleSportsFilter = onToggleSportsFilter
                         )
                     }
 

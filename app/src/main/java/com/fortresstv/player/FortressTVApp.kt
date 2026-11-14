@@ -425,6 +425,7 @@ internal fun FortressTVApp(
     var startupNavigationRequest by remember { mutableStateOf<StartupDestination?>(null) }
     var homeHiddenSections by remember { mutableStateOf(settings.homeHiddenSections(initialProfileId)) }
     var homeSectionOrder by remember { mutableStateOf(settings.homeSectionOrder(initialProfileId)) }
+    var hiddenSportsFilters by remember { mutableStateOf(settings.hiddenSportsFilters(initialProfileId)) }
     var showCustomizeHomeDialog by remember { mutableStateOf(false) }
     var playChannelsFullscreen by remember { mutableStateOf(false) }
     var autoPictureInPicture by remember { mutableStateOf(true) }
@@ -623,6 +624,7 @@ internal fun FortressTVApp(
         startupDestination = settings.startupDestination(targetProfileId)
         homeHiddenSections = settings.homeHiddenSections(targetProfileId)
         homeSectionOrder = settings.homeSectionOrder(targetProfileId)
+        hiddenSportsFilters = settings.hiddenSportsFilters(targetProfileId)
         epgScheduleCorrectionMinutes = settings.epgScheduleCorrectionMinutes(targetProfileId)
         libraryNamespace = ns
 
@@ -771,6 +773,7 @@ internal fun FortressTVApp(
                         }
                         homeHiddenSections = settings.homeHiddenSections(targetProfileId)
                         homeSectionOrder = settings.homeSectionOrder(targetProfileId)
+                        hiddenSportsFilters = settings.hiddenSportsFilters(targetProfileId)
                         if (activeSourceId != null) {
                             hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
                             categoryOrder = userLibrary.categoryOrder(activeSourceId)
@@ -1715,6 +1718,16 @@ internal fun FortressTVApp(
                     watchedItemIds = watchedItemIds,
                     homeHiddenSections = homeHiddenSections,
                     homeSectionOrder = homeSectionOrder,
+                    hiddenSportsFilters = hiddenSportsFilters,
+                    onToggleSportsFilter = { filterKey ->
+                        val updated = if (filterKey in hiddenSportsFilters) {
+                            hiddenSportsFilters - filterKey
+                        } else {
+                            hiddenSportsFilters + filterKey
+                        }
+                        hiddenSportsFilters = updated
+                        settings.setHiddenSportsFilters(updated, activeHouseholdProfile.id)
+                    },
                     onOpenCustomizeHome = { showCustomizeHomeDialog = true },
                     xtreamCatalogs = playlists.filter { it.enabled }.sortedBy { it.order }.mapNotNull { profile ->
                         val catalog = xtreamCatalogs[profile.id] ?: return@mapNotNull null
