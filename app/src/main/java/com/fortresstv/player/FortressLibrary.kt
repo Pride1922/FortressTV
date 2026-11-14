@@ -749,44 +749,27 @@ internal fun FortressLibrary(
             showHomeSection(com.fortresstv.player.ui.HomeSectionId.FAVORITE_CHANNELS),
             effectivePlaylist.channels, favoriteChannelIds
         ) {
-            if (favoriteChannelIds.isEmpty()) emptyList()
-            else {
-                val matcher = com.fortresstv.player.library.FastIdMatcher(favoriteChannelIds)
-                effectivePlaylist.channels.filter { ch -> matcher.matches(ch.libraryId(), ch.sourceItemId) }
-            }
+            HomeLibraryShelfBuilder.buildFavoriteChannels(effectivePlaylist.channels, favoriteChannelIds)
         }
 
         val homeRecentChannels = loadHomeShelf(
             showHomeSection(com.fortresstv.player.ui.HomeSectionId.RECENT_CHANNELS),
             effectivePlaylist.channels, recentChannelIds
         ) {
-            if (recentChannelIds.isEmpty()) emptyList()
-            else {
-                recentChannelIds.mapNotNull { id ->
-                    val raw = id.substringAfterLast(':')
-                    effectivePlaylist.channels.firstOrNull { ch ->
-                        ch.libraryId() == id || "${ch.sourceId}:${ch.sourceItemId}" == id || ch.sourceItemId == id || ch.sourceItemId == raw
-                    }
-                }
-            }
+            HomeLibraryShelfBuilder.buildRecentChannels(effectivePlaylist.channels, recentChannelIds)
         }
 
         val homeFollowedSeries = loadHomeShelf(
             showHomeSection(com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES),
             xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated
         ) {
-            if (followedSeriesIds.isEmpty()) emptyList()
-            else {
-                val matcher = com.fortresstv.player.library.FastIdMatcher(followedSeriesIds)
-                xtreamCatalogs.flatMap { catalog ->
-                    val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
-                    catalog.series.filter {
-                        matcher.matches(it.libraryId(catalog.sourceId), it.id.toString()) &&
-                            (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                            ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-                    }.map { CatalogSeries(catalog, it) }
-                }
-            }
+            HomeLibraryShelfBuilder.buildFollowedSeries(
+                catalogs = xtreamCatalogs,
+                followedSeriesIds = followedSeriesIds,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated
+            )
         }
 
         val homeOmdbSettings = LocalOmdbSettings.current

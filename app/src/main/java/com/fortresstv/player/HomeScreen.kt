@@ -574,21 +574,14 @@ internal fun HomeScreen(
         ProfileRepository.get(context.applicationContext).activeProfile
     }.collectAsState()
     val currentProfileId = currentProfile.id
-    val traktStore = remember(traktNamespace) { TraktSettingsStore(context.applicationContext, traktNamespace) }
-    val traktWatchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
-    val traktRecStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace) }
-    val traktPopularStore = remember(traktNamespace) { TraktPopularShowsStore(context.applicationContext, traktNamespace) }
-    val traktPopularMoviesStore = remember(traktNamespace) { TraktPopularMoviesStore(context.applicationContext, traktNamespace) }
+    val shelvesState = remember(traktNamespace, coroutineScope) {
+        HomeShelvesStateHolder(context.applicationContext, traktNamespace, coroutineScope)
+    }
     val omdbSettings = com.fortresstv.player.omdb.LocalOmdbSettings.current
-    var ratingCacheVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
-
-    val traktConnected = traktStore.isConnected()
+    val ratingCacheVersion = shelvesState.ratingCacheVersion
+    val traktConnected = shelvesState.traktConnected
     val showFeaturedSeries = com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections
     val showFeaturedMovies = com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections
-    var traktWatchlistItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktWatchlistItem>()) }
-    var traktRecItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
-    var traktPopularItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
-    var traktPopularMovieItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
     val recommendationLock = remember(traktNamespace) { Mutex() }
     var showHiddenRecommendations by remember(traktNamespace) { mutableStateOf(false) }
     var recommendationToHide by remember(traktNamespace) { mutableStateOf<TraktRecommendationItem?>(null) }
@@ -600,142 +593,44 @@ internal fun HomeScreen(
         recommendationToHide = item
     }
 
-    LaunchedEffect(traktNamespace, traktConnected) {
-        if (traktConnected) {
-            val (watchlist, recommendations) = withContext(Dispatchers.IO) {
-                traktWatchlistStore.loadWatchlist() to traktRecStore.loadRecommendations()
-            }
-            traktWatchlistItems = watchlist
-            traktRecItems = recommendations
-            launch {
-                TraktWatchlistService.syncWatchlist(context, traktNamespace)
-                    .onSuccess { traktWatchlistItems = it }
-            }
-            recommendationLock.withLock {
-                TraktRecommendationsService.syncRecommendations(context, traktNamespace)
-                    .onSuccess { traktRecItems = it }
-            }
-        }
+    LaunchedEffect(shelvesState, traktConnected) {
+        shelvesState.syncCoreTrakt()
     }
 
-    LaunchedEffect(traktNamespace, traktConnected, showFeaturedSeries) {
-        if (traktConnected && showFeaturedSeries) {
-            val cachedPopular = withContext(Dispatchers.IO) { traktPopularStore.loadPopularShows() }
-            traktPopularItems = cachedPopular
-            TraktPopularShowsService.syncPopularShows(context, traktNamespace)
-                .onSuccess { traktPopularItems = it }
-        } else {
-            traktPopularItems = emptyList()
-        }
+    LaunchedEffect(shelvesState, traktConnected, showFeaturedSeries) {
+        shelvesState.syncPopularShows(showFeaturedSeries)
     }
 
-    LaunchedEffect(traktNamespace, traktConnected, showFeaturedMovies) {
-        if (traktConnected && showFeaturedMovies) {
-            val cachedPopularMovies = withContext(Dispatchers.IO) { traktPopularMoviesStore.loadPopularMovies() }
-            traktPopularMovieItems = cachedPopularMovies
-            TraktPopularMoviesService.syncPopularMovies(context, traktNamespace)
-                .onSuccess { traktPopularMovieItems = it }
-        } else {
-            traktPopularMovieItems = emptyList()
-        }
+    LaunchedEffect(shelvesState, traktConnected, showFeaturedMovies) {
+        shelvesState.syncPopularMovies(showFeaturedMovies)
     }
 
     val showTraktWatchlist = traktConnected && com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST !in homeHiddenSections
     val showTraktRecs = traktConnected && com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS !in homeHiddenSections
     val canManageHiddenRecommendations = showTraktRecs && !currentProfile.isChild && currentProfileId != "restricted_default"
-    val matchedWatchlistState = remember(traktNamespace, showTraktWatchlist, catalogs) {
-        mutableStateOf(TraktMatchedWatchlist())
-    }
-    val matchedTraktWatchlist by matchedWatchlistState
-    LaunchedEffect(matchedWatchlistState, traktWatchlistItems) {
-        matchedWatchlistState.value = if (showTraktWatchlist && traktWatchlistItems.isNotEmpty()) {
-            withContext(Dispatchers.Default) { TraktWatchlistService.matchWatchlist(traktWatchlistItems, catalogs) }
-        } else TraktMatchedWatchlist()
+
+    val matchedTraktWatchlist = shelvesState.matchedTraktWatchlist
+    LaunchedEffect(shelvesState, showTraktWatchlist, catalogs, shelvesState.traktWatchlistItems) {
+        shelvesState.recomputeWatchlist(showTraktWatchlist, catalogs)
     }
 
-    val matchedRecsState = remember(traktNamespace, showTraktRecs, catalogs, hideAdultContent, maximumAge, blockUnrated) {
-        mutableStateOf(com.fortresstv.player.trakt.TraktMatchedRecommendations())
-    }
-    val matchedTraktRecs by matchedRecsState
-    LaunchedEffect(matchedRecsState, traktRecItems, catalogs) {
-        matchedRecsState.value = if (showTraktRecs && traktRecItems.isNotEmpty()) withContext(Dispatchers.Default) {
-            com.fortresstv.player.trakt.TraktRecommendationsService.matchRecommendations(
-                recommendations = traktRecItems,
-                catalogs = catalogs,
-                hideAdultContent = hideAdultContent,
-                maximumAge = maximumAge,
-                blockUnrated = blockUnrated
-            )
-        } else com.fortresstv.player.trakt.TraktMatchedRecommendations()
+    val matchedTraktRecs = shelvesState.matchedTraktRecs
+    LaunchedEffect(shelvesState, showTraktRecs, catalogs, hideAdultContent, maximumAge, blockUnrated, shelvesState.traktRecItems) {
+        shelvesState.recomputeRecommendations(showTraktRecs, catalogs, hideAdultContent, maximumAge, blockUnrated)
     }
 
-    val featuredSeriesShelfState = remember(traktNamespace, showFeaturedSeries, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated) {
-        mutableStateOf(FeaturedSeriesShelf())
-    }
-    val featuredSeriesShelf by featuredSeriesShelfState
-    LaunchedEffect(featuredSeriesShelfState, traktPopularItems) {
-        if (!showFeaturedSeries || catalogs.isEmpty()) {
-            featuredSeriesShelfState.value = FeaturedSeriesShelf()
-            return@LaunchedEffect
-        }
-        featuredSeriesShelfState.value = withContext(Dispatchers.Default) {
-            val firstSeenStore = SeriesFirstSeenStore(context.applicationContext.filesDir)
-            val firstSeenBySource = withContext(Dispatchers.IO) {
-                catalogs.associate { it.sourceId to firstSeenStore.loadFirstSeen(it.sourceId) }
-            }
-            FeaturedSeriesShelfResolver.resolve(
-                traktConnected = traktConnected,
-                popularShows = traktPopularItems,
-                catalogs = catalogs,
-                firstSeenBySource = firstSeenBySource,
-                hideAdultContent = hideAdultContent,
-                maximumAge = maximumAge,
-                blockUnrated = blockUnrated
-            )
-        }
+    val featuredSeriesShelf = shelvesState.featuredSeriesShelf
+    LaunchedEffect(shelvesState, showFeaturedSeries, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated, shelvesState.traktPopularItems) {
+        shelvesState.recomputeFeaturedSeries(showFeaturedSeries, catalogs, hideAdultContent, maximumAge, blockUnrated)
     }
 
-    val featuredMoviesShelfState = remember(traktNamespace, showFeaturedMovies, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated) {
-        mutableStateOf(FeaturedMoviesShelf())
-    }
-    val featuredMoviesShelf by featuredMoviesShelfState
-    LaunchedEffect(featuredMoviesShelfState, traktPopularMovieItems) {
-        if (!showFeaturedMovies || catalogs.isEmpty()) {
-            featuredMoviesShelfState.value = FeaturedMoviesShelf()
-            return@LaunchedEffect
-        }
-        featuredMoviesShelfState.value = withContext(Dispatchers.Default) {
-            val firstSeenStore = MoviesFirstSeenStore(context.applicationContext.filesDir)
-            val firstSeenBySource = withContext(Dispatchers.IO) {
-                catalogs.associate { it.sourceId to firstSeenStore.loadFirstSeen(it.sourceId) }
-            }
-            FeaturedMoviesShelfResolver.resolve(
-                traktConnected = traktConnected,
-                popularMovies = traktPopularMovieItems,
-                catalogs = catalogs,
-                firstSeenBySource = firstSeenBySource,
-                hideAdultContent = hideAdultContent,
-                maximumAge = maximumAge,
-                blockUnrated = blockUnrated
-            )
-        }
+    val featuredMoviesShelf = shelvesState.featuredMoviesShelf
+    LaunchedEffect(shelvesState, showFeaturedMovies, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated, shelvesState.traktPopularMovieItems) {
+        shelvesState.recomputeFeaturedMovies(showFeaturedMovies, catalogs, hideAdultContent, maximumAge, blockUnrated)
     }
 
-    LaunchedEffect(featuredMoviesShelf.items, featuredSeriesShelf.items, omdbSettings) {
-        ratingCacheVersion++
-        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank()) return@LaunchedEffect
-        val targets = buildList {
-            featuredMoviesShelf.items.take(15).forEach { entry ->
-                add(com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId))
-            }
-            featuredSeriesShelf.items.take(15).forEach { entry ->
-                add(com.fortresstv.player.omdb.OmdbPreFetchTarget("series", entry.series.name, entry.series.year, entry.series.imdbId))
-            }
-        }
-        if (targets.isNotEmpty()) {
-            OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, targets)
-            ratingCacheVersion++
-        }
+    LaunchedEffect(shelvesState, featuredMoviesShelf.items, featuredSeriesShelf.items, omdbSettings) {
+        shelvesState.prefetchOmdbForFeatured(omdbSettings)
     }
 
     val visibleShelves = homeSectionOrder.filter { section ->
@@ -1679,10 +1574,10 @@ internal fun HomeScreen(
 
     selectedMovie?.let { entry ->
         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
-        val matchingRec = remember(entry.movie.id, traktRecItems) {
+        val matchingRec = remember(entry.movie.id, shelvesState.traktRecItems) {
             val normName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(entry.movie.name)
             val cleanName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(entry.movie.name).first)
-            traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.MOVIE && (
+            shelvesState.traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.MOVIE && (
                 (it.tmdbId != null && it.tmdbId == entry.movie.tmdbId) ||
                 (it.imdbId != null && it.imdbId.equals(entry.movie.imdbId, ignoreCase = true)) ||
                 (com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(it.title).let { t -> t == normName || t == cleanName })
@@ -1714,10 +1609,10 @@ internal fun HomeScreen(
     selectedSeries?.let { entry ->
         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
         if (source != null) {
-            val matchingRec = remember(entry.series.id, traktRecItems) {
+            val matchingRec = remember(entry.series.id, shelvesState.traktRecItems) {
                 val normName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(entry.series.name)
                 val cleanName = com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(com.fortresstv.player.tmdb.TmdbClient.cleanMediaTitle(entry.series.name).first)
-                traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.SHOW && (
+                shelvesState.traktRecItems.firstOrNull { it.kind == TraktWatchlistKind.SHOW && (
                     (it.tmdbId != null && it.tmdbId == entry.series.tmdbId) ||
                     (it.imdbId != null && it.imdbId.equals(entry.series.imdbId, ignoreCase = true)) ||
                     (com.fortresstv.player.trakt.TraktRecommendationsService.normalizeTitle(it.title).let { t -> t == normName || t == cleanName })
@@ -1768,7 +1663,7 @@ internal fun HomeScreen(
                                 recommendationLock.withLock {
                                     TraktRecommendationsService.dismissRecommendation(context, traktNamespace, item)
                                         .onSuccess {
-                                            traktRecItems = it
+                                            shelvesState.updateRecommendations(it)
                                             recommendationToHide = null
                                             selectedMovie = null
                                             selectedSeries = null
@@ -1800,7 +1695,7 @@ internal fun HomeScreen(
             restore = { item ->
                 recommendationLock.withLock {
                     TraktRecommendationsService.restoreRecommendation(context, traktNamespace, item)
-                        .onSuccess { traktRecItems = it }
+                        .onSuccess { shelvesState.updateRecommendations(it) }
                         .isSuccess
                 }
             },
