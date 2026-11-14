@@ -540,7 +540,8 @@ internal fun HomeScreen(
         while (true) {
             sportsRepo.refresh()
             now = java.time.Instant.now()
-            delay(30_000L)
+            val hasLiveFixture = sportsRepo.fixtures.value.any { it.isLive() }
+            delay(if (hasLiveFixture) 15_000L else 60_000L)
         }
     }
     val progressByKey = remember(progressEntries) { progressEntries.associateBy { it.key } }

@@ -218,7 +218,14 @@ async function fetchFormula1Events(): Promise<SportsFixtureRecord[]> {
     for (const ev of events) {
       const comp = ev.competitions?.[0];
       const kickoff = new Date(ev.date);
-      const isLive = kickoff.getTime() <= now.getTime() && (now.getTime() - kickoff.getTime() < 3 * 3600 * 1000);
+      const state = comp?.status?.type?.state;
+      const isLiveByClock = kickoff.getTime() <= now.getTime() && (now.getTime() - kickoff.getTime() < 3 * 3600 * 1000);
+      const status: "scheduled" | "live" | "finished" =
+        state === "in" ? "live" :
+        state === "post" ? "finished" :
+        state === "pre" ? "scheduled" :
+        (isLiveByClock ? "live" : "scheduled");
+      const shortDetail = comp?.status?.type?.shortDetail;
 
       fixtures.push({
         id: `espn-f1-${ev.id}`,
@@ -231,8 +238,8 @@ async function fetchFormula1Events(): Promise<SportsFixtureRecord[]> {
         away_team_logo_url: "https://r2.thesportsdb.com/images/media/league/badge/g8cofl1513623681.png",
         kickoff_utc: kickoff.toISOString(),
         broadcaster_official: "DAZN 1",
-        status: isLive ? "live" : "scheduled",
-        minute: isLive ? "EM DIRETO" : null,
+        status,
+        minute: status === "live" ? (shortDetail || "EM DIRETO") : null,
         venue: comp?.venue?.fullName || "Circuito",
         updated_at: now.toISOString()
       });
@@ -398,41 +405,92 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const mode = new URL(req.url).searchParams.get("mode") === "live" ? "live" : "full";
   const allFixtures: SportsFixtureRecord[] = [];
   const now = new Date();
 
-  // Include the previous UTC date for matches still live after midnight.
   const utcDate = (offset: number) =>
     new Date(now.getTime() + offset * 86_400_000).toISOString().slice(0, 10).replaceAll("-", "");
-  const soccer = await Promise.all([-1, 0, 1].flatMap(offset =>
-    SOCCER_LEAGUES.map(league => fetchSoccerScoreboard(league, utcDate(offset)))
-  ));
-  allFixtures.push(...new Map(soccer.flat().map(fixture => [fixture.id, fixture] as const)).values());
+
+  let soccerLeaguesToFetch = SOCCER_LEAGUES;
+  let rugbyLeaguesToFetch = RUGBY_LEAGUES;
+  let datesToFetch = [-1, 0, 1].map(utcDate);
+  let fetchF1 = true;
+  let fetchNba = true;
+
+  if (mode === "live") {
+    const liveWindowStart = new Date(now.getTime() - 3 * 3600 * 1000).toISOString();
+    const liveWindowEnd = new Date(now.getTime() + 20 * 60 * 1000).toISOString();
+    const { data: activeRows, error: activeError } = await supabase
+      .from("sports_fixtures")
+      .select("sport, competition, kickoff_utc, status")
+      .or(`status.eq.live,and(status.eq.scheduled,kickoff_utc.gte.${liveWindowStart},kickoff_utc.lte.${liveWindowEnd})`);
+
+    if (activeError) {
+      console.warn("[sync-fixtures] Live-mode query failed, falling back to full sync:", activeError.message);
+    } else if (!activeRows || activeRows.length === 0) {
+      return new Response(JSON.stringify({
+        success: true,
+        mode: "live",
+        syncedCount: 0,
+        skipped: true,
+        timestamp: now.toISOString()
+      }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    } else {
+      const activeCompetitions = new Set(activeRows.map((row: any) => `${row.sport}:${row.competition}`));
+      datesToFetch = [...new Set([
+        utcDate(0),
+        ...activeRows
+          .map((row: any) => String(row.kickoff_utc || "").slice(0, 10).replaceAll("-", ""))
+          .filter((d: string) => d.length === 8)
+      ])];
+      soccerLeaguesToFetch = SOCCER_LEAGUES.filter(l => activeCompetitions.has(`football:${l.name}`));
+      rugbyLeaguesToFetch = RUGBY_LEAGUES.filter(l => activeCompetitions.has(`rugby:${l.name}`));
+      fetchF1 = activeCompetitions.has("motorsport:Formula 1");
+      fetchNba = activeCompetitions.has("basketball:NBA");
+    }
+  }
+
+  // 1. Fetch Soccer
+  if (soccerLeaguesToFetch.length > 0) {
+    const soccer = await Promise.all(datesToFetch.flatMap(date =>
+      soccerLeaguesToFetch.map(league => fetchSoccerScoreboard(league, date))
+    ));
+    allFixtures.push(...new Map(soccer.flat().map(fixture => [fixture.id, fixture] as const)).values());
+  }
 
   // 2. Fetch Formula 1
-  const f1List = await fetchFormula1Events();
-  allFixtures.push(...f1List);
+  if (fetchF1) {
+    const f1List = await fetchFormula1Events();
+    allFixtures.push(...f1List);
+  }
 
   // 3. Fetch NBA
-  const nbaList = await fetchNbaEvents();
-  allFixtures.push(...nbaList);
+  if (fetchNba) {
+    const nbaList = await fetchNbaEvents();
+    allFixtures.push(...nbaList);
+  }
 
   // 4. Fetch Rugby
-  const rugby = await Promise.all([-1, 0, 1].flatMap(offset =>
-    RUGBY_LEAGUES.map(league => fetchRugbyScoreboard(league, utcDate(offset)))
-  ));
-  allFixtures.push(...new Map(rugby.flat().map(fixture => [fixture.id, fixture] as const)).values());
+  if (rugbyLeaguesToFetch.length > 0) {
+    const rugby = await Promise.all(datesToFetch.flatMap(date =>
+      rugbyLeaguesToFetch.map(league => fetchRugbyScoreboard(league, date))
+    ));
+    allFixtures.push(...new Map(rugby.flat().map(fixture => [fixture.id, fixture] as const)).values());
+  }
 
-  console.log(`[sync-fixtures] Collected ${allFixtures.length} real fixtures across football, F1, NBA, and rugby.`);
+  console.log(`[sync-fixtures] (${mode}) Collected ${allFixtures.length} real fixtures.`);
 
   if (allFixtures.length === 0) {
-    return new Response(JSON.stringify({ success: true, count: 0, message: "No upcoming events found from upstream feeds" }), {
+    return new Response(JSON.stringify({ success: true, mode, count: 0, message: "No upcoming events found from upstream feeds" }), {
       headers: { "Content-Type": "application/json" }
     });
   }
 
   // Upsert into public.sports_fixtures
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("sports_fixtures")
     .upsert(allFixtures, { onConflict: "id" });
 
@@ -444,15 +502,18 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Cleanup past events finished more than 24 hours ago
-  const cutoff = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
-  await supabase
-    .from("sports_fixtures")
-    .delete()
-    .lt("kickoff_utc", cutoff);
+  // Cleanup past events finished more than 24 hours ago (only during full sync)
+  if (mode === "full") {
+    const cutoff = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+    await supabase
+      .from("sports_fixtures")
+      .delete()
+      .lt("kickoff_utc", cutoff);
+  }
 
   return new Response(JSON.stringify({
     success: true,
+    mode,
     syncedCount: allFixtures.length,
     sports: ["football", "motorsport", "basketball", "rugby"],
     timestamp: now.toISOString()
