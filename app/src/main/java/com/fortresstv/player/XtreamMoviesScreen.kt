@@ -411,6 +411,8 @@ internal fun XtreamMoviesScreen(
     var filterFresh by remember { mutableStateOf(false) }
     var topRatedCount by remember { mutableStateOf(0) }
     var freshCount by remember { mutableStateOf(0) }
+    var ratedCount by remember { mutableStateOf(0) }
+    var totalCount by remember { mutableStateOf(0) }
     var selectedCategory by remember { mutableStateOf<CatalogCategory?>(null) }
     var selectedMovie by remember { mutableStateOf<CatalogMovie?>(null) }
     var visibleMovies by remember { mutableStateOf<List<CatalogMovie>>(emptyList()) }
@@ -424,7 +426,18 @@ internal fun XtreamMoviesScreen(
         if (query.isNotBlank()) delay(250)
         appliedQuery = query.trim()
     }
-    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh) {
+    val enrichmentRefreshToken = rememberLowCoverageRatingEnrichment(
+        catalogs = catalogs,
+        visibleItems = visibleMovies,
+        ratedCount = ratedCount,
+        totalCount = totalCount,
+        omdbSettings = omdbSettings,
+        gridState = gridState,
+        sourceIdOf = { it.catalog.sourceId },
+        ratingOf = { it.movie.rating },
+        targetOf = { com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", it.movie.name, it.movie.year, it.movie.imdbId) }
+    )
+    LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh, enrichmentRefreshToken) {
         isCatalogLoading = true
         val result = withContext(Dispatchers.Default) {
             val hasOmdb = OmdbMetadataResolver.hasAnyCached()
@@ -457,6 +470,8 @@ internal fun XtreamMoviesScreen(
         visibleMovies = result.items
         topRatedCount = result.topRatedCount
         freshCount = result.freshCount
+        ratedCount = result.ratedCount
+        totalCount = result.totalCount
         isCatalogLoading = false
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
@@ -520,12 +535,12 @@ internal fun XtreamMoviesScreen(
                     OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
                 } else null
             }
-            val rating = cachedOmdb?.imdbRating ?: entry.movie.rating
+            val rating = formatEffectiveRatingBadge(cachedOmdb?.imdbRating, entry.movie.rating)
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
                 subtitle = formatVodMetadata(entry.movie.year, rating),
-                imdbRating = rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                imdbRating = rating,
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                 isWatched = libraryId in watchedItemIds,
                 progressFraction = progressByKey[libraryId]?.progressFraction,

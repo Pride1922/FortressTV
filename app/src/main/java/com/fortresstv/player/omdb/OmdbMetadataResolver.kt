@@ -28,6 +28,7 @@ object OmdbMetadataResolver {
     private const val CACHE_DIR_NAME = "omdb_cache"
     private const val CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000L // 14 days
     const val MAX_SESSION_PREFETCH_BUDGET = 50
+    const val DEFAULT_PER_SOURCE_ENRICHMENT_BUDGET = 15
 
     fun clearMemoryCache() {
         memoryCache.clear()
@@ -243,6 +244,46 @@ object OmdbMetadataResolver {
 
             delay(120) // 120ms gentle throttle between requests
         }
+    }
+
+    /**
+     * Background enrichment for catalogues with low measured rating coverage.
+     * Enforces an independent [perSourceBudget] per source ID and returns the number
+     * of newly resolved items with a usable IMDb rating.
+     */
+    suspend fun prefetchWithPerSourceBudget(
+        context: Context,
+        settings: OmdbSettings,
+        targetsBySource: Map<String, List<OmdbPreFetchTarget>>,
+        perSourceBudget: Int = DEFAULT_PER_SOURCE_ENRICHMENT_BUDGET
+    ): Int = withContext(Dispatchers.IO) {
+        if (!settings.enabled || settings.apiKey.isBlank() || perSourceBudget <= 0) return@withContext 0
+        var newlyResolved = 0
+        for ((_, targets) in targetsBySource) {
+            var sourceBudget = perSourceBudget
+            for (target in targets) {
+                if (sourceBudget <= 0) break
+                val cacheKey = buildCacheKey(target.type, target.title, target.year, target.imdbId)
+                if (memoryCache.containsKey(cacheKey) || isDiskCached(context, cacheKey)) {
+                    getCached(context, target.type, target.title, target.year, target.imdbId)
+                    continue
+                }
+                if (!sessionRequestedKeys.add(cacheKey)) {
+                    continue
+                }
+                sourceBudget--
+                val resolved = if (target.type == "movie") {
+                    resolveMovie(context, settings, target.title, target.year, target.imdbId)
+                } else {
+                    resolveSeries(context, settings, target.title, target.year, target.imdbId)
+                }
+                if (!resolved?.imdbRating.isNullOrBlank()) {
+                    newlyResolved++
+                }
+                delay(120)
+            }
+        }
+        newlyResolved
     }
 
     fun buildCacheKey(

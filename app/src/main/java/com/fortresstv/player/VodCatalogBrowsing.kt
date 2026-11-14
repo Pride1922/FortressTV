@@ -43,8 +43,36 @@ import com.fortresstv.player.xtream.XtreamCategory
 internal data class VodCatalogFilterResult<R>(
     val items: List<R>,
     val topRatedCount: Int,
-    val freshCount: Int
-)
+    val freshCount: Int,
+    val ratedCount: Int = 0,
+    val totalCount: Int = items.size
+) {
+    val ratingCoverage: Float
+        get() = if (totalCount <= 0) 1f else ratedCount.toFloat() / totalCount.toFloat()
+}
+
+internal const val MIN_RATING_COVERAGE_THRESHOLD = 0.35f
+
+internal fun parseUsableRating(raw: String?): Double? {
+    val value = raw?.trim()?.toDoubleOrNull() ?: return null
+    if (value.isNaN() || value <= 0.0 || value > 10.0) return null
+    return value
+}
+
+internal fun resolveEffectiveRating(cachedImdbRating: String?, providerRating: String?): Double? =
+    parseUsableRating(cachedImdbRating) ?: parseUsableRating(providerRating)
+
+internal fun formatEffectiveRatingBadge(cachedImdbRating: String?, providerRating: String?): String? {
+    if (parseUsableRating(cachedImdbRating) != null) return cachedImdbRating!!.trim()
+    if (parseUsableRating(providerRating) != null) return providerRating!!.trim()
+    return null
+}
+
+internal fun shouldRunLowCoverageEnrichment(
+    ratedCount: Int,
+    totalCount: Int,
+    threshold: Float = MIN_RATING_COVERAGE_THRESHOLD
+): Boolean = totalCount > 0 && (ratedCount.toFloat() / totalCount.toFloat()) < threshold
 
 internal fun buildVisibleVodCategories(
     catalogs: List<XtreamCatalog>,
@@ -97,22 +125,24 @@ internal fun <T, R> filterAndSortVodItems(
     val scored = baseFiltered.map { wrapped ->
         val item = unwrap(wrapped)
         val cached = cachedOmdbOf(item)
-        val imdbScore = cached?.imdbRating?.toDoubleOrNull() ?: providerRatingOf(item)?.toDoubleOrNull() ?: 0.0
+        val imdbScore = resolveEffectiveRating(cached?.imdbRating, providerRatingOf(item))
         val rtScore = cached?.rottenTomatoes?.removeSuffix("%")?.trim()?.toIntOrNull() ?: 0
         ScoredVodItem(item, wrapped, imdbScore, rtScore)
     }
 
-    val topRatedCount = scored.count { it.imdbScore >= 7.5 }
+    val ratedCount = scored.count { it.imdbScore != null }
+    val topRatedCount = scored.count { (it.imdbScore ?: 0.0) >= 7.5 }
     val freshCount = scored.count { it.rtScore >= 60 }
 
     val sorted = scored
-        .filter { (!filterTopRated || it.imdbScore >= 7.5) && (!filterFresh || it.rtScore >= 60) }
+        .filter { (!filterTopRated || (it.imdbScore ?: 0.0) >= 7.5) && (!filterFresh || it.rtScore >= 60) }
         .let { list ->
             when (sortOption) {
                 VodSortOption.DEFAULT -> list.map { it.wrapped }
                 VodSortOption.RATING -> list.sortedWith(
-                    compareByDescending<ScoredVodItem<T, R>> { it.imdbScore > 0.0 }
-                        .thenByDescending { it.imdbScore }
+                    compareByDescending<ScoredVodItem<T, R>> { it.imdbScore != null }
+                        .thenByDescending { it.imdbScore ?: 0.0 }
+                        .thenBy { nameOf(it.item).lowercase() }
                 ).map { it.wrapped }
                 VodSortOption.YEAR -> list.sortedByDescending { yearOf(it.item)?.toIntOrNull() ?: 0 }.map { it.wrapped }
                 VodSortOption.ALPHABETICAL -> list.sortedBy { nameOf(it.item).lowercase() }.map { it.wrapped }
@@ -122,14 +152,16 @@ internal fun <T, R> filterAndSortVodItems(
     return VodCatalogFilterResult(
         items = sorted,
         topRatedCount = topRatedCount,
-        freshCount = freshCount
+        freshCount = freshCount,
+        ratedCount = ratedCount,
+        totalCount = scored.size
     )
 }
 
 private data class ScoredVodItem<T, R>(
     val item: T,
     val wrapped: R,
-    val imdbScore: Double,
+    val imdbScore: Double?,
     val rtScore: Int
 )
 
@@ -156,6 +188,48 @@ internal fun <T> rememberVodOmdbPrefetchVersion(
         }
     }
     return ratingCacheVersion
+}
+
+@Composable
+internal fun <T> rememberLowCoverageRatingEnrichment(
+    catalogs: List<XtreamCatalog>,
+    visibleItems: List<T>,
+    ratedCount: Int,
+    totalCount: Int,
+    omdbSettings: OmdbSettings,
+    gridState: LazyGridState,
+    sourceIdOf: (T) -> String,
+    ratingOf: (T) -> String?,
+    targetOf: (T) -> OmdbPreFetchTarget
+): Int {
+    val context = LocalContext.current
+    var enrichmentRefreshToken by remember { mutableIntStateOf(0) }
+    LaunchedEffect(catalogs, omdbSettings, totalCount) {
+        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank()) return@LaunchedEffect
+        if (!shouldRunLowCoverageEnrichment(ratedCount, totalCount)) return@LaunchedEffect
+
+        val targetsBySource = LinkedHashMap<String, MutableList<OmdbPreFetchTarget>>()
+        for (item in visibleItems) {
+            if (parseUsableRating(ratingOf(item)) != null) continue
+            val sourceId = sourceIdOf(item)
+            val list = targetsBySource.getOrPut(sourceId) { mutableListOf() }
+            if (list.size < OmdbMetadataResolver.DEFAULT_PER_SOURCE_ENRICHMENT_BUDGET * 2) {
+                list.add(targetOf(item))
+            }
+        }
+        if (targetsBySource.isEmpty()) return@LaunchedEffect
+
+        val newlyResolved = OmdbMetadataResolver.prefetchWithPerSourceBudget(
+            context = context,
+            settings = omdbSettings,
+            targetsBySource = targetsBySource,
+            perSourceBudget = OmdbMetadataResolver.DEFAULT_PER_SOURCE_ENRICHMENT_BUDGET
+        )
+        if (newlyResolved > 0 && !gridState.isScrollInProgress && gridState.firstVisibleItemIndex == 0) {
+            enrichmentRefreshToken++
+        }
+    }
+    return enrichmentRefreshToken
 }
 
 @Composable
