@@ -871,6 +871,8 @@ internal fun ApiKeysTab(
                             TraktWatchlistStore(context.applicationContext, traktNamespace).clear()
                             com.fortresstv.player.trakt.TraktWatchedStore(context.applicationContext, traktNamespace).clear()
                             com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace).clear()
+                            com.fortresstv.player.trakt.TraktPopularShowsStore(context.applicationContext, traktNamespace).clear()
+                            com.fortresstv.player.trakt.TraktPopularMoviesStore(context.applicationContext, traktNamespace).clear()
                         },
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = MaterialTheme.colorScheme.error

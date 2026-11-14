@@ -547,6 +547,52 @@ open class TraktClient(
     }
 
     /**
+     * Fetches popular shows on Trakt in popularity order.
+     */
+    open fun fetchPopularShows(
+        clientId: String,
+        accessToken: String? = null,
+        limit: Int = 100
+    ): TraktAuthResult<List<TraktRecommendationItem>> =
+        fetchPopular(path = "shows/popular", kind = TraktWatchlistKind.SHOW, clientId = clientId, accessToken = accessToken, limit = limit)
+
+    /**
+     * Fetches popular movies on Trakt in popularity order.
+     */
+    open fun fetchPopularMovies(
+        clientId: String,
+        accessToken: String? = null,
+        limit: Int = 100
+    ): TraktAuthResult<List<TraktRecommendationItem>> =
+        fetchPopular(path = "movies/popular", kind = TraktWatchlistKind.MOVIE, clientId = clientId, accessToken = accessToken, limit = limit)
+
+    private fun fetchPopular(
+        path: String,
+        kind: TraktWatchlistKind,
+        clientId: String,
+        accessToken: String?,
+        limit: Int
+    ): TraktAuthResult<List<TraktRecommendationItem>> {
+        val url = "${apiHost.trimEnd('/')}/$path?limit=$limit"
+        return try {
+            val response = executeGet(url, accessToken = accessToken, clientId = clientId)
+            if (response.code in 200..299) {
+                val array = org.json.JSONArray(response.body)
+                val list = ArrayList<TraktRecommendationItem>(array.length())
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    TraktRecommendationItem.fromJson(obj, kind)?.let { list.add(it) }
+                }
+                TraktAuthResult.Success(list)
+            } else {
+                TraktAuthResult.Failure("Failed to fetch $path: ${response.code}", statusCode = response.code)
+            }
+        } catch (e: Throwable) {
+            TraktAuthResult.Failure("Error fetching $path: ${e.message}", cause = e)
+        }
+    }
+
+    /**
      * Dismisses (hides) a recommendation on Trakt so it will not appear again.
      */
     open fun dismissRecommendation(

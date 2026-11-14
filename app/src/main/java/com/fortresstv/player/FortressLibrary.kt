@@ -789,35 +789,8 @@ internal fun FortressLibrary(
             }
         }
 
-        val homeRecentMovies = loadHomeShelf(
-            showHomeSection(com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES),
-            xtreamCatalogs, hideAdultContent, maximumAge, blockUnrated
-        ) {
-            xtreamCatalogs.flatMap { catalog ->
-                val categoryNames = catalog.movieCategories.associate { it.id to it.name }
-                catalog.movies.asReversed().asSequence().filter {
-                    (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-                }.take(25).map { CatalogMovie(catalog, it) }.toList()
-            }.take(25)
-        }
-
-        val homeFeaturedSeries = loadHomeShelf(
-            showHomeSection(com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES),
-            xtreamCatalogs, followedSeriesIds, hideAdultContent, maximumAge, blockUnrated
-        ) {
-            xtreamCatalogs.flatMap { catalog ->
-                val categoryNames = catalog.seriesCategories.associate { it.id to it.name }
-                catalog.series.asSequence().filter {
-                    it.libraryId(catalog.sourceId) !in followedSeriesIds &&
-                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                        ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-                }.take(25).map { CatalogSeries(catalog, it) }.toList()
-            }.take(25)
-        }
-
         val homeOmdbSettings = LocalOmdbSettings.current
-        LaunchedEffect(destination, progressEntries, homeFollowedSeries, homeRecentMovies, homeOmdbSettings) {
+        LaunchedEffect(destination, progressEntries, homeFollowedSeries, homeOmdbSettings) {
             if (destination == LibraryDestination.HOME && homeOmdbSettings.enabled && homeOmdbSettings.apiKey.isNotBlank()) {
                 val targets = mutableListOf<com.fortresstv.player.omdb.OmdbPreFetchTarget>()
                 // 1. Continue watching items (most recent first)
@@ -828,10 +801,6 @@ internal fun FortressLibrary(
                 // 2. Followed series
                 homeFollowedSeries.take(15).forEach { entry ->
                     targets.add(com.fortresstv.player.omdb.OmdbPreFetchTarget(type = "series", title = entry.series.name, year = entry.series.year, imdbId = entry.series.imdbId))
-                }
-                // 3. Recent movies
-                homeRecentMovies.take(15).forEach { entry ->
-                    targets.add(com.fortresstv.player.omdb.OmdbPreFetchTarget(type = "movie", title = entry.movie.name, year = entry.movie.year, imdbId = entry.movie.imdbId))
                 }
                 OmdbMetadataResolver.prefetchCuratedBatch(context, homeOmdbSettings, targets)
             }
@@ -861,8 +830,6 @@ internal fun FortressLibrary(
                     favoriteChannels = homeFavoriteChannels,
                     recentChannelsList = homeRecentChannels,
                     followedSeries = homeFollowedSeries,
-                    recentMovies = homeRecentMovies,
-                    featuredSeries = homeFeaturedSeries,
                     followedSeriesIds = followedSeriesIds,
                     watchedItemIds = watchedItemIds,
                     movieWatchlistIds = movieWatchlistIds,

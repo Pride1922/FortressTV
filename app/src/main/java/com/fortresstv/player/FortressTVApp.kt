@@ -2241,9 +2241,16 @@ internal fun FortressTVApp(
         }
 
         if (showCustomizeHomeDialog) {
+            val traktConnectedForHome = remember(currentUserId, activeHouseholdProfile.id, showCustomizeHomeDialog) {
+                com.fortresstv.player.trakt.TraktSettingsStore(
+                    context.applicationContext,
+                    profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+                ).isConnected()
+            }
             com.fortresstv.player.ui.CustomizeHomeDialog(
                 hiddenSections = homeHiddenSections,
                 sectionOrder = homeSectionOrder,
+                traktConnected = traktConnectedForHome,
                 onOrderChange = { updated ->
                     homeSectionOrder = updated
                     settings.setHomeSectionOrder(updated, activeHouseholdProfile.id)

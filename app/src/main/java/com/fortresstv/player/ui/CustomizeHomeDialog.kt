@@ -76,21 +76,36 @@ fun CustomizeHomeDialog(
     sectionOrder: List<String>,
     onToggleSection: (String) -> Unit,
     onOrderChange: (List<String>) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    traktConnected: Boolean = false
 ) {
     val strings = LocalAppStrings.current
 
-    val items: List<Triple<String, String, ImageVector>> = listOf(
-        Triple(HomeSectionId.SPORTS, strings.sectionSports, Icons.Default.SportsSoccer),
-        Triple(HomeSectionId.CONTINUE_WATCHING, strings.sectionContinueWatching, Icons.Default.PlayCircle),
-        Triple(HomeSectionId.FAVORITE_CHANNELS, strings.sectionFavoriteChannels, Icons.Default.Star),
-        Triple(HomeSectionId.RECENT_CHANNELS, strings.sectionRecentChannels, Icons.Default.History),
-        Triple(HomeSectionId.FOLLOWED_SERIES, strings.sectionFollowedSeries, Icons.Default.Tv),
-        Triple(HomeSectionId.TRAKT_WATCHLIST, strings.sectionTraktWatchlist, Icons.Default.Bookmark),
-        Triple(HomeSectionId.TRAKT_RECOMMENDATIONS, strings.sectionTraktRecommendations, Icons.Default.ThumbUp),
-        Triple(HomeSectionId.RECENT_MOVIES, strings.sectionRecentMovies, Icons.Default.Movie),
-        Triple(HomeSectionId.FEATURED_SERIES, strings.sectionFeaturedSeries, Icons.Default.AutoAwesome)
-    ).associateBy { it.first }.let { sections -> sectionOrder.mapNotNull(sections::get) }
+    val items: List<Triple<String, String, ImageVector>> = buildList {
+        add(Triple(HomeSectionId.SPORTS, strings.sectionSports, Icons.Default.SportsSoccer))
+        add(Triple(HomeSectionId.CONTINUE_WATCHING, strings.sectionContinueWatching, Icons.Default.PlayCircle))
+        add(Triple(HomeSectionId.FAVORITE_CHANNELS, strings.sectionFavoriteChannels, Icons.Default.Star))
+        add(Triple(HomeSectionId.RECENT_CHANNELS, strings.sectionRecentChannels, Icons.Default.History))
+        add(Triple(HomeSectionId.FOLLOWED_SERIES, strings.sectionFollowedSeries, Icons.Default.Tv))
+        if (traktConnected) {
+            add(Triple(HomeSectionId.TRAKT_WATCHLIST, strings.sectionTraktWatchlist, Icons.Default.Bookmark))
+            add(Triple(HomeSectionId.TRAKT_RECOMMENDATIONS, strings.sectionTraktRecommendations, Icons.Default.ThumbUp))
+        }
+        add(
+            Triple(
+                HomeSectionId.RECENT_MOVIES,
+                if (traktConnected) strings.sectionTraktPopularMovies else strings.homeFeaturedMovies,
+                Icons.Default.Movie
+            )
+        )
+        add(
+            Triple(
+                HomeSectionId.FEATURED_SERIES,
+                if (traktConnected) strings.sectionTraktPopularSeries else strings.homeRecentlyAddedSeries,
+                Icons.Default.AutoAwesome
+            )
+        )
+    }.associateBy { it.first }.let { sections -> sectionOrder.mapNotNull(sections::get) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -150,7 +165,15 @@ fun CustomizeHomeDialog(
                     items.forEachIndexed { index, (id, label, icon) -> key(id) {
                         val isVisible = id !in hiddenSections
                         fun move(to: Int) {
-                            onOrderChange(items.map { it.first }.toMutableList().apply { add(to, removeAt(index)) })
+                            val targetId = items[to].first
+                            val fullOrder = HomeSectionId.ordered(sectionOrder).toMutableList()
+                            val fromIdx = fullOrder.indexOf(id)
+                            val toIdx = fullOrder.indexOf(targetId)
+                            if (fromIdx >= 0 && toIdx >= 0) {
+                                fullOrder[fromIdx] = targetId
+                                fullOrder[toIdx] = id
+                                onOrderChange(fullOrder)
+                            }
                         }
                         Row(
                             modifier = Modifier

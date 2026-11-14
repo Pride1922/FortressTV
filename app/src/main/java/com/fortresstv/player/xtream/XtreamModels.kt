@@ -18,7 +18,8 @@ data class XtreamMovie(
     val plot: String?,
     val ageRating: String? = null,
     val tmdbId: String? = null,
-    val imdbId: String? = null
+    val imdbId: String? = null,
+    val addedEpochMs: Long? = null
 )
 
 data class XtreamMovieDetails(
@@ -48,7 +49,8 @@ data class XtreamSeries(
     val plot: String?,
     val ageRating: String? = null,
     val tmdbId: String? = null,
-    val imdbId: String? = null
+    val imdbId: String? = null,
+    val addedEpochMs: Long? = null
 )
 
 data class XtreamSeriesDetails(

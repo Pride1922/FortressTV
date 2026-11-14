@@ -403,6 +403,8 @@ internal fun XtreamSeriesScreen(
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
+    val omdbSettings = LocalOmdbSettings.current
+    var ratingCacheVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
@@ -475,6 +477,20 @@ internal fun XtreamSeriesScreen(
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
+    }
+    LaunchedEffect(gridState, visibleSeries, omdbSettings, selected != null) {
+        ratingCacheVersion++
+        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank() || selected != null) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow {
+            gridState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
+                visibleSeries.getOrNull(item.index)?.series?.let { series ->
+                    com.fortresstv.player.omdb.OmdbPreFetchTarget("series", series.name, series.year, series.imdbId)
+                }
+            }
+        }.collect { targets ->
+            OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, targets)
+            ratingCacheVersion++
+        }
     }
     val fastScrollNames = remember(visibleSeries, sortOption) {
         if (sortOption == VodSortOption.ALPHABETICAL) visibleSeries.map { it.series.name } else emptyList()
@@ -566,14 +582,17 @@ internal fun XtreamSeriesScreen(
             key = { _, entry -> "${entry.catalog.sourceId}:${entry.series.id}" },
             contentType = { _, _ -> "series_poster" }
         ) { index, entry ->
-            val cachedOmdb = remember(entry.series.id) {
-                OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+            val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
+                if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                    OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                } else null
             }
+            val rating = cachedOmdb?.imdbRating ?: entry.series.rating
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
-                subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                subtitle = formatVodMetadata(entry.series.year, rating),
+                imdbRating = rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                 onClick = { selected = entry }

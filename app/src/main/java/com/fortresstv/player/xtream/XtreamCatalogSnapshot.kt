@@ -35,7 +35,7 @@ internal data class LiveStreamRecord(
  */
 internal object XtreamCatalogSnapshot {
     private const val MAGIC = 0x46545843 // "FTXC"
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val KIND_CATEGORIES: Byte = 1
     private const val KIND_LIVE: Byte = 2
     private const val KIND_MOVIES: Byte = 3
@@ -106,10 +106,11 @@ internal object XtreamCatalogSnapshot {
             writeNullableString(it.ageRating)
             writeNullableString(it.tmdbId)
             writeNullableString(it.imdbId)
+            writeNullableLong(it.addedEpochMs)
         }
     }
 
-    fun readMovies(file: File): List<XtreamMovie>? = read(file, KIND_MOVIES) {
+    fun readMovies(file: File): List<XtreamMovie>? = read(file, KIND_MOVIES) { version ->
         List(readCount()) {
             XtreamMovie(
                 id = readInt(),
@@ -122,7 +123,8 @@ internal object XtreamCatalogSnapshot {
                 plot = readNullableString(),
                 ageRating = readNullableString(),
                 tmdbId = readNullableString(),
-                imdbId = readNullableString()
+                imdbId = readNullableString(),
+                addedEpochMs = if (version >= 2) readNullableLong() else null
             )
         }
     }
@@ -140,10 +142,11 @@ internal object XtreamCatalogSnapshot {
             writeNullableString(it.ageRating)
             writeNullableString(it.tmdbId)
             writeNullableString(it.imdbId)
+            writeNullableLong(it.addedEpochMs)
         }
     }
 
-    fun readSeries(file: File): List<XtreamSeries>? = read(file, KIND_SERIES) {
+    fun readSeries(file: File): List<XtreamSeries>? = read(file, KIND_SERIES) { version ->
         List(readCount()) {
             XtreamSeries(
                 id = readInt(),
@@ -155,7 +158,8 @@ internal object XtreamCatalogSnapshot {
                 plot = readNullableString(),
                 ageRating = readNullableString(),
                 tmdbId = readNullableString(),
-                imdbId = readNullableString()
+                imdbId = readNullableString(),
+                addedEpochMs = if (version >= 2) readNullableLong() else null
             )
         }
     }
@@ -176,12 +180,14 @@ internal object XtreamCatalogSnapshot {
         }
     }
 
-    private fun <T> read(file: File, kind: Byte, body: DataInputStream.() -> T): T? {
+    private fun <T> read(file: File, kind: Byte, body: DataInputStream.(Int) -> T): T? {
         if (!file.isFile || file.length() < 9L) return null
         return try {
             DataInputStream(BufferedInputStream(file.inputStream(), 64 * 1024)).use { input ->
-                if (input.readInt() != MAGIC || input.readInt() != VERSION || input.readByte() != kind) return null
-                val value = input.body()
+                if (input.readInt() != MAGIC) return null
+                val version = input.readInt()
+                if (version !in 1..VERSION || input.readByte() != kind) return null
+                val value = input.body(version)
                 // Trailing bytes mean the file is not what we wrote.
                 if (input.read() != -1) return null
                 value
@@ -204,6 +210,11 @@ internal object XtreamCatalogSnapshot {
         if (value != null) writeString(value)
     }
 
+    private fun DataOutputStream.writeNullableLong(value: Long?) {
+        writeBoolean(value != null)
+        if (value != null) writeLong(value)
+    }
+
     private fun DataInputStream.readCount(): Int = readInt().also {
         if (it !in 0..MAX_ITEMS) throw IOException("Invalid item count")
     }
@@ -217,4 +228,6 @@ internal object XtreamCatalogSnapshot {
     }
 
     private fun DataInputStream.readNullableString(): String? = if (readBoolean()) readString() else null
+
+    private fun DataInputStream.readNullableLong(): Long? = if (readBoolean()) readLong() else null
 }

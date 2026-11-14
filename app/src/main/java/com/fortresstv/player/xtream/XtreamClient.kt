@@ -25,6 +25,12 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import javax.net.ssl.SSLException
 
 class XtreamClient(
@@ -69,6 +75,8 @@ class XtreamClient(
             val seriesCategories = cachedList(ACTION_SERIES_CATEGORIES, XtreamCatalogSnapshot::readCategories) ?: return@traced null
             val movies = cachedList(ACTION_VOD_STREAMS, XtreamCatalogSnapshot::readMovies) ?: return@traced null
             val series = cachedList(ACTION_SERIES, XtreamCatalogSnapshot::readSeries) ?: return@traced null
+            MoviesFirstSeenStore(cacheDirectory).ensureBaseline(sourceId, movies.first.map { it.id })
+            SeriesFirstSeenStore(cacheDirectory).ensureBaseline(sourceId, series.first.map { it.id })
             CachedCatalog(
                 catalog = live.catalog.copy(
                     movieCategories = movieCategories.first,
@@ -107,8 +115,16 @@ class XtreamClient(
             val movies = async {
                 coroutineScope {
                     val categories = async { categories(ACTION_VOD_CATEGORIES, forceRefresh) }
-                    val streams = freshCache(ACTION_VOD_STREAMS, forceRefresh, XtreamCatalogSnapshot::readMovies)
-                        ?: fetchList(ACTION_VOD_STREAMS, { parseMovies(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeMovies(file, value) }
+                    val cachedMovies = freshCache(ACTION_VOD_STREAMS, forceRefresh, XtreamCatalogSnapshot::readMovies)
+                    val streams = if (cachedMovies != null) {
+                        MoviesFirstSeenStore(cacheDirectory).ensureBaseline(sourceId, cachedMovies.map { it.id })
+                        cachedMovies
+                    } else {
+                        fetchList(ACTION_VOD_STREAMS, { parseMovies(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeMovies(file, value) }
+                            .also { fetched ->
+                                MoviesFirstSeenStore(cacheDirectory).recordImport(sourceId, fetched.map { it.id })
+                            }
+                    }
                     val partial = sourceCatalogue.copy(movieCategories = categories.await(), movies = streams)
                     onMoviesLoaded(partial)
                     partial
@@ -117,8 +133,16 @@ class XtreamClient(
             val series = async {
                 coroutineScope {
                     val categories = async { categories(ACTION_SERIES_CATEGORIES, forceRefresh) }
-                    val streams = freshCache(ACTION_SERIES, forceRefresh, XtreamCatalogSnapshot::readSeries)
-                        ?: fetchList(ACTION_SERIES, { parseSeries(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeSeries(file, value) }
+                    val cachedSeries = freshCache(ACTION_SERIES, forceRefresh, XtreamCatalogSnapshot::readSeries)
+                    val streams = if (cachedSeries != null) {
+                        SeriesFirstSeenStore(cacheDirectory).ensureBaseline(sourceId, cachedSeries.map { it.id })
+                        cachedSeries
+                    } else {
+                        fetchList(ACTION_SERIES, { parseSeries(it) }) { file, value, _ -> XtreamCatalogSnapshot.writeSeries(file, value) }
+                            .also { fetched ->
+                                SeriesFirstSeenStore(cacheDirectory).recordImport(sourceId, fetched.map { it.id })
+                            }
+                    }
                     val partial = sourceCatalogue.copy(seriesCategories = categories.await(), series = streams)
                     onSeriesLoaded(partial)
                     partial
@@ -406,7 +430,9 @@ class XtreamClient(
                 plot = item.nullableString("plot"),
                 ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
                 tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
-                imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
+                imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb"),
+                addedEpochMs = parseProviderAddedTimestamp(item.nullableString("added"))
+                    ?: parseProviderAddedTimestamp(item.nullableString("last_modified"))
             )
         }
         return movies
@@ -479,7 +505,9 @@ class XtreamClient(
                 plot = item.nullableString("plot"),
                 ageRating = item.nullableString("age") ?: item.nullableString("mpaa_rating"),
                 tmdbId = item.nullableString("tmdb_id") ?: item.nullableString("tmdb"),
-                imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb")
+                imdbId = item.nullableString("imdb_id") ?: item.nullableString("imdb"),
+                addedEpochMs = parseProviderAddedTimestamp(item.nullableString("added"))
+                    ?: parseProviderAddedTimestamp(item.nullableString("last_modified"))
             )
         }
         return series
@@ -647,6 +675,23 @@ class XtreamClient(
         private const val ACTION_SERIES_CATEGORIES = "get_series_categories"
         private const val ACTION_VOD_STREAMS = "get_vod_streams"
         private const val ACTION_SERIES = "get_series"
+        private const val MIN_VALID_ADDED_EPOCH_MS = 946_684_800_000L // 2000-01-01T00:00:00Z
+        private val SPACE_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+        internal fun parseProviderAddedTimestamp(raw: String?): Long? {
+            val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val numeric = trimmed.toLongOrNull()
+            if (numeric != null) {
+                val epochMs = if (numeric >= 100_000_000_000L) numeric else numeric * 1000L
+                return epochMs.takeIf { it >= MIN_VALID_ADDED_EPOCH_MS }
+            }
+            val parsedMs = runCatching { Instant.parse(trimmed).toEpochMilli() }.getOrNull()
+                ?: runCatching { OffsetDateTime.parse(trimmed).toInstant().toEpochMilli() }.getOrNull()
+                ?: runCatching { LocalDateTime.parse(trimmed, SPACE_DATE_TIME_FORMATTER).toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull()
+                ?: runCatching { LocalDateTime.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull()
+                ?: runCatching { LocalDate.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() }.getOrNull()
+            return parsedMs?.takeIf { it >= MIN_VALID_ADDED_EPOCH_MS }
+        }
 
         /** android.os.Trace, but harmless where it is unavailable (JVM unit tests). */
         private inline fun <T> traced(section: String, block: () -> T): T {

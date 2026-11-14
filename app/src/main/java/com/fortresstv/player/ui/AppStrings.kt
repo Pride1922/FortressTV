@@ -44,7 +44,10 @@ interface Strings {
     val homeMoviesCategory: String
     val homeSeriesCategory: String
     val homeFeaturedMovies: String
+    val homePopularOnTraktMovies: String
     val homeFeaturedSeries: String
+    val homePopularOnTraktSeries: String
+    val homeRecentlyAddedSeries: String
     val homeNothingFound: String
     val homeStartupScreen: String
     val homeStartupScreenHome: String
@@ -219,6 +222,8 @@ interface Strings {
     val sectionFollowedSeries: String
     val sectionRecentMovies: String
     val sectionFeaturedSeries: String
+    val sectionTraktPopularMovies: String
+    val sectionTraktPopularSeries: String
     val buildingPlaybackBuffer: String
     val reconnecting: String
     val resumePlayback: String
@@ -627,7 +632,10 @@ object EnglishStrings : Strings {
     override val homeMoviesCategory = "Movies"
     override val homeSeriesCategory = "Series"
     override val homeFeaturedMovies = "Recently Added Movies"
+    override val homePopularOnTraktMovies = "Popular on Trakt"
     override val homeFeaturedSeries = "Featured Series"
+    override val homePopularOnTraktSeries = "Popular on Trakt"
+    override val homeRecentlyAddedSeries = "Recently Added Series"
     override val homeNothingFound = "No results found"
     override val homeStartupScreen = "Startup Screen"
     override val homeStartupScreenHome = "Home"
@@ -802,6 +810,8 @@ object EnglishStrings : Strings {
     override val sectionFollowedSeries = "Followed Series"
     override val sectionRecentMovies = "Recent Movies"
     override val sectionFeaturedSeries = "Featured Series"
+    override val sectionTraktPopularMovies = "Popular Movies on Trakt"
+    override val sectionTraktPopularSeries = "Popular Series on Trakt"
     override val buildingPlaybackBuffer = "Preparing playback…"
     override val reconnecting = "Reconnecting…"
     override val resumePlayback = "Continue watching?"
@@ -1213,7 +1223,10 @@ object PortugueseStrings : Strings {
     override val homeMoviesCategory = "Filmes"
     override val homeSeriesCategory = "Séries"
     override val homeFeaturedMovies = "Filmes adicionados recentemente"
+    override val homePopularOnTraktMovies = "Filmes populares no Trakt"
     override val homeFeaturedSeries = "Séries em destaque"
+    override val homePopularOnTraktSeries = "Séries populares no Trakt"
+    override val homeRecentlyAddedSeries = "Séries adicionadas recentemente"
     override val homeNothingFound = "Nenhum resultado encontrado"
     override val homeStartupScreen = "Ecrã inicial"
     override val homeStartupScreenHome = "Início"
@@ -1388,6 +1401,8 @@ object PortugueseStrings : Strings {
     override val sectionFollowedSeries = "Séries seguidas"
     override val sectionRecentMovies = "Filmes recentes"
     override val sectionFeaturedSeries = "Séries em destaque"
+    override val sectionTraktPopularMovies = "Filmes populares no Trakt"
+    override val sectionTraktPopularSeries = "Séries populares no Trakt"
     override val buildingPlaybackBuffer = "A preparar a reprodução…"
     override val reconnecting = "A restabelecer ligação…"
     override val resumePlayback = "Continuar a ver?"

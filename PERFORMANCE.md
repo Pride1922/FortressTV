@@ -54,6 +54,12 @@ a real multi-day EPG before release.
   the M3U parser.
 - Stable M3U item identifiers are computed during the initial parse and persisted, avoiding a
   SHA-256 identity calculation for every channel during each subsequent source merge.
+- Home's featured series and movies shelves fetch and cache Trakt popular items on
+  `Dispatchers.IO` (6-hour TTL) and perform TMDB/IMDb matching, cross-source deduplication, and
+  `Recently Added` ranking on `Dispatchers.Default` using a bounded 25-item min-heap (`O(N log 25)`),
+  with per-source atomic binary `VodFirstSeenStore` (`SeriesFirstSeenStore` / `MoviesFirstSeenStore`)
+  files and backward-compatible v1/v2 `XtreamCatalogSnapshot` caching. On-device Home
+  startup/scroll frame measurements remain pending on a connected physical tablet.
 
 ## Mi Box playback investigation — 2026-09-12
 

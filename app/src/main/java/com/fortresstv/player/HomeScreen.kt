@@ -162,6 +162,15 @@ import com.fortresstv.player.profile.ProfileAvatar
 import com.fortresstv.player.profile.ProfileRepository
 import com.fortresstv.player.profile.ProfileSelectionDialog
 import com.fortresstv.player.profile.ProfilesTab
+import com.fortresstv.player.trakt.FeaturedMoviesShelf
+import com.fortresstv.player.trakt.FeaturedMoviesShelfResolver
+import com.fortresstv.player.trakt.FeaturedSeriesMode
+import com.fortresstv.player.trakt.FeaturedSeriesShelf
+import com.fortresstv.player.trakt.FeaturedSeriesShelfResolver
+import com.fortresstv.player.trakt.TraktPopularMoviesService
+import com.fortresstv.player.trakt.TraktPopularMoviesStore
+import com.fortresstv.player.trakt.TraktPopularShowsService
+import com.fortresstv.player.trakt.TraktPopularShowsStore
 import com.fortresstv.player.trakt.TraktSettingsStore
 import com.fortresstv.player.trakt.TraktWatchlistStore
 import com.fortresstv.player.trakt.TraktWatchlistService
@@ -170,6 +179,8 @@ import com.fortresstv.player.trakt.TraktRecommendationItem
 import com.fortresstv.player.trakt.TraktRecommendationsService
 import com.fortresstv.player.trakt.TraktWatchlistItem
 import com.fortresstv.player.trakt.TraktWatchlistKind
+import com.fortresstv.player.xtream.MoviesFirstSeenStore
+import com.fortresstv.player.xtream.SeriesFirstSeenStore
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import androidx.compose.material.icons.filled.Bookmark
 import com.fortresstv.player.ui.LocalAppStrings
@@ -473,8 +484,6 @@ internal fun HomeScreen(
     favoriteChannels: List<PlaylistChannel>,
     recentChannelsList: List<PlaylistChannel>,
     followedSeries: List<CatalogSeries>,
-    recentMovies: List<CatalogMovie>,
-    featuredSeries: List<CatalogSeries>,
     followedSeriesIds: Set<String>,
     watchedItemIds: Set<String>,
     movieWatchlistIds: Set<String>,
@@ -568,10 +577,18 @@ internal fun HomeScreen(
     val traktStore = remember(traktNamespace) { TraktSettingsStore(context.applicationContext, traktNamespace) }
     val traktWatchlistStore = remember(traktNamespace) { TraktWatchlistStore(context.applicationContext, traktNamespace) }
     val traktRecStore = remember(traktNamespace) { com.fortresstv.player.trakt.TraktRecommendationsStore(context.applicationContext, traktNamespace) }
+    val traktPopularStore = remember(traktNamespace) { TraktPopularShowsStore(context.applicationContext, traktNamespace) }
+    val traktPopularMoviesStore = remember(traktNamespace) { TraktPopularMoviesStore(context.applicationContext, traktNamespace) }
+    val omdbSettings = com.fortresstv.player.omdb.LocalOmdbSettings.current
+    var ratingCacheVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
 
     val traktConnected = traktStore.isConnected()
+    val showFeaturedSeries = com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES !in homeHiddenSections
+    val showFeaturedMovies = com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES !in homeHiddenSections
     var traktWatchlistItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktWatchlistItem>()) }
     var traktRecItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
+    var traktPopularItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
+    var traktPopularMovieItems by remember(traktNamespace) { mutableStateOf(emptyList<TraktRecommendationItem>()) }
     val recommendationLock = remember(traktNamespace) { Mutex() }
     var showHiddenRecommendations by remember(traktNamespace) { mutableStateOf(false) }
     var recommendationToHide by remember(traktNamespace) { mutableStateOf<TraktRecommendationItem?>(null) }
@@ -598,6 +615,28 @@ internal fun HomeScreen(
                 TraktRecommendationsService.syncRecommendations(context, traktNamespace)
                     .onSuccess { traktRecItems = it }
             }
+        }
+    }
+
+    LaunchedEffect(traktNamespace, traktConnected, showFeaturedSeries) {
+        if (traktConnected && showFeaturedSeries) {
+            val cachedPopular = withContext(Dispatchers.IO) { traktPopularStore.loadPopularShows() }
+            traktPopularItems = cachedPopular
+            TraktPopularShowsService.syncPopularShows(context, traktNamespace)
+                .onSuccess { traktPopularItems = it }
+        } else {
+            traktPopularItems = emptyList()
+        }
+    }
+
+    LaunchedEffect(traktNamespace, traktConnected, showFeaturedMovies) {
+        if (traktConnected && showFeaturedMovies) {
+            val cachedPopularMovies = withContext(Dispatchers.IO) { traktPopularMoviesStore.loadPopularMovies() }
+            traktPopularMovieItems = cachedPopularMovies
+            TraktPopularMoviesService.syncPopularMovies(context, traktNamespace)
+                .onSuccess { traktPopularMovieItems = it }
+        } else {
+            traktPopularMovieItems = emptyList()
         }
     }
 
@@ -630,6 +669,75 @@ internal fun HomeScreen(
         } else com.fortresstv.player.trakt.TraktMatchedRecommendations()
     }
 
+    val featuredSeriesShelfState = remember(traktNamespace, showFeaturedSeries, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated) {
+        mutableStateOf(FeaturedSeriesShelf())
+    }
+    val featuredSeriesShelf by featuredSeriesShelfState
+    LaunchedEffect(featuredSeriesShelfState, traktPopularItems) {
+        if (!showFeaturedSeries || catalogs.isEmpty()) {
+            featuredSeriesShelfState.value = FeaturedSeriesShelf()
+            return@LaunchedEffect
+        }
+        featuredSeriesShelfState.value = withContext(Dispatchers.Default) {
+            val firstSeenStore = SeriesFirstSeenStore(context.applicationContext.filesDir)
+            val firstSeenBySource = withContext(Dispatchers.IO) {
+                catalogs.associate { it.sourceId to firstSeenStore.loadFirstSeen(it.sourceId) }
+            }
+            FeaturedSeriesShelfResolver.resolve(
+                traktConnected = traktConnected,
+                popularShows = traktPopularItems,
+                catalogs = catalogs,
+                firstSeenBySource = firstSeenBySource,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated
+            )
+        }
+    }
+
+    val featuredMoviesShelfState = remember(traktNamespace, showFeaturedMovies, traktConnected, catalogs, hideAdultContent, maximumAge, blockUnrated) {
+        mutableStateOf(FeaturedMoviesShelf())
+    }
+    val featuredMoviesShelf by featuredMoviesShelfState
+    LaunchedEffect(featuredMoviesShelfState, traktPopularMovieItems) {
+        if (!showFeaturedMovies || catalogs.isEmpty()) {
+            featuredMoviesShelfState.value = FeaturedMoviesShelf()
+            return@LaunchedEffect
+        }
+        featuredMoviesShelfState.value = withContext(Dispatchers.Default) {
+            val firstSeenStore = MoviesFirstSeenStore(context.applicationContext.filesDir)
+            val firstSeenBySource = withContext(Dispatchers.IO) {
+                catalogs.associate { it.sourceId to firstSeenStore.loadFirstSeen(it.sourceId) }
+            }
+            FeaturedMoviesShelfResolver.resolve(
+                traktConnected = traktConnected,
+                popularMovies = traktPopularMovieItems,
+                catalogs = catalogs,
+                firstSeenBySource = firstSeenBySource,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated
+            )
+        }
+    }
+
+    LaunchedEffect(featuredMoviesShelf.items, featuredSeriesShelf.items, omdbSettings) {
+        ratingCacheVersion++
+        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank()) return@LaunchedEffect
+        val targets = buildList {
+            featuredMoviesShelf.items.take(15).forEach { entry ->
+                add(com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId))
+            }
+            featuredSeriesShelf.items.take(15).forEach { entry ->
+                add(com.fortresstv.player.omdb.OmdbPreFetchTarget("series", entry.series.name, entry.series.year, entry.series.imdbId))
+            }
+        }
+        if (targets.isNotEmpty()) {
+            OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, targets)
+            ratingCacheVersion++
+        }
+    }
+
     val visibleShelves = homeSectionOrder.filter { section ->
         section !in homeHiddenSections && when (section) {
             com.fortresstv.player.ui.HomeSectionId.CONTINUE_WATCHING -> progressEntries.any { it.title.isNotBlank() }
@@ -639,8 +747,8 @@ internal fun HomeScreen(
             com.fortresstv.player.ui.HomeSectionId.FOLLOWED_SERIES -> followedSeries.isNotEmpty()
             com.fortresstv.player.ui.HomeSectionId.TRAKT_WATCHLIST -> showTraktWatchlist && !matchedTraktWatchlist.isEmpty
             com.fortresstv.player.ui.HomeSectionId.TRAKT_RECOMMENDATIONS -> showTraktRecs && (!matchedTraktRecs.isEmpty || canManageHiddenRecommendations)
-            com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES -> recentMovies.isNotEmpty()
-            com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES -> featuredSeries.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES -> featuredMoviesShelf.items.isNotEmpty()
+            com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES -> featuredSeriesShelf.items.isNotEmpty()
             else -> false
         }
     }
@@ -926,14 +1034,17 @@ internal fun HomeScreen(
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(searchMatchingMovies, key = { "search:movie:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                    val cachedOmdb = remember(entry.movie.id) {
-                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                        } else null
                                     }
+                                    val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
-                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        subtitle = formatVodMetadata(entry.movie.year, movieRating),
+                                        imdbRating = movieRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -956,14 +1067,17 @@ internal fun HomeScreen(
                             Spacer(Modifier.height(8.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(searchMatchingSeries, key = { "search:series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
-                                    val cachedOmdb = remember(entry.series.id) {
-                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                    val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                        } else null
                                     }
+                                    val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
-                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                        imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        subtitle = formatVodMetadata(entry.series.year, seriesRating),
+                                        imdbRating = seriesRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)
@@ -1329,14 +1443,17 @@ internal fun HomeScreen(
                             LazyRow(state = traktRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(matchedTraktWatchlist.movies, key = { index, it -> "trakt_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                    val cachedOmdb = remember(entry.movie.id) {
-                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                        } else null
                                     }
+                                    val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
-                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        subtitle = formatVodMetadata(entry.movie.year, movieRating),
+                                        imdbRating = movieRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -1450,19 +1567,24 @@ internal fun HomeScreen(
                     }
 
                     com.fortresstv.player.ui.HomeSectionId.RECENT_MOVIES -> {
+                        val featuredMoviesTitle = when (featuredMoviesShelf.mode) {
+                            FeaturedSeriesMode.TRAKT_POPULAR -> strings.homePopularOnTraktMovies
+                            FeaturedSeriesMode.RECENTLY_ADDED -> strings.homeFeaturedMovies
+                            FeaturedSeriesMode.HIDDEN -> strings.homeFeaturedMovies
+                        }
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Movie, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    strings.homeFeaturedMovies,
+                                    featuredMoviesTitle,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    "(${recentMovies.size})",
+                                    "(${featuredMoviesShelf.items.size})",
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1470,20 +1592,23 @@ internal fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val moviesRowState = rememberLazyListState()
                             LazyRow(state = moviesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(recentMovies, key = { index, it -> "home_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
+                                itemsIndexed(featuredMoviesShelf.items, key = { index, it -> "home_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
                                     val client = remember(entry.catalog.sourceId) {
                                         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
                                         source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
                                     }
-                                    val cachedOmdb = remember(entry.movie.id) {
-                                        OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                        } else null
                                     }
+                                    val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
-                                        subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                        imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        subtitle = formatVodMetadata(entry.movie.year, movieRating),
+                                        imdbRating = movieRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -1499,19 +1624,24 @@ internal fun HomeScreen(
                     }
 
                     com.fortresstv.player.ui.HomeSectionId.FEATURED_SERIES -> {
+                        val featuredSeriesTitle = when (featuredSeriesShelf.mode) {
+                            FeaturedSeriesMode.TRAKT_POPULAR -> strings.homePopularOnTraktSeries
+                            FeaturedSeriesMode.RECENTLY_ADDED -> strings.homeRecentlyAddedSeries
+                            FeaturedSeriesMode.HIDDEN -> strings.homeFeaturedSeries
+                        }
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    strings.homeFeaturedSeries,
+                                    featuredSeriesTitle,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    "(${featuredSeries.size})",
+                                    "(${featuredSeriesShelf.items.size})",
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1519,15 +1649,18 @@ internal fun HomeScreen(
                             Spacer(Modifier.height(10.dp))
                             val seriesRowState = rememberLazyListState()
                             LazyRow(state = seriesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                itemsIndexed(featuredSeries, key = { index, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
-                                    val cachedOmdb = remember(entry.series.id) {
-                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                itemsIndexed(featuredSeriesShelf.items, key = { index, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
+                                    val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
+                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                        } else null
                                     }
+                                    val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
-                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                        imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        subtitle = formatVodMetadata(entry.series.year, seriesRating),
+                                        imdbRating = seriesRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)

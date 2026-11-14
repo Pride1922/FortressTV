@@ -716,4 +716,88 @@ class TraktClientTest {
         assertEquals("95396", shows[0].tmdbId)
         assertEquals(TraktWatchlistKind.SHOW, shows[0].kind)
     }
+
+    @Test
+    fun fetchPopularShowsParsesFlatShowObjectsInOrder() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/shows/popular?limit=100", url)
+            val json = """
+                [
+                    {
+                        "title": "Breaking Bad",
+                        "year": 2008,
+                        "ids": {
+                            "trakt": 1388,
+                            "slug": "breaking-bad",
+                            "imdb": "tt0903747",
+                            "tmdb": 1396
+                        }
+                    },
+                    {
+                        "title": "Severance",
+                        "year": 2022,
+                        "ids": {
+                            "trakt": 154432,
+                            "slug": "severance",
+                            "imdb": "tt11280740",
+                            "tmdb": 95396
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchPopularShows("cid")
+        assertTrue(result is TraktAuthResult.Success)
+        val shows = (result as TraktAuthResult.Success).data
+        assertEquals(listOf("Breaking Bad", "Severance"), shows.map { it.title })
+        assertEquals("1396", shows[0].tmdbId)
+        assertEquals("tt0903747", shows[0].imdbId)
+        assertEquals(TraktWatchlistKind.SHOW, shows[0].kind)
+        assertEquals("95396", shows[1].tmdbId)
+    }
+
+    @Test
+    fun fetchPopularShowsReturnsFailureOnHttpError() {
+        val client = MockTraktClient()
+        client.getHandler = { _, _, _ -> TraktHttpResponse(503, "Service Unavailable", emptyMap()) }
+
+        val result = client.fetchPopularShows("cid")
+        assertTrue(result is TraktAuthResult.Failure)
+        assertEquals(503, (result as TraktAuthResult.Failure).statusCode)
+    }
+
+    @Test
+    fun fetchPopularMoviesParsesFlatMovieObjectsInOrder() {
+        val client = MockTraktClient()
+        client.getHandler = { url, _, _ ->
+            assertEquals("https://api.trakt.tv/movies/popular?limit=100", url)
+            val json = """
+                [
+                    {
+                        "title": "Dune: Part Two",
+                        "year": 2024,
+                        "ids": {
+                            "trakt": 54321,
+                            "slug": "dune-part-two-2024",
+                            "imdb": "tt15239678",
+                            "tmdb": 693134
+                        }
+                    }
+                ]
+            """.trimIndent()
+            TraktHttpResponse(200, json, emptyMap())
+        }
+
+        val result = client.fetchPopularMovies("cid")
+        assertTrue(result is TraktAuthResult.Success)
+        val movies = (result as TraktAuthResult.Success).data
+        assertEquals(1, movies.size)
+        assertEquals("Dune: Part Two", movies[0].title)
+        assertEquals("693134", movies[0].tmdbId)
+        assertEquals("tt15239678", movies[0].imdbId)
+        assertEquals(TraktWatchlistKind.MOVIE, movies[0].kind)
+    }
 }
