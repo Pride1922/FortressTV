@@ -303,4 +303,58 @@ class FeaturedSeriesShelfResolverTest {
         assertEquals(FeaturedSeriesMode.HIDDEN, hiddenShelf.mode)
         assertTrue(hiddenShelf.items.isEmpty())
     }
+
+    @Test
+    fun popularResolversMatchByNormalizedTitleAndYearWhenProviderIdsAreMissing() {
+        val src = XtreamCatalog(
+            sourceId = "src",
+            sourceName = "Provider",
+            movieCategories = listOf(XtreamCategory("1", "Movies")),
+            movies = listOf(
+                XtreamMovie(
+                    id = 10,
+                    name = "The Prestige (2006) 4K",
+                    categoryId = "1",
+                    posterUrl = null,
+                    containerExtension = "mkv",
+                    rating = "8.5",
+                    year = null,
+                    plot = null,
+                    ageRating = "PG-13",
+                    tmdbId = null,
+                    imdbId = null
+                )
+            ),
+            seriesCategories = listOf(XtreamCategory("1", "Drama")),
+            series = listOf(
+                series(id = 20, name = "Breaking Bad (2008)", tmdbId = null, imdbId = null).copy(year = null)
+            )
+        )
+
+        val moviesShelf = FeaturedMoviesShelfResolver.resolve(
+            traktConnected = true,
+            popularMovies = listOf(
+                TraktRecommendationItem(
+                    kind = TraktWatchlistKind.MOVIE,
+                    title = "The Prestige",
+                    year = 2006,
+                    tmdbId = "1124",
+                    imdbId = "tt0482571",
+                    traktId = 1,
+                    slug = "the-prestige-2006"
+                )
+            ),
+            catalogs = listOf(src)
+        )
+        assertEquals(FeaturedSeriesMode.TRAKT_POPULAR, moviesShelf.mode)
+        assertEquals(listOf("The Prestige (2006) 4K"), moviesShelf.items.map { it.movie.name })
+
+        val seriesShelf = FeaturedSeriesShelfResolver.resolve(
+            traktConnected = true,
+            popularShows = listOf(traktShow(title = "Breaking Bad", tmdbId = "1396", imdbId = "tt0903747", year = 2008)),
+            catalogs = listOf(src)
+        )
+        assertEquals(FeaturedSeriesMode.TRAKT_POPULAR, seriesShelf.mode)
+        assertEquals(listOf("Breaking Bad (2008)"), seriesShelf.items.map { it.series.name })
+    }
 }

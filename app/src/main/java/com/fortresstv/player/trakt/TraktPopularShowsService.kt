@@ -5,6 +5,7 @@ import com.fortresstv.player.CatalogMovie
 import com.fortresstv.player.CatalogSeries
 import com.fortresstv.player.library.UserLibraryStore.Companion.libraryId
 import com.fortresstv.player.profile.ParentalControls
+import com.fortresstv.player.tmdb.TmdbClient
 import com.fortresstv.player.xtream.XtreamCatalog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -105,7 +106,8 @@ internal object FeaturedShelfMatcher {
         val ageRating: String?,
         val tmdbId: String?,
         val imdbId: String?,
-        val addedEpochMs: Long?
+        val addedEpochMs: Long?,
+        val year: String? = null
     )
 
     fun <T> matchPopular(
@@ -121,6 +123,7 @@ internal object FeaturedShelfMatcher {
 
         val byTmdb = HashMap<String, IndexedItem<T>>()
         val byImdb = HashMap<String, IndexedItem<T>>()
+        val byTitleYear = HashMap<String, IndexedItem<T>>()
 
         for (item in items) {
             val permitted = ParentalControls.isItemPermitted(
@@ -135,10 +138,28 @@ internal object FeaturedShelfMatcher {
 
             normalizeTmdbId(item.tmdbId)?.let { byTmdb.putIfAbsent(it, item) }
             normalizeImdbId(item.imdbId)?.let { byImdb.putIfAbsent(it, item) }
+
+            val normName = TraktRecommendationsService.normalizeTitle(item.name)
+            if (normName.isNotBlank()) {
+                byTitleYear.putIfAbsent("${normName}_${item.year ?: ""}", item)
+                byTitleYear.putIfAbsent("${normName}_", item)
+            }
+            val (cleanTitle, extractedYear) = TmdbClient.cleanMediaTitle(item.name)
+            val yr = extractedYear ?: item.year
+            val cleanNorm = TraktRecommendationsService.normalizeTitle(cleanTitle)
+            if (cleanNorm.isNotBlank()) {
+                byTitleYear.putIfAbsent("${cleanNorm}_${yr ?: ""}", item)
+                if (yr != null) {
+                    byTitleYear.putIfAbsent("${cleanNorm}_$yr", item)
+                }
+                byTitleYear.putIfAbsent("${cleanNorm}_", item)
+            }
         }
 
-        if (byTmdb.isEmpty() && byImdb.isEmpty()) return emptyList()
+        if (byTmdb.isEmpty() && byImdb.isEmpty() && byTitleYear.isEmpty()) return emptyList()
 
+        // Only fall back to title+year matching when the provider catalogue omits TMDB/IMDb IDs altogether.
+        val allowTitleFallback = byTmdb.isEmpty() && byImdb.isEmpty()
         val matched = ArrayList<T>(minOf(limit, popularItems.size))
         val matchedLibraryIds = HashSet<String>()
         val matchedTmdbIds = HashSet<String>()
@@ -148,10 +169,19 @@ internal object FeaturedShelfMatcher {
             if (popular.kind != expectedKind) continue
             val itemTmdb = normalizeTmdbId(popular.tmdbId)
             val itemImdb = normalizeImdbId(popular.imdbId)
-            if (itemTmdb == null && itemImdb == null) continue
+            val normTitle = TraktRecommendationsService.normalizeTitle(popular.title)
+            if (itemTmdb == null && itemImdb == null && (!allowTitleFallback || normTitle.isBlank())) continue
 
             val match = (itemTmdb?.let { byTmdb[it] })
                 ?: (itemImdb?.let { byImdb[it] })
+                ?: if (allowTitleFallback) {
+                    (popular.year?.let { byTitleYear["${normTitle}_$it"] })
+                        ?: (popular.year?.let { byTitleYear["${normTitle}_${it - 1}"] })
+                        ?: (popular.year?.let { byTitleYear["${normTitle}_${it + 1}"] })
+                        ?: normTitle.takeIf { it.isNotBlank() }?.let { byTitleYear["${it}_"] }
+                } else {
+                    null
+                }
                 ?: continue
 
             val matchTmdb = normalizeTmdbId(match.tmdbId)
@@ -263,7 +293,8 @@ internal object FeaturedSeriesShelfResolver {
                 ageRating = series.ageRating,
                 tmdbId = series.tmdbId,
                 imdbId = series.imdbId,
-                addedEpochMs = series.addedEpochMs
+                addedEpochMs = series.addedEpochMs,
+                year = series.year
             )
         }
     }
@@ -359,7 +390,8 @@ internal object FeaturedMoviesShelfResolver {
                 ageRating = movie.ageRating,
                 tmdbId = movie.tmdbId,
                 imdbId = movie.imdbId,
-                addedEpochMs = movie.addedEpochMs
+                addedEpochMs = movie.addedEpochMs,
+                year = movie.year
             )
         }
     }
