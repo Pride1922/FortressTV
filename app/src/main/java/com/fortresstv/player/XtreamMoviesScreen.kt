@@ -404,7 +404,6 @@ internal fun XtreamMoviesScreen(
     val strings = LocalAppStrings.current
     val context = LocalContext.current
     val omdbSettings = LocalOmdbSettings.current
-    var ratingCacheVersion by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
     var appliedQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(VodSortOption.ALPHABETICAL) }
@@ -419,11 +418,7 @@ internal fun XtreamMoviesScreen(
     val progressByKey = remember(progressEntries) { progressEntries.associateBy(VodProgressEntry::key) }
     val showSourceNames = catalogs.size > 1
     val categories = remember(catalogs, hideAdultContent) {
-        catalogs.flatMap { catalog ->
-            catalog.movieCategories
-                .filter { !hideAdultContent || !isAdultContent(it.name, null) }
-                .map { CatalogCategory(catalog.sourceId, catalog.sourceName, it) }
-        }.distinctBy { it.sourceId to it.category.id }
+        buildVisibleVodCategories(catalogs, hideAdultContent) { it.movieCategories }
     }
     LaunchedEffect(query) {
         if (query.isNotBlank()) delay(250)
@@ -431,68 +426,49 @@ internal fun XtreamMoviesScreen(
     }
     LaunchedEffect(catalogs, appliedQuery, selectedCategory, hideAdultContent, maximumAge, blockUnrated, sortOption, filterTopRated, filterFresh) {
         isCatalogLoading = true
-        visibleMovies = withContext(Dispatchers.Default) {
-            val baseFiltered = catalogs.flatMap { catalog ->
-                val categoryNames = catalog.movieCategories.associate { it.id to it.name }
-                catalog.movies.asSequence()
-                    .filter {
-                        selectedCategory == null ||
-                            (catalog.sourceId == selectedCategory?.sourceId && it.categoryId == selectedCategory?.category?.id)
-                    }
-                    .filter {
-                        (!hideAdultContent || !isAdultContent(it.name, categoryNames[it.categoryId])) &&
-                            ParentalControls.isContentAllowedForAge(it.ageRating, maximumAge, blockUnrated)
-                    }
-                    .filter { appliedQuery.isBlank() || it.name.contains(appliedQuery, ignoreCase = true) }
-                    .map { CatalogMovie(catalog, it) }
-                    .toList()
-            }
-            val uniqueMovies = deduplicateCatalogMovies(baseFiltered)
+        val result = withContext(Dispatchers.Default) {
             val hasOmdb = OmdbMetadataResolver.hasAnyCached()
-            val scoredItems = uniqueMovies.map { entry ->
-                val cached = if (hasOmdb) {
-                    OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
-                } else null
-                val imdbScore = cached?.imdbRating?.toDoubleOrNull() ?: entry.movie.rating?.toDoubleOrNull() ?: 0.0
-                val rtScore = cached?.rottenTomatoes?.removeSuffix("%")?.trim()?.toIntOrNull() ?: 0
-                Triple(entry, imdbScore, rtScore)
-            }
-            topRatedCount = scoredItems.count { it.second >= 7.5 }
-            freshCount = scoredItems.count { it.third >= 60 }
-
-            val filtered = scoredItems
-                .filter { (!filterTopRated || it.second >= 7.5) && (!filterFresh || it.third >= 60) }
-                .let { list ->
-                    when (sortOption) {
-                        VodSortOption.DEFAULT -> list.map { it.first }
-                        VodSortOption.RATING -> list.sortedWith(
-                            compareByDescending<Triple<CatalogMovie, Double, Int>> { it.second > 0.0 }
-                                .thenByDescending { it.second }
-                        ).map { it.first }
-                        VodSortOption.YEAR -> list.sortedByDescending { it.first.movie.year?.toIntOrNull() ?: 0 }.map { it.first }
-                        VodSortOption.ALPHABETICAL -> list.sortedBy { it.first.movie.name.lowercase() }.map { it.first }
-                    }
-                }
-            filtered
+            filterAndSortVodItems(
+                catalogs = catalogs,
+                selectedCategory = selectedCategory,
+                appliedQuery = appliedQuery,
+                hideAdultContent = hideAdultContent,
+                maximumAge = maximumAge,
+                blockUnrated = blockUnrated,
+                sortOption = sortOption,
+                filterTopRated = filterTopRated,
+                filterFresh = filterFresh,
+                categoriesOf = { it.movieCategories },
+                itemsOf = { it.movies },
+                wrap = ::CatalogMovie,
+                categoryIdOf = { it.categoryId },
+                nameOf = { it.name },
+                yearOf = { it.year },
+                ageRatingOf = { it.ageRating },
+                providerRatingOf = { it.rating },
+                cachedOmdbOf = { movie ->
+                    if (hasOmdb) OmdbMetadataResolver.getCached(context, "movie", movie.name, movie.year, movie.imdbId)
+                    else null
+                },
+                transformFiltered = ::deduplicateCatalogMovies,
+                unwrap = { it.movie }
+            )
         }
+        visibleMovies = result.items
+        topRatedCount = result.topRatedCount
+        freshCount = result.freshCount
         isCatalogLoading = false
     }
     LaunchedEffect(appliedQuery, selectedCategory, sortOption, filterTopRated, filterFresh) {
         if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0)
     }
-    LaunchedEffect(gridState, visibleMovies, omdbSettings, selectedMovie != null) {
-        ratingCacheVersion++
-        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank() || selectedMovie != null) return@LaunchedEffect
-        androidx.compose.runtime.snapshotFlow {
-            gridState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
-                visibleMovies.getOrNull(item.index)?.movie?.let { movie ->
-                    com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", movie.name, movie.year, movie.imdbId)
-                }
-            }
-        }.collect { targets ->
-            OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, targets)
-            ratingCacheVersion++
-        }
+    val ratingCacheVersion = rememberVodOmdbPrefetchVersion(
+        gridState = gridState,
+        visibleItems = visibleMovies,
+        omdbSettings = omdbSettings,
+        paused = selectedMovie != null
+    ) { entry ->
+        com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
     }
     val fastScrollNames = remember(visibleMovies, sortOption) {
         if (sortOption == VodSortOption.ALPHABETICAL) visibleMovies.map { it.movie.name } else emptyList()
@@ -519,64 +495,14 @@ internal fun XtreamMoviesScreen(
         },
         header = {
             ContinueWatchingRow(continueWatching, onContinueWatching, onRemoveContinueWatching)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    onClick = { filterTopRated = !filterTopRated },
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (filterTopRated) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    border = BorderStroke(1.dp, if (filterTopRated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-                    modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = null,
-                            tint = if (filterTopRated) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFFFB800),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "${strings.topRatedFilter} · $topRatedCount",
-                            color = if (filterTopRated) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                            fontSize = 12.sp,
-                            fontWeight = if (filterTopRated) FontWeight.Bold else FontWeight.Medium
-                        )
-                    }
-                }
-
-                if (freshCount > 0 || filterFresh) {
-                    Surface(
-                        onClick = { filterFresh = !filterFresh },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (filterFresh) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, if (filterFresh) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-                        modifier = Modifier.tvFocusHighlight(shape = RoundedCornerShape(8.dp))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("🍅", fontSize = 12.sp)
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "${strings.freshFilter} · $freshCount",
-                                color = if (filterFresh) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                fontSize = 12.sp,
-                                fontWeight = if (filterFresh) FontWeight.Bold else FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-            }
+            VodRatingFilterChipsRow(
+                filterTopRated = filterTopRated,
+                topRatedCount = topRatedCount,
+                onToggleTopRated = { filterTopRated = !filterTopRated },
+                filterFresh = filterFresh,
+                freshCount = freshCount,
+                onToggleFresh = { filterFresh = !filterFresh }
+            )
         }
     ) {
         gridItemsIndexed(
