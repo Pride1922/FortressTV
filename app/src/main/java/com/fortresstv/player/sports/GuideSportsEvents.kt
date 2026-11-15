@@ -381,7 +381,7 @@ internal fun guideSportsMatches(
                 id = "$GUIDE_FIXTURE_ID_PREFIX${airing.key}-${firstStart / 60_000L}",
                 sport = airing.kind,
                 competition = airing.competition,
-                competitionLogoUrl = null,
+                competitionLogoUrl = SportsTeamLogoResolver.competitionLogoFallback(airing.competition),
                 homeTeam = airing.home,
                 awayTeam = airing.away,
                 homeTeamLogoUrl = null,

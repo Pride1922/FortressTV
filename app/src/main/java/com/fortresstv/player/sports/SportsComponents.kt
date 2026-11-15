@@ -1,5 +1,6 @@
 package com.fortresstv.player.sports
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -429,7 +430,7 @@ fun SportsFixtureCard(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        TeamLogo(url = fixture.homeTeamLogoUrl, name = fixture.homeTeam, fallbackIcon = crestFallback)
+                        TeamLogo(url = fixture.homeTeamLogoUrl, name = fixture.homeTeam, fallbackIcon = crestFallback, sport = fixture.sport)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = fixture.homeTeam,
@@ -469,7 +470,7 @@ fun SportsFixtureCard(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        TeamLogo(url = fixture.awayTeamLogoUrl, name = fixture.awayTeam, fallbackIcon = crestFallback)
+                        TeamLogo(url = fixture.awayTeamLogoUrl, name = fixture.awayTeam, fallbackIcon = crestFallback, sport = fixture.sport)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = fixture.awayTeam,
@@ -528,17 +529,46 @@ fun SportsFixtureCard(
 }
 
 @Composable
-private fun TeamLogo(url: String?, name: String, modifier: Modifier = Modifier, fallbackIcon: ImageVector? = null) {
+private fun TeamLogo(
+    url: String?,
+    name: String,
+    modifier: Modifier = Modifier,
+    fallbackIcon: ImageVector? = null,
+    sport: SportsKind? = null
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var showFallback by remember(url) { mutableStateOf(url.isNullOrBlank()) }
+    var resolvedUrl by remember(url, name, sport) {
+        mutableStateOf(
+            url?.takeIf { it.isNotBlank() }
+                ?: if (sport != null && sport != SportsKind.MOTORSPORT && sport != SportsKind.OTHER) {
+                    SportsTeamLogoResolver.getCached(context, name)
+                } else null
+        )
+    }
+    LaunchedEffect(url, name, sport) {
+        if (url.isNullOrBlank() &&
+            resolvedUrl.isNullOrBlank() &&
+            name.isNotBlank() &&
+            sport != null &&
+            sport != SportsKind.MOTORSPORT &&
+            sport != SportsKind.OTHER
+        ) {
+            val fetched = SportsTeamLogoResolver.resolve(context, name, sport)
+            if (!fetched.isNullOrBlank()) {
+                resolvedUrl = fetched
+            }
+        }
+    }
+    val effectiveUrl = resolvedUrl
+    var showFallback by remember(effectiveUrl) { mutableStateOf(effectiveUrl.isNullOrBlank()) }
     Box(
         modifier = modifier.size(38.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (!url.isNullOrBlank()) {
-            val request = remember(url) {
+        if (!effectiveUrl.isNullOrBlank()) {
+            val request = remember(effectiveUrl) {
                 coil.request.ImageRequest.Builder(context)
-                    .data(url)
+                    .data(effectiveUrl)
                     .setHeader("User-Agent", "Mozilla/5.0")
                     .crossfade(false)
                     .build()
@@ -855,7 +885,8 @@ fun MatchDetailsDialog(
                             TeamLogo(
                                 url = fixture.homeTeamLogoUrl,
                                 name = fixture.homeTeam,
-                                modifier = Modifier.size(54.dp)
+                                modifier = Modifier.size(54.dp),
+                                sport = fixture.sport
                             )
                             Spacer(Modifier.height(6.dp))
                             Text(
@@ -906,7 +937,8 @@ fun MatchDetailsDialog(
                             TeamLogo(
                                 url = fixture.awayTeamLogoUrl,
                                 name = fixture.awayTeam,
-                                modifier = Modifier.size(54.dp)
+                                modifier = Modifier.size(54.dp),
+                                sport = fixture.sport
                             )
                             Spacer(Modifier.height(6.dp))
                             Text(
