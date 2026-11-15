@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC1",
-    "versionCode":  74,
-    "notes":  "FortressTV 2.0.0-RC1: Fix skip intro/recap/credits resolution (ID validation, TMDB external ID lookup, movie support, and IntroDB.app fallback).",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC1/fortresstv.apk",
-    "sha256":  "E97298378494694827C7AAD66420EF4FD50481B5518CE367F1601B7213DF0434"
+    "version":  "2.0.0-RC2",
+    "versionCode":  75,
+    "notes":  "FortressTV 2.0.0-RC2: Fix OTA APK installer FileProvider authority mismatch, and fix skip intro/recap/credits resolution (ID validation, TMDB external ID lookup, movie support, and IntroDB.app fallback).",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC2/fortresstv.apk",
+    "sha256":  "1DA1F3F3E66288575104AC78BCF96B06F2933D0168D6D3842A888A66CD9B9F73"
 }
