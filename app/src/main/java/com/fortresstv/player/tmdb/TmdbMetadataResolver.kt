@@ -16,6 +16,7 @@ object TmdbMetadataResolver {
 
     private val memoryCache = ConcurrentHashMap<String, TmdbMetadata>()
     private val seasonMemoryCache = ConcurrentHashMap<String, TmdbSeasonMetadata>()
+    private val externalIdsMemoryCache = ConcurrentHashMap<String, Pair<String?, String?>>()
     private const val CACHE_DIR_NAME = "tmdb_cache"
     private const val TRAILER_SELECTION_VERSION = 1
     private const val CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000L // 14 days
@@ -23,6 +24,22 @@ object TmdbMetadataResolver {
     fun clearMemoryCache() {
         memoryCache.clear()
         seasonMemoryCache.clear()
+        externalIdsMemoryCache.clear()
+    }
+
+    suspend fun resolveExternalIds(
+        settings: TmdbSettings,
+        tmdbId: Int,
+        isMovie: Boolean
+    ): Pair<String?, String?> = withContext(Dispatchers.IO) {
+        if (!settings.enabled || settings.apiKey.isBlank() || tmdbId <= 0) return@withContext null to null
+        val key = "${if (isMovie) "movie" else "tv"}_$tmdbId"
+        externalIdsMemoryCache[key]?.let { return@withContext it }
+        val result = TmdbClient(settings.apiKey).getExternalIds(tmdbId, isMovie)
+        if (result.first != null || result.second != null) {
+            externalIdsMemoryCache[key] = result
+        }
+        result
     }
 
     suspend fun resolveMovie(

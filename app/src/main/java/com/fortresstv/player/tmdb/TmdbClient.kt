@@ -79,6 +79,17 @@ class TmdbClient(
         }.getOrNull()
     }
 
+    suspend fun getExternalIds(tmdbId: Int, isMovie: Boolean): Pair<String?, String?> = withContext(Dispatchers.IO) {
+        if (tmdbId <= 0) return@withContext null to null
+        runCatching {
+            val endpoint = if (isMovie) "/3/movie/$tmdbId/external_ids" else "/3/tv/$tmdbId/external_ids"
+            val json = JSONObject(executeRequest(endpoint, emptyMap()))
+            val imdbId = json.optString("imdb_id").trim().takeIf { it.startsWith("tt", ignoreCase = true) }
+            val tvdbId = json.optInt("tvdb_id", 0).takeIf { it > 0 }?.toString()
+            imdbId to tvdbId
+        }.getOrElse { null to null }
+    }
+
     suspend fun getSeasonDetails(
         tmdbSeriesId: Int,
         seasonNumber: Int,

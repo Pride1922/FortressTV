@@ -632,26 +632,55 @@ internal fun VodPlayerDialog(
     var hasAutoSkippedIntro by remember(request.key) { mutableStateOf(false) }
     var hasAutoSkippedRecap by remember(request.key) { mutableStateOf(false) }
 
-    LaunchedEffect(request.key, introDbSettings.enabled) {
-        if (!introDbSettings.enabled || request.kind != VodProgressKind.EPISODE || request.season == null || request.episode == null) {
+    LaunchedEffect(request.key, introDbSettings.enabled, tmdbSettings.enabled, tmdbSettings.apiKey) {
+        val isEpisode = request.kind == VodProgressKind.EPISODE && request.season != null && request.episode != null
+        val isMovie = request.kind == VodProgressKind.MOVIE
+        if (!introDbSettings.enabled || (!isEpisode && !isMovie)) {
             episodeSegments = null
             return@LaunchedEffect
         }
         val client = TheIntroDbClient.getInstance(context.applicationContext)
-        val tmdbId = request.tmdbId ?: if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank() && !request.seriesName.isNullOrBlank()) {
-            TmdbMetadataResolver.resolveSeries(
-                context = context,
-                settings = tmdbSettings,
-                rawTitle = request.seriesName,
-                year = null
-            )?.tmdbId?.toString()
+        val validRequestTmdbId = request.tmdbId?.trim()?.toIntOrNull()?.takeIf { it > 0 }?.toString()
+        val tmdbId = validRequestTmdbId ?: if (tmdbSettings.enabled && tmdbSettings.apiKey.isNotBlank()) {
+            if (isEpisode && !request.seriesName.isNullOrBlank()) {
+                TmdbMetadataResolver.resolveSeries(
+                    context = context,
+                    settings = tmdbSettings,
+                    rawTitle = request.seriesName,
+                    year = null
+                )?.tmdbId?.toString()
+            } else if (isMovie && request.title.isNotBlank()) {
+                TmdbMetadataResolver.resolveMovie(
+                    context = context,
+                    settings = tmdbSettings,
+                    rawTitle = request.title,
+                    year = null,
+                    imdbId = request.imdbId
+                )?.tmdbId?.toString()
+            } else null
         } else null
 
+        val parsedTmdbIdInt = tmdbId?.toIntOrNull()?.takeIf { it > 0 }
+        val (resolvedImdbId, resolvedTvdbId) = if (
+            request.imdbId.isNullOrBlank() &&
+            parsedTmdbIdInt != null &&
+            tmdbSettings.enabled &&
+            tmdbSettings.apiKey.isNotBlank()
+        ) {
+            TmdbMetadataResolver.resolveExternalIds(
+                settings = tmdbSettings,
+                tmdbId = parsedTmdbIdInt,
+                isMovie = isMovie
+            )
+        } else null to null
+
+        val effectiveImdbId = request.imdbId?.takeIf { it.isNotBlank() } ?: resolvedImdbId
         val segments = client.getSegments(
             tmdbId = tmdbId,
-            imdbId = request.imdbId,
-            season = request.season,
-            episode = request.episode
+            imdbId = effectiveImdbId,
+            tvdbId = resolvedTvdbId,
+            season = if (isEpisode) request.season else null,
+            episode = if (isEpisode) request.episode else null
         )
         episodeSegments = segments
     }
@@ -660,7 +689,8 @@ internal fun VodPlayerDialog(
         episodeSegments?.activeSegment(currentPositionMs, totalDurationMs)
     }
 
-    LaunchedEffect(activeSegment, introDbSettings) {
+    LaunchedEffect(activeSegment, introDbSettings, resumeDecisionMade) {
+        if (!resumeDecisionMade) return@LaunchedEffect
         val segment = activeSegment ?: return@LaunchedEffect
         if (segment.type == SegmentType.INTRO && introDbSettings.autoSkipIntro && !hasAutoSkippedIntro) {
             hasAutoSkippedIntro = true

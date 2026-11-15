@@ -511,7 +511,9 @@ internal fun SeriesEpisodesDialog(
         }
     }
 
-    val effectiveTmdbId = tmdbMetadata?.tmdbId ?: series.tmdbId?.toIntOrNull() ?: details?.tmdbId?.toIntOrNull()
+    val effectiveTmdbId = tmdbMetadata?.tmdbId
+        ?: series.tmdbId?.trim()?.toIntOrNull()?.takeIf { it > 0 }
+        ?: details?.tmdbId?.trim()?.toIntOrNull()?.takeIf { it > 0 }
     val playbackSeries = series.copy(
         tmdbId = effectiveTmdbId?.toString(),
         imdbId = series.imdbId?.takeIf { it.isNotBlank() } ?: details?.imdbId
