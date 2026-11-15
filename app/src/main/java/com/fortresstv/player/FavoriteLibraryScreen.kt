@@ -462,6 +462,24 @@ internal fun FavoriteLibraryScreen(
             delay(60_000)
         }
     }
+    val omdbSettings = LocalOmdbSettings.current
+    var ratingCacheVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(movies, series, omdbSettings) {
+        ratingCacheVersion++
+        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank()) return@LaunchedEffect
+        val targets = buildList {
+            movies.take(15).forEach { entry ->
+                add(com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId))
+            }
+            series.take(15).forEach { entry ->
+                add(com.fortresstv.player.omdb.OmdbPreFetchTarget("series", entry.series.name, entry.series.year, entry.series.imdbId))
+            }
+        }
+        if (targets.isNotEmpty()) {
+            OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, targets)
+            ratingCacheVersion++
+        }
+    }
     if (channels.isEmpty() && movies.isEmpty() && series.isEmpty()) {
         Box(
             Modifier.fillMaxSize().padding(32.dp),
@@ -568,14 +586,17 @@ internal fun FavoriteLibraryScreen(
                     ) {
                         gridItemsIndexed(movies, key = { _, entry -> "watchlist:${entry.catalog.sourceId}:${entry.movie.id}" }) { index, entry ->
                             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                            val cachedOmdb = remember(entry.movie.id) {
-                                OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                            val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
+                                if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                    OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
+                                } else null
                             }
+                            val rating = formatEffectiveRatingBadge(cachedOmdb?.imdbRating, entry.movie.rating)
                             VodPosterCard(
                                 title = entry.movie.name,
                                 posterUrl = entry.movie.posterUrl,
-                                subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                subtitle = formatVodMetadata(entry.movie.year, rating),
+                                imdbRating = rating,
                                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                 isWatched = libraryId in watchedItemIds,
                                 progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -596,14 +617,17 @@ internal fun FavoriteLibraryScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         gridItemsIndexed(series, key = { _, entry -> "followed:${entry.catalog.sourceId}:${entry.series.id}" }) { index, entry ->
-                            val cachedOmdb = remember(entry.series.id) {
-                                OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                            val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
+                                if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+                                    OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
+                                } else null
                             }
+                            val rating = formatEffectiveRatingBadge(cachedOmdb?.imdbRating, entry.series.rating)
                             VodPosterCard(
                                 title = entry.series.name,
                                 posterUrl = entry.series.coverUrl,
-                                subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                imdbRating = cachedOmdb?.imdbRating ?: entry.series.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                subtitle = formatVodMetadata(entry.series.year, rating),
+                                imdbRating = rating,
                                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
                                 onClick = { selectedSeries = entry }
@@ -629,7 +653,10 @@ internal fun FavoriteLibraryScreen(
             sourceName = entry.catalog.sourceName.takeIf { catalogs.size > 1 },
             isWatchlisted = libraryId in movieWatchlistIds,
             isWatched = libraryId in watchedItemIds,
-            onDismiss = { selectedMovie = null },
+            onDismiss = {
+                selectedMovie = null
+                ratingCacheVersion++
+            },
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
             onWatch = { movie ->
@@ -652,7 +679,10 @@ internal fun FavoriteLibraryScreen(
                 progressEntries = progressEntries,
                 onToggleFollow = { onToggleSeriesFollow(entry.catalog.sourceId, entry.series) },
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
-                onDismiss = { selectedSeries = null },
+                onDismiss = {
+                    selectedSeries = null
+                    ratingCacheVersion++
+                },
                 onPlay = { series, episode, url ->
                     selectedSeries = null
                     onPlayEpisode(entry.catalog, series, episode, url)

@@ -626,7 +626,14 @@ internal fun HomeScreen(
         shelvesState.recomputeFeaturedMovies(showFeaturedMovies, catalogs, hideAdultContent, maximumAge, blockUnrated)
     }
 
-    LaunchedEffect(shelvesState, featuredMoviesShelf.items, featuredSeriesShelf.items, omdbSettings) {
+    LaunchedEffect(
+        shelvesState,
+        featuredMoviesShelf.items,
+        featuredSeriesShelf.items,
+        matchedTraktRecs,
+        matchedTraktWatchlist,
+        omdbSettings
+    ) {
         shelvesState.prefetchOmdbForFeatured(omdbSettings)
     }
 
@@ -929,17 +936,21 @@ internal fun HomeScreen(
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(searchMatchingMovies, key = { "search:movie:${it.catalog.sourceId}:${it.movie.id}" }) { entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
-                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
-                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
-                                        } else null
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "movie",
+                                        title = entry.movie.name,
+                                        year = entry.movie.year,
+                                        imdbId = entry.movie.imdbId,
+                                        itemKey = entry.movie,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
                                     val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
                                         subtitle = formatVodMetadata(entry.movie.year, movieRating),
-                                        imdbRating = movieRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        imdbRating = normalizeVodRating(movieRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -962,17 +973,21 @@ internal fun HomeScreen(
                             Spacer(Modifier.height(8.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 items(searchMatchingSeries, key = { "search:series:${it.catalog.sourceId}:${it.series.id}" }) { entry ->
-                                    val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
-                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
-                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
-                                        } else null
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "series",
+                                        title = entry.series.name,
+                                        year = entry.series.year,
+                                        imdbId = entry.series.imdbId,
+                                        itemKey = entry.series,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
                                     val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
                                         subtitle = formatVodMetadata(entry.series.year, seriesRating),
-                                        imdbRating = seriesRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        imdbRating = normalizeVodRating(seriesRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)
@@ -1283,14 +1298,21 @@ internal fun HomeScreen(
                             val followedRowState = rememberLazyListState()
                             LazyRow(state = followedRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(followedSeries, key = { index, it -> "home_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
-                                    val cachedOmdb = remember(entry.series.id) {
-                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "series",
+                                        title = entry.series.name,
+                                        year = entry.series.year,
+                                        imdbId = entry.series.imdbId,
+                                        itemKey = entry.series,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
+                                    val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
-                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                        imdbRating = cachedOmdb?.imdbRating,
+                                        subtitle = formatVodMetadata(entry.series.year, seriesRating),
+                                        imdbRating = normalizeVodRating(seriesRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier
@@ -1352,17 +1374,21 @@ internal fun HomeScreen(
                             LazyRow(state = traktRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(matchedTraktWatchlist.movies, key = { index, it -> "trakt_movie:${it.catalog.sourceId}:${it.movie.id}_$index" }) { index, entry ->
                                     val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
-                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
-                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
-                                        } else null
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "movie",
+                                        title = entry.movie.name,
+                                        year = entry.movie.year,
+                                        imdbId = entry.movie.imdbId,
+                                        itemKey = entry.movie,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
                                     val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
                                         subtitle = formatVodMetadata(entry.movie.year, movieRating),
-                                        imdbRating = movieRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        imdbRating = normalizeVodRating(movieRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -1371,14 +1397,21 @@ internal fun HomeScreen(
                                     )
                                 }
                                 itemsIndexed(matchedTraktWatchlist.series, key = { index, it -> "trakt_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
-                                    val cachedOmdb = remember(entry.series.id) {
-                                        OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "series",
+                                        title = entry.series.name,
+                                        year = entry.series.year,
+                                        imdbId = entry.series.imdbId,
+                                        itemKey = entry.series,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
+                                    val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
-                                        subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                        imdbRating = cachedOmdb?.imdbRating,
+                                        subtitle = formatVodMetadata(entry.series.year, seriesRating),
+                                        imdbRating = normalizeVodRating(seriesRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)
@@ -1497,14 +1530,21 @@ internal fun HomeScreen(
                                         if (kind == "movie") {
                                             val entry = payload as CatalogMovie
                                             val libraryId = entry.movie.libraryId(entry.catalog.sourceId)
-                                            val cachedOmdb = remember(entry.movie.id) {
-                                                OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
-                                            }
+                                            val cachedOmdb = rememberHomeOmdbMetadata(
+                                                type = "movie",
+                                                title = entry.movie.name,
+                                                year = entry.movie.year,
+                                                imdbId = entry.movie.imdbId,
+                                                itemKey = entry.movie,
+                                                omdbSettings = omdbSettings,
+                                                ratingCacheVersion = ratingCacheVersion
+                                            )
+                                            val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                             VodPosterCard(
                                                 title = entry.movie.name,
                                                 posterUrl = entry.movie.posterUrl,
-                                                subtitle = formatVodMetadata(entry.movie.year, entry.movie.rating),
-                                                imdbRating = cachedOmdb?.imdbRating ?: entry.movie.rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                                subtitle = formatVodMetadata(entry.movie.year, movieRating),
+                                                imdbRating = normalizeVodRating(movieRating),
                                                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                                 isWatched = libraryId in watchedItemIds,
                                                 progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -1513,14 +1553,21 @@ internal fun HomeScreen(
                                             )
                                         } else {
                                             val entry = payload as CatalogSeries
-                                            val cachedOmdb = remember(entry.series.id) {
-                                                OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
-                                            }
+                                            val cachedOmdb = rememberHomeOmdbMetadata(
+                                                type = "series",
+                                                title = entry.series.name,
+                                                year = entry.series.year,
+                                                imdbId = entry.series.imdbId,
+                                                itemKey = entry.series,
+                                                omdbSettings = omdbSettings,
+                                                ratingCacheVersion = ratingCacheVersion
+                                            )
+                                            val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                             VodPosterCard(
                                                 title = entry.series.name,
                                                 posterUrl = entry.series.coverUrl,
-                                                subtitle = formatVodMetadata(entry.series.year, entry.series.rating),
-                                                imdbRating = cachedOmdb?.imdbRating,
+                                                subtitle = formatVodMetadata(entry.series.year, seriesRating),
+                                                imdbRating = normalizeVodRating(seriesRating),
                                                 rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                                 onClick = { selectedSeries = entry },
                                                 modifier = Modifier.width(120.dp)
@@ -1564,17 +1611,21 @@ internal fun HomeScreen(
                                         val source = profiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
                                         source?.let { XtreamClient(context.applicationContext, entry.catalog.sourceId, it) }
                                     }
-                                    val cachedOmdb = remember(entry.movie, omdbSettings, ratingCacheVersion) {
-                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
-                                            OmdbMetadataResolver.getCached(context, "movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
-                                        } else null
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "movie",
+                                        title = entry.movie.name,
+                                        year = entry.movie.year,
+                                        imdbId = entry.movie.imdbId,
+                                        itemKey = entry.movie,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
                                     val movieRating = cachedOmdb?.imdbRating ?: entry.movie.rating
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
                                         subtitle = formatVodMetadata(entry.movie.year, movieRating),
-                                        imdbRating = movieRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        imdbRating = normalizeVodRating(movieRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         isWatched = libraryId in watchedItemIds,
                                         progressFraction = progressByKey[libraryId]?.progressFraction,
@@ -1616,17 +1667,21 @@ internal fun HomeScreen(
                             val seriesRowState = rememberLazyListState()
                             LazyRow(state = seriesRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(featuredSeriesShelf.items, key = { index, it -> "home_feat_series:${it.catalog.sourceId}:${it.series.id}_$index" }) { index, entry ->
-                                    val cachedOmdb = remember(entry.series, omdbSettings, ratingCacheVersion) {
-                                        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
-                                            OmdbMetadataResolver.getCached(context, "series", entry.series.name, entry.series.year, entry.series.imdbId)
-                                        } else null
-                                    }
+                                    val cachedOmdb = rememberHomeOmdbMetadata(
+                                        type = "series",
+                                        title = entry.series.name,
+                                        year = entry.series.year,
+                                        imdbId = entry.series.imdbId,
+                                        itemKey = entry.series,
+                                        omdbSettings = omdbSettings,
+                                        ratingCacheVersion = ratingCacheVersion
+                                    )
                                     val seriesRating = cachedOmdb?.imdbRating ?: entry.series.rating
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
                                         subtitle = formatVodMetadata(entry.series.year, seriesRating),
-                                        imdbRating = seriesRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" },
+                                        imdbRating = normalizeVodRating(seriesRating),
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
                                         onClick = { selectedSeries = entry },
                                         modifier = Modifier.width(120.dp)
@@ -1666,7 +1721,10 @@ internal fun HomeScreen(
             sourceName = entry.catalog.sourceName.takeIf { catalogs.size > 1 },
             isWatchlisted = libraryId in movieWatchlistIds,
             isWatched = libraryId in watchedItemIds,
-            onDismiss = { selectedMovie = null },
+            onDismiss = {
+                selectedMovie = null
+                shelvesState.bumpRatingCacheVersion()
+            },
             onToggleWatchlist = { onToggleMovieWatchlist(entry.catalog.sourceId, entry.movie) },
             onToggleWatched = { onToggleMovieWatched(entry.catalog.sourceId, entry.movie) },
             onHideOnTrakt = matchingRec?.takeIf { canManageHiddenRecommendations }?.let { rec -> { confirmHideRecommendation(rec) } },
@@ -1702,7 +1760,10 @@ internal fun HomeScreen(
                 onToggleEpisodeWatched = { onToggleEpisodeWatched(entry.catalog.sourceId, it, entry.series) },
                 traktNamespace = traktNamespace,
                 onHideOnTrakt = matchingRec?.takeIf { canManageHiddenRecommendations }?.let { rec -> { confirmHideRecommendation(rec) } },
-                onDismiss = { selectedSeries = null },
+                onDismiss = {
+                    selectedSeries = null
+                    shelvesState.bumpRatingCacheVersion()
+                },
                 onPlay = { series, episode, url ->
                     selectedSeries = null
                     onPlayEpisode(entry.catalog, series, episode, url)
@@ -1775,4 +1836,27 @@ internal fun HomeScreen(
     }
 }
 }
+
+@Composable
+private fun rememberHomeOmdbMetadata(
+    type: String,
+    title: String,
+    year: String?,
+    imdbId: String?,
+    itemKey: Any,
+    omdbSettings: OmdbSettings,
+    ratingCacheVersion: Int
+): OmdbMetadata? {
+    val context = LocalContext.current
+    return remember(itemKey, omdbSettings, ratingCacheVersion) {
+        if (omdbSettings.enabled && omdbSettings.apiKey.isNotBlank()) {
+            OmdbMetadataResolver.getCached(context, type, title, year, imdbId)
+        } else {
+            null
+        }
+    }
+}
+
+private fun normalizeVodRating(rating: String?): String? =
+    rating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" }
 

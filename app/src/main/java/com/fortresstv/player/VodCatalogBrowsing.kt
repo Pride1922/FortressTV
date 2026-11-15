@@ -171,10 +171,19 @@ internal fun <T> rememberVodOmdbPrefetchVersion(
     visibleItems: List<T>,
     omdbSettings: OmdbSettings,
     paused: Boolean,
+    extraItems: List<T> = emptyList(),
     targetOf: (T) -> OmdbPreFetchTarget
 ): Int {
     val context = LocalContext.current
     var ratingCacheVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(extraItems, omdbSettings, paused) {
+        if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank() || paused || extraItems.isEmpty()) {
+            return@LaunchedEffect
+        }
+        val extraTargets = extraItems.take(15).map(targetOf)
+        OmdbMetadataResolver.prefetchCuratedBatch(context, omdbSettings, extraTargets)
+        ratingCacheVersion++
+    }
     LaunchedEffect(gridState, visibleItems, omdbSettings, paused) {
         ratingCacheVersion++
         if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank() || paused) return@LaunchedEffect

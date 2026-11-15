@@ -646,7 +646,8 @@ internal fun XtreamSeriesScreen(
         gridState = gridState,
         visibleItems = visibleSeries,
         omdbSettings = omdbSettings,
-        paused = selected != null
+        paused = selected != null,
+        extraItems = recommendedSeries
     ) { entry ->
         com.fortresstv.player.omdb.OmdbPreFetchTarget("series", entry.series.name, entry.series.year, entry.series.imdbId)
     }

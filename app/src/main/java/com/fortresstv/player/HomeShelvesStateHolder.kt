@@ -359,11 +359,27 @@ internal class HomeShelvesStateHolder(
         }
     }
 
+    fun bumpRatingCacheVersion() {
+        ratingCacheVersion++
+    }
+
     fun prefetchOmdbForFeatured(omdbSettings: OmdbSettings) {
         omdbPrefetchJob?.cancel()
         ratingCacheVersion++
         if (!omdbSettings.enabled || omdbSettings.apiKey.isBlank()) return
         val targets = buildList {
+            matchedTraktWatchlist.movies.take(15).forEach { entry ->
+                add(OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId))
+            }
+            matchedTraktWatchlist.series.take(15).forEach { entry ->
+                add(OmdbPreFetchTarget("series", entry.series.name, entry.series.year, entry.series.imdbId))
+            }
+            matchedTraktRecs.movies.take(15).forEach { entry ->
+                add(OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId))
+            }
+            matchedTraktRecs.series.take(15).forEach { entry ->
+                add(OmdbPreFetchTarget("series", entry.series.name, entry.series.year, entry.series.imdbId))
+            }
             featuredMoviesShelf.items.take(15).forEach { entry ->
                 add(OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId))
             }

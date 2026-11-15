@@ -599,7 +599,8 @@ internal fun XtreamMoviesScreen(
         gridState = gridState,
         visibleItems = visibleMovies,
         omdbSettings = omdbSettings,
-        paused = selectedMovie != null
+        paused = selectedMovie != null,
+        extraItems = recommendedMovies
     ) { entry ->
         com.fortresstv.player.omdb.OmdbPreFetchTarget("movie", entry.movie.name, entry.movie.year, entry.movie.imdbId)
     }

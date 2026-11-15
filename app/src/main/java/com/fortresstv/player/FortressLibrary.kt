@@ -818,6 +818,7 @@ internal fun FortressLibrary(
                     targets.add(com.fortresstv.player.omdb.OmdbPreFetchTarget(type = "series", title = entry.series.name, year = entry.series.year, imdbId = entry.series.imdbId))
                 }
                 OmdbMetadataResolver.prefetchCuratedBatch(context, homeOmdbSettings, targets)
+                shelvesState.bumpRatingCacheVersion()
             }
         }
 
