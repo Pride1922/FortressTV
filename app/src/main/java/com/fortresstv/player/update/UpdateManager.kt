@@ -374,7 +374,7 @@ object UpdateManager {
     private fun launchInstaller(context: Context, apkFile: File) {
         val apkUri = FileProvider.getUriForFile(
             context,
-            "${context.packageName}.fileprovider",
+            "${context.packageName}.FileProvider",
             apkFile
         )
         val installIntent = Intent(Intent.ACTION_VIEW).apply {
