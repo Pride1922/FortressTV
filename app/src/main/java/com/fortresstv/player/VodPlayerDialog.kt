@@ -519,6 +519,7 @@ internal fun VodPlayerDialog(
     var showSleepTimerDialog by remember { mutableStateOf(false) }
 
     var currentTracks by remember(request.key) { mutableStateOf<Tracks?>(null) }
+    var videoSize by remember(request.key) { mutableStateOf(player.videoSize) }
     var userManuallySelectedTracks by remember(request.key) { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var selectedTrackTab by remember { mutableIntStateOf(0) }
@@ -854,6 +855,9 @@ internal fun VodPlayerDialog(
                         }
                     }
                 }
+            }
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                videoSize = size
             }
             override fun onTracksChanged(tracks: Tracks) {
                 currentTracks = tracks
@@ -1226,14 +1230,28 @@ internal fun VodPlayerDialog(
                         }
                         Spacer(Modifier.width(if (isCompact) 8.dp else 12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                request.title,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = if (isCompact) 14.sp else 17.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                            val selectedVideoTrack = videoTracks.firstOrNull { it.isSelected }
+                            val streamQuality = com.fortresstv.player.player.classifyStreamQuality(
+                                width = videoSize.width.takeIf { it > 0 } ?: (selectedVideoTrack?.width ?: 0),
+                                height = videoSize.height.takeIf { it > 0 } ?: (selectedVideoTrack?.height ?: 0)
                             )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    request.title,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = if (isCompact) 14.sp else 17.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (streamQuality != null) {
+                                    StreamQualityBadge(quality = streamQuality)
+                                }
+                            }
                             if (request.kind == VodProgressKind.EPISODE && (request.season != null || request.episode != null)) {
                                 Text(
                                     "S${(request.season ?: 1).toString().padStart(2, '0')} E${(request.episode ?: 1).toString().padStart(2, '0')}",

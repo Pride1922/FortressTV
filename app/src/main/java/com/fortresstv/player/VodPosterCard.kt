@@ -389,6 +389,7 @@ internal fun VodPosterCard(
     isWatched: Boolean = false,
     watchedContentDescription: String? = null,
     progressFraction: Float? = null,
+    isSeries: Boolean = false,
     modifier: Modifier = Modifier,
     loadPosterFallback: (suspend () -> String?)? = null,
     onClick: () -> Unit
@@ -398,20 +399,30 @@ internal fun VodPosterCard(
     val tmdbSettings = LocalTmdbSettings.current
     var dynamicPosterUrl by remember(posterUrl) { mutableStateOf(posterUrl) }
 
-    LaunchedEffect(posterUrl, loadPosterFallback, title) {
+    LaunchedEffect(
+        posterUrl,
+        loadPosterFallback,
+        title,
+        isSeries,
+        tmdbSettings.preferCleanPosters,
+        tmdbSettings.enabled,
+        tmdbSettings.language
+    ) {
         if (dynamicPosterUrl.isNullOrBlank()) {
             val fromFallback = runCatching { loadPosterFallback?.invoke() }.getOrNull()
             if (!fromFallback.isNullOrBlank()) {
                 dynamicPosterUrl = fromFallback
-            } else {
-                val resolved = com.fortresstv.player.library.VodPosterResolver.resolveMoviePoster(
-                    rawTitle = title,
-                    context = context,
-                    tmdbSettings = tmdbSettings
-                )
-                if (!resolved.isNullOrBlank()) {
-                    dynamicPosterUrl = resolved
-                }
+            }
+        }
+        if (tmdbSettings.preferCleanPosters || dynamicPosterUrl.isNullOrBlank()) {
+            val resolved = com.fortresstv.player.library.VodPosterResolver.resolvePoster(
+                rawTitle = title,
+                isSeries = isSeries,
+                context = context,
+                tmdbSettings = tmdbSettings
+            )
+            if (!resolved.isNullOrBlank()) {
+                dynamicPosterUrl = resolved
             }
         }
     }

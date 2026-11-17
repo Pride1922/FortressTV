@@ -230,6 +230,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -1090,12 +1091,12 @@ internal fun HomeScreen(
                             val favRowState = rememberLazyListState()
                             LazyRow(state = favRowState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 itemsIndexed(favoriteChannels, key = { _, it -> "fav_now:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
-                                    val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
+                                    val manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name)
                                     val epgChannel = remember(channel.tvgId, channel.name, epgGuide) {
                                         epgGuide?.findChannel(channel.tvgId, channel.name)
                                     }
-                                    val snapshot = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId) {
-                                        epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)
+                                    val snapshot = remember(channel.tvgId, channel.tvgName, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId) {
+                                        epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId, tvgName = channel.tvgName)
                                     }
                                     val currentProg = snapshot?.current
                                     val nextProg = snapshot?.next
@@ -1202,18 +1203,19 @@ internal fun HomeScreen(
                             }
                             LazyRow(state = recentRowState, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 itemsIndexed(recentChannelsList, key = { _, it -> "recent:${it.sourceId}:${it.sourceItemId}" }) { index, channel ->
-                                    val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
-                                    val epgChannel = remember(channel.tvgId, channel.name, epgGuide) {
-                                        epgGuide?.findChannel(channel.tvgId, channel.name)
+                                    val manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name)
+                                    val epgChannel = remember(channel.tvgId, channel.tvgName, channel.name, epgGuide, manualXmltvId) {
+                                        epgGuide?.findChannel(channel.tvgId, channel.name, manualXmltvId, channel.tvgName)
                                     }
                                     val currentProgramme = remember(
-                                        channel.tvgId, channel.name, epgGuide, scheduleNow,
+                                        channel.tvgId, channel.tvgName, channel.name, epgGuide, scheduleNow,
                                         epgScheduleCorrectionMinutes, manualXmltvId
                                     ) {
                                         epgGuide?.snapshot(
                                             channel.tvgId, channel.name, scheduleNow,
                                             correctionMinutes = epgScheduleCorrectionMinutes,
-                                            manualXmltvId = manualXmltvId
+                                            manualXmltvId = manualXmltvId,
+                                            tvgName = channel.tvgName
                                         )?.current
                                     }
                                     Surface(

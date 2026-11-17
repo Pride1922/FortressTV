@@ -60,6 +60,10 @@ object XmlTvParser {
                 fallbackSourceZone = fallbackSourceZone
             )
             parseXml(input, handler)
+            android.util.Log.i(
+                "FortressTV.EPG",
+                "parseToDisk: channels=${handler.channels.size}, seenProgrammes=${handler.seenProgrammes}, keptProgrammes=${handler.keptProgrammes}, sampleStart=${handler.sampleStart}, todayEpochDay=$todayEpochDay"
+            )
 
             return session.commit(handler.channels, requireProgrammes, beforePublish)
         } catch (t: Throwable) {
@@ -96,6 +100,9 @@ object XmlTvParser {
         private val fallbackSourceZone: ZoneId = ZoneId.systemDefault()
     ) : DefaultHandler() {
         val channels = linkedMapOf<String, EpgChannel>()
+        var seenProgrammes = 0
+        var keptProgrammes = 0
+        var sampleStart: String? = null
         private val pastCutoff = if (referenceTime > 0L) referenceTime - (6 * 3600_000L) else Long.MIN_VALUE
         private val futureCutoff = if (referenceTime > 0L) {
             Instant.ofEpochMilli(referenceTime)
@@ -153,6 +160,8 @@ object XmlTvParser {
                 "programme" -> programme?.takeIf {
                     it.channelId.isNotBlank() && it.start.isNotBlank() && !it.title.isNullOrBlank()
                 }?.let {
+                    seenProgrammes++
+                    if (sampleStart == null) sampleStart = it.start
                     val startEpoch = XmlTvTime.parseToEpoch(it.start, fallbackSourceZone) ?: 0L
                     val stopEpoch = it.stop?.let { s -> XmlTvTime.parseToEpoch(s, fallbackSourceZone) }
                     val effectiveStop = stopEpoch ?: (startEpoch + 30 * 60_000L)
@@ -177,6 +186,7 @@ object XmlTvParser {
                         for (day in startDay..stopDay) {
                             if (day in todayEpochDay..maxEpochDay) {
                                 stagingSession.appendProgramme(day, prog)
+                                keptProgrammes++
                             }
                         }
                     }

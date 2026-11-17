@@ -18,11 +18,13 @@ class TmdbSettingsStore(context: Context) {
         val enabled = preferences.getBoolean(KEY_ENABLED, false)
         val apiKey = preferences.getString(KEY_API_KEY, null)?.let(::decrypt).orEmpty()
         val language = preferences.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
+        val preferCleanPosters = preferences.getBoolean(KEY_PREFER_CLEAN_POSTERS, true)
 
         return TmdbSettings(
             enabled = enabled,
             apiKey = apiKey,
-            language = language
+            language = language,
+            preferCleanPosters = preferCleanPosters
         )
     }
 
@@ -31,6 +33,7 @@ class TmdbSettingsStore(context: Context) {
             .putBoolean(KEY_ENABLED, settings.enabled)
             .putString(KEY_API_KEY, if (settings.apiKey.isNotBlank()) encrypt(settings.apiKey.trim()) else null)
             .putString(KEY_LANGUAGE, settings.language.ifBlank { DEFAULT_LANGUAGE })
+            .putBoolean(KEY_PREFER_CLEAN_POSTERS, settings.preferCleanPosters)
             .apply()
     }
 
@@ -76,5 +79,6 @@ class TmdbSettingsStore(context: Context) {
         private const val KEY_ENABLED = "enabled"
         private const val KEY_API_KEY = "api_key"
         private const val KEY_LANGUAGE = "language"
+        private const val KEY_PREFER_CLEAN_POSTERS = "prefer_clean_posters"
     }
 }

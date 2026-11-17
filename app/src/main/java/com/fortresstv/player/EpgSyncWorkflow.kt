@@ -155,7 +155,8 @@ internal class EpgSyncWorkflow(
             iptvChannelId = channel.sourceItemId,
             epgSourceId = epgSourceDisplayName,
             xmltvChannelId = xmltvChannel.id,
-            isAvailable = true
+            isAvailable = true,
+            channelName = channel.name
         )
         epgMappingStore.saveMapping(mapping)
         val allMappings = epgMappingStore.getAllMappings()

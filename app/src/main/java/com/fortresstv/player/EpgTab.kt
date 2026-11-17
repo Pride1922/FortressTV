@@ -211,6 +211,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -389,6 +390,7 @@ internal fun EpgTab(
     epgSourceTimezone: String = "",
     epgLoadedDays: Int = 3,
     playlist: Playlist?,
+    sources: List<PlaylistProfile> = emptyList(),
     epgGuide: EpgGuide?,
     epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     hideAdultContent: Boolean = false,
@@ -419,15 +421,15 @@ internal fun EpgTab(
     }
     val matchedCount = remember(effectiveChannels, epgGuide, epgMappings) {
         if (epgGuide == null) 0 else effectiveChannels.count {
-            val manual = epgMappings["${it.sourceId}:${it.sourceItemId}"]?.xmltvChannelId
-            epgGuide.resolveChannelId(it.tvgId, it.name, manual) != null
+            val manual = epgMappings.resolveManualXmltvId(it.sourceId, it.sourceItemId, it.name)
+            epgGuide.resolveChannelId(it.tvgId, it.name, manual, it.tvgName) != null
         }
     }
     val unmatchedChannels = remember(effectiveChannels, epgGuide, epgMappings) {
         if (epgGuide == null) effectiveChannels
         else effectiveChannels.filter {
-            val manual = epgMappings["${it.sourceId}:${it.sourceItemId}"]?.xmltvChannelId
-            epgGuide.resolveChannelId(it.tvgId, it.name, manual) == null
+            val manual = epgMappings.resolveManualXmltvId(it.sourceId, it.sourceItemId, it.name)
+            epgGuide.resolveChannelId(it.tvgId, it.name, manual, it.tvgName) == null
         }
     }
     var showUnmatchedInSettings by remember { mutableStateOf(false) }
@@ -751,6 +753,7 @@ internal fun EpgTab(
                 UnmatchedEpgDialog(
                     unmatchedChannels = unmatchedChannels,
                     allChannels = effectiveChannels,
+                    sources = sources,
                     epgGuide = epgGuide,
                     epgMappings = epgMappings,
                     onSaveMapping = onSaveMapping,

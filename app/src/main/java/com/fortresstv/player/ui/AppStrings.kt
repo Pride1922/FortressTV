@@ -130,6 +130,9 @@ interface Strings {
     val rename: String
     val active: String
     val enabledSource: String
+    val allSources: String
+    val preferCleanPosters: String
+    val preferCleanPostersDesc: String
     fun sourcesCount(count: Int): String
     val moveSourceUp: String
     val moveSourceDown: String
@@ -733,6 +736,9 @@ object EnglishStrings : Strings {
     override val rename = "Rename"
     override val active = "Active"
     override val enabledSource = "Enabled"
+    override val allSources = "All sources"
+    override val preferCleanPosters = "Replace provider posters"
+    override val preferCleanPostersDesc = "Load clean movie and series posters from TMDB / Cinemeta instead of provider images."
     override fun sourcesCount(count: Int) = "$count ${if (count == 1) "source" else "sources"}"
     override val moveSourceUp = "Move source up"
     override val moveSourceDown = "Move source down"
@@ -1339,6 +1345,9 @@ object PortugueseStrings : Strings {
     override val rename = "Mudar o nome"
     override val active = "Ativo"
     override val enabledSource = "Ativa"
+    override val allSources = "Todas as fontes"
+    override val preferCleanPosters = "Substituir capas do fornecedor"
+    override val preferCleanPostersDesc = "Obter capas limpas de filmes e séries do TMDB / Cinemeta em vez das imagens do fornecedor."
     override fun sourcesCount(count: Int) = "$count ${if (count == 1) "fonte" else "fontes"}"
     override val moveSourceUp = "Mover fonte para cima"
     override val moveSourceDown = "Mover fonte para baixo"

@@ -211,6 +211,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -708,6 +709,7 @@ internal fun ManualEpgMappingDialog(
 internal fun UnmatchedEpgDialog(
     unmatchedChannels: List<PlaylistChannel>,
     allChannels: List<PlaylistChannel> = emptyList(),
+    sources: List<PlaylistProfile> = emptyList(),
     epgGuide: EpgGuide? = null,
     epgMappings: Map<String, EpgChannelMapping> = emptyMap(),
     onSaveMapping: (PlaylistChannel, com.fortresstv.player.epg.EpgChannel, String?) -> Unit = { _, _, _ -> },
@@ -720,15 +722,25 @@ internal fun UnmatchedEpgDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showAllChannels by remember { mutableStateOf(false) }
+    var selectedSourceId by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var channelToMap by remember { mutableStateOf<Pair<PlaylistChannel, String?>?>(null) }
 
     val baseList = if (showAllChannels && allChannels.isNotEmpty()) allChannels else unmatchedChannels
-    val displayedChannels = remember(baseList, searchQuery) {
-        if (searchQuery.isBlank()) baseList
+    val sourceNameById = remember(sources) {
+        sources.associate { it.id to it.name }
+    }
+    val sourceOptions = remember(allChannels, unmatchedChannels, sources) {
+        val pool = if (allChannels.isNotEmpty()) allChannels else unmatchedChannels
+        val distinctIds = pool.map { it.sourceId }.filter { it.isNotBlank() }.distinct()
+        distinctIds.map { id -> id to (sourceNameById[id] ?: id) }
+    }
+    val displayedChannels = remember(baseList, selectedSourceId, searchQuery) {
+        val sourceFiltered = if (selectedSourceId == null) baseList else baseList.filter { it.sourceId == selectedSourceId }
+        if (searchQuery.isBlank()) sourceFiltered
         else {
             val q = searchQuery.trim().lowercase()
-            baseList.filter {
+            sourceFiltered.filter {
                 it.name.lowercase().contains(q) ||
                 (it.group?.lowercase()?.contains(q) == true) ||
                 (it.tvgId?.lowercase()?.contains(q) == true)
@@ -826,6 +838,30 @@ internal fun UnmatchedEpgDialog(
                     Spacer(Modifier.height(8.dp))
                 }
 
+                if (sourceOptions.size > 1) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item(key = "all-sources") {
+                            FilterChip(
+                                selected = selectedSourceId == null,
+                                onClick = { selectedSourceId = null },
+                                label = { Text("${strings.allSources} (${baseList.size})", fontSize = 12.sp) }
+                            )
+                        }
+                        items(sourceOptions, key = { it.first }) { (sourceId, sourceName) ->
+                            val count = baseList.count { it.sourceId == sourceId }
+                            FilterChip(
+                                selected = selectedSourceId == sourceId,
+                                onClick = { selectedSourceId = sourceId },
+                                label = { Text("$sourceName ($count)", fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -841,11 +877,13 @@ internal fun UnmatchedEpgDialog(
                     modifier = Modifier.weight(1f)
                 ) {
                     items(displayedChannels, key = { "${it.sourceId}:${it.sourceItemId}" }) { channel ->
-                        val mapping = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]
-                        val hasMapping = mapping != null
-                        val isMappingAvailable = if (hasMapping) {
-                            epgGuide?.channels?.containsKey(mapping!!.xmltvChannelId) == true ||
-                            epgGuide?.programmes?.containsKey(mapping!!.xmltvChannelId) == true
+                        val directMapping = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]
+                        val resolvedManualId = directMapping?.xmltvChannelId
+                            ?: epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name)
+                        val hasMapping = resolvedManualId != null
+                        val isMappingAvailable = if (resolvedManualId != null) {
+                            epgGuide?.channels?.containsKey(resolvedManualId) == true ||
+                            epgGuide?.programmes?.containsKey(resolvedManualId) == true
                         } else true
 
                         Surface(
@@ -895,17 +933,27 @@ internal fun UnmatchedEpgDialog(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    if (!channel.group.isNullOrBlank()) {
+                                    val metaParts = buildList {
+                                        if (sourceOptions.size > 1) {
+                                            sourceNameById[channel.sourceId]?.let { add(it) }
+                                        }
+                                        if (!channel.group.isNullOrBlank()) {
+                                            add(channel.group)
+                                        }
+                                    }
+                                    if (metaParts.isNotEmpty()) {
                                         Text(
-                                            channel.group,
+                                            metaParts.joinToString(" · "),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 11.sp
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                     if (hasMapping) {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(
-                                                "${strings.mappedTo}: ${mapping!!.xmltvChannelId}",
+                                                "${strings.mappedTo}: $resolvedManualId",
                                                 color = if (isMappingAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Medium

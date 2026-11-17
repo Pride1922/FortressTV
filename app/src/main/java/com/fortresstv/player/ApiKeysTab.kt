@@ -449,6 +449,25 @@ internal fun ApiKeysTab(
                 if (connected) strings.apiServiceConnected else strings.apiServiceDisconnected,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
             )
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(strings.preferCleanPosters, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                    Text(strings.preferCleanPostersDesc, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = tmdbSettings.preferCleanPosters,
+                    onCheckedChange = { checked ->
+                        onTmdbSettingsChanged(tmdbSettings.copy(preferCleanPosters = checked))
+                    }
+                )
+            }
             if (connected) {
                 SettingsDropdownPickerRow(
                     title = strings.tmdbLanguage,

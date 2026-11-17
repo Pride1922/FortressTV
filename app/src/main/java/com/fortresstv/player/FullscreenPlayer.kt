@@ -432,6 +432,7 @@ internal fun FullscreenPlayer(
     var resizeModeNotice by remember { mutableStateOf<String?>(null) }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
     var currentTracks by remember { mutableStateOf<Tracks?>(player.currentTracks) }
+    var videoSize by remember(channel.streamUrl) { mutableStateOf(player.videoSize) }
     var channelSwitchNotice by remember { mutableStateOf<PlaylistChannel?>(null) }
 
     DisposableEffect(player) {
@@ -439,9 +440,14 @@ internal fun FullscreenPlayer(
             override fun onTracksChanged(tracks: Tracks) {
                 currentTracks = tracks
             }
+
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                videoSize = size
+            }
         }
         player.addListener(listener)
         currentTracks = player.currentTracks
+        videoSize = player.videoSize
         onDispose {
             player.removeListener(listener)
         }
@@ -1253,6 +1259,15 @@ internal fun FullscreenPlayer(
                                             }
                                         }
                                         Spacer(Modifier.width(6.dp))
+                                        val selectedVideoTrack = videoTracks.firstOrNull { it.isSelected }
+                                        val streamQuality = com.fortresstv.player.player.classifyStreamQuality(
+                                            width = videoSize.width.takeIf { it > 0 } ?: (selectedVideoTrack?.width ?: 0),
+                                            height = videoSize.height.takeIf { it > 0 } ?: (selectedVideoTrack?.height ?: 0)
+                                        )
+                                        if (streamQuality != null) {
+                                            StreamQualityBadge(quality = streamQuality)
+                                            Spacer(Modifier.width(6.dp))
+                                        }
                                         com.fortresstv.player.telemetry.ConnectionHealthBadge(
                                             snapshot = healthSnapshot,
                                             onClick = onOpenHealthDialog
@@ -1911,7 +1926,7 @@ internal fun FullscreenGuideDrawer(
     }
     val now = Instant.now()
     val shiftMillis = epgTimeShiftHours * 3_600_000L
-    val programmes = epgGuide?.findProgrammes(channel.tvgId, channel.name).orEmpty()
+    val programmes = epgGuide?.findProgrammes(channel.tvgId, channel.name, tvgName = channel.tvgName).orEmpty()
         .filter { programme -> (programme.stopEpochMilli ?: (programme.startEpochMilli + 3_600_000L)) + shiftMillis > now.toEpochMilli() }
         .sortedBy { it.startEpochMilli }
         .distinct()

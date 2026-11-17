@@ -478,31 +478,34 @@ class TmdbClient(
             }
         }
 
+        private val YEAR_EXTRACT_REGEX = Regex("(?:\\(|\\s|\\[)([12][0-9]{3})(?:\\)|\\s|\\]|$)")
+        private val TITLE_PATTERNS_TO_REMOVE = listOf(
+            Regex("(?i)^\\[?(?:pt-pt|pt-br|pt|en|es|fr|de|it|legendado|dublado|dual|multi|leg\\.?)[\\]:\\s-]+"),
+            Regex("(?i)\\[(?:pt-pt|pt-br|pt|en|es|fr|de|it|legendado|dublado|dual|multi|leg|sub|subbed)\\]"),
+            Regex("(?i)\\((?:pt-pt|pt-br|pt|en|es|fr|de|it|legendado|dublado|dual|multi|leg|sub|subbed)\\)"),
+            Regex("(?i)\\b(?:1080p|720p|4k|uhd|fhd|hd|sd|hevc|h264|h265|x264|x265|10bit|hdr|web-?dl|bluray|web-?rip|bdrip|dvdrip|aac|atmos)\\b"),
+            Regex("\\([12][0-9]{3}\\)"),
+            Regex("\\[[12][0-9]{3}\\]"),
+            Regex("\\[[^\\]]*\\]")
+        )
+        private val NON_WORD_TITLE_REGEX = Regex("[^\\p{L}0-9'\\s-]")
+        private val WHITESPACE_REGEX = Regex("\\s+")
+
         internal fun cleanMediaTitle(rawTitle: String): Pair<String, String?> {
             var title = rawTitle.trim()
 
             // 1. Extract year if present, e.g. "(2021)" or "[2021]" or " 2021"
-            val yearMatch = Regex("(?:\\(|\\s|\\[)([12][0-9]{3})(?:\\)|\\s|\\]|$)").find(title)
+            val yearMatch = YEAR_EXTRACT_REGEX.find(title)
             val extractedYear = yearMatch?.groupValues?.getOrNull(1)
 
             // 2. Remove language tags, country tags, quality tags, and common release suffixes
-            val patternsToRemove = listOf(
-                Regex("(?i)^\\[?(?:pt-pt|pt-br|pt|en|es|fr|de|it|legendado|dublado|dual|multi|leg\\.?)[\\]:\\s-]+"),
-                Regex("(?i)\\[(?:pt-pt|pt-br|pt|en|es|fr|de|it|legendado|dublado|dual|multi|leg|sub|subbed)\\]"),
-                Regex("(?i)\\((?:pt-pt|pt-br|pt|en|es|fr|de|it|legendado|dublado|dual|multi|leg|sub|subbed)\\)"),
-                Regex("(?i)\\b(?:1080p|720p|4k|uhd|fhd|hd|sd|hevc|h264|h265|x264|x265|10bit|hdr|web-?dl|bluray|web-?rip|bdrip|dvdrip|aac|atmos)\\b"),
-                Regex("\\([12][0-9]{3}\\)"),
-                Regex("\\[[12][0-9]{3}\\]"),
-                Regex("\\[[^\\]]*\\]")
-            )
-
-            for (pattern in patternsToRemove) {
+            for (pattern in TITLE_PATTERNS_TO_REMOVE) {
                 title = title.replace(pattern, " ")
             }
 
             // Remove non-word punctuation except apostrophe and hyphen, replace with space
-            title = title.replace(Regex("[^\\p{L}0-9'\\s-]"), " ")
-            title = title.replace(Regex("\\s+"), " ").trim()
+            title = title.replace(NON_WORD_TITLE_REGEX, " ")
+            title = title.replace(WHITESPACE_REGEX, " ").trim()
 
             return Pair(title, extractedYear)
         }

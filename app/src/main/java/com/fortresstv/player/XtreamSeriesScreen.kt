@@ -590,6 +590,7 @@ internal fun XtreamSeriesScreen(
                     if (hasOmdb) OmdbMetadataResolver.getCached(context, "series", series.name, series.year, series.imdbId)
                     else null
                 },
+                transformFiltered = ::deduplicateCatalogSeries,
                 unwrap = { it.series }
             )
         }
@@ -767,6 +768,7 @@ internal fun XtreamSeriesScreen(
                                     VodPosterCard(
                                         title = entry.series.name,
                                         posterUrl = entry.series.coverUrl,
+                                        isSeries = true,
                                         subtitle = formatVodMetadata(entry.series.year, rating),
                                         imdbRating = rating,
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
@@ -808,6 +810,7 @@ internal fun XtreamSeriesScreen(
             VodPosterCard(
                 title = entry.series.name,
                 posterUrl = entry.series.coverUrl,
+                isSeries = true,
                 subtitle = formatVodMetadata(entry.series.year, rating),
                 imdbRating = rating,
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,

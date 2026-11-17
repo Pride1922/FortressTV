@@ -76,6 +76,29 @@ class CloudSourceSyncService internal constructor(
                             adultAuthFailure = err
                         }
                     }
+                } else if (p.source is ContentSource.RemoteUrl) {
+                    val config = JSONObject().apply {
+                        put("url", p.source.value)
+                        put("role", p.role.name)
+                    }
+                    val validId = runCatching { UUID.fromString(p.id).toString() }.getOrNull()
+                        ?: UUID.nameUUIDFromBytes("source_${p.id}".toByteArray()).toString()
+                    val record = HouseholdSourceRecord(
+                        id = validId,
+                        sourceType = "remote_url",
+                        displayName = p.name,
+                        enabled = p.enabled,
+                        sourceOrder = p.order,
+                        config = config
+                    )
+                    runCatching {
+                        sourceApi.saveHouseholdSource(record, token, accountState.accessToken)
+                    }.onFailure { err ->
+                        android.util.Log.w("CloudSourceSync", "Failed to sync RemoteUrl source ${p.name} to cloud", err)
+                        if (err.message?.contains("Adult authorization required", ignoreCase = true) == true) {
+                            adultAuthFailure = err
+                        }
+                    }
                 }
             }
 
@@ -123,6 +146,7 @@ class CloudSourceSyncService internal constructor(
             val remoteSources = try {
                 sourceApi.getHouseholdSources(token, accountState.accessToken)
             } catch (e: Exception) {
+                android.util.Log.w("CloudSourceSync", "restoreSourcesFromCloud failed (token=${token != null})", e)
                 return@withLock Result.failure(e)
             }
 
@@ -158,6 +182,31 @@ class CloudSourceSyncService internal constructor(
                         currentLocalPlaylists.add(profile)
                     }
                     restoredPlaylists.add(profile)
+                } else if (src.sourceType == "remote_url") {
+                    val url = src.config.optString("url")
+                    if (url.isNotBlank()) {
+                        val contentSource = ContentSource.RemoteUrl(
+                            value = url,
+                            displayName = src.displayName
+                        )
+                        val profile = PlaylistProfile(
+                            id = src.id,
+                            name = src.displayName,
+                            source = contentSource,
+                            enabled = src.enabled,
+                            role = runCatching {
+                                com.fortresstv.player.playlist.SourceRole.valueOf(src.config.optString("role"))
+                            }.getOrDefault(com.fortresstv.player.playlist.SourceRole.AUTOMATIC),
+                            order = src.sourceOrder
+                        )
+                        val existingIndex = currentLocalPlaylists.indexOfFirst { it.id == src.id }
+                        if (existingIndex >= 0) {
+                            currentLocalPlaylists[existingIndex] = profile
+                        } else {
+                            currentLocalPlaylists.add(profile)
+                        }
+                        restoredPlaylists.add(profile)
+                    }
                 } else if (src.sourceType == "custom_epg") {
                     val url = src.config.optString("url")
                     if (url.isNotBlank()) {

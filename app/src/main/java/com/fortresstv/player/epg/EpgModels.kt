@@ -72,22 +72,27 @@ data class EpgGuide(
 
     override fun hashCode(): Int = System.identityHashCode(this)
 
-    fun resolveChannelId(tvgId: String?, name: String?, manualXmltvId: String? = null): String? {
+    fun resolveChannelId(
+        tvgId: String?,
+        name: String?,
+        manualXmltvId: String? = null,
+        tvgName: String? = null
+    ): String? {
         if (!manualXmltvId.isNullOrBlank()) {
             if (channels.containsKey(manualXmltvId) || programmes.containsKey(manualXmltvId)) {
                 return manualXmltvId
             }
         }
-        val cacheKey = "${tvgId.orEmpty()}\u0000${name.orEmpty()}"
+        val cacheKey = "${tvgId.orEmpty()}\u0000${name.orEmpty()}\u0000${tvgName.orEmpty()}"
         val cached = resolutionCache[cacheKey]
         if (cached != null) return cached.takeUnless { it == NO_CHANNEL_MATCH }
 
-        val resolved = resolveChannelIdUncached(tvgId, name)
+        val resolved = resolveChannelIdUncached(tvgId, name, tvgName)
         resolutionCache.putIfAbsent(cacheKey, resolved ?: NO_CHANNEL_MATCH)
         return resolved
     }
 
-    private fun resolveChannelIdUncached(tvgId: String?, name: String?): String? {
+    private fun resolveChannelIdUncached(tvgId: String?, name: String?, tvgName: String? = null): String? {
         val nameDigits = EpgMatcher.extractDigits(name)
 
         // 1. Try matching by channel name first (most specific, avoids provider TVG-ID collisions across numbered channels like DAZN 1/2/4)
@@ -97,7 +102,19 @@ data class EpgGuide(
             if (matchedByName != null) return matchedByName
         }
 
-        // 2. If tvgId is provided, check direct match or normalized match (ensuring digit consistency)
+        // 2. Fallback to tvgName if provided and distinct from name (ensuring digit consistency)
+        if (!tvgName.isNullOrBlank() && tvgName != name) {
+            val normTvgName = EpgMatcher.normalize(tvgName)
+            val matchedByTvgName = normalizedChannelMap[normTvgName]
+            if (matchedByTvgName != null) {
+                val matchedDigits = EpgMatcher.extractDigits(matchedByTvgName)
+                if (nameDigits.isEmpty() || matchedDigits == nameDigits) {
+                    return matchedByTvgName
+                }
+            }
+        }
+
+        // 3. If tvgId is provided, check direct match or normalized match (ensuring digit consistency)
         if (!tvgId.isNullOrBlank()) {
             if (channels.containsKey(tvgId) || programmes.containsKey(tvgId)) {
                 val tvgDigits = EpgMatcher.extractDigits(tvgId)
@@ -116,21 +133,65 @@ data class EpgGuide(
             }
         }
 
-        // 3. Fallback: if tvgId exists directly in guide and no digit conflict
+        // 4. Fallback: if tvgId exists directly in guide and no digit conflict
         if (!tvgId.isNullOrBlank() && (channels.containsKey(tvgId) || programmes.containsKey(tvgId))) {
             return tvgId
+        }
+
+        // 5. Alias fallback for common Portuguese channel rebrands/short names
+        if (!name.isNullOrBlank()) {
+            val normName = EpgMatcher.normalize(name)
+            for (alias in portugueseNormalizedAliases(normName)) {
+                val matched = normalizedChannelMap[alias]
+                if (matched != null && (nameDigits.isEmpty() || EpgMatcher.extractDigits(matched) == nameDigits)) {
+                    return matched
+                }
+            }
         }
 
         return null
     }
 
-    fun findChannel(tvgId: String?, name: String?, manualXmltvId: String? = null): EpgChannel? {
-        val id = resolveChannelId(tvgId, name, manualXmltvId) ?: return null
+    private fun portugueseNormalizedAliases(norm: String): List<String> {
+        if (norm.isBlank()) return emptyList()
+        val aliases = mutableListOf<String>()
+        if (norm.startsWith("starchannel")) aliases += "fox"
+        if (norm == "fox") aliases += "starchannel"
+        if (norm.startsWith("star")) aliases += "fox" + norm.removePrefix("star")
+        if (norm.startsWith("fox") && norm != "fox") aliases += "star" + norm.removePrefix("fox")
+        if (norm.startsWith("dazn")) {
+            val suffix = norm.removePrefix("dazn")
+            aliases += "elevensports$suffix"
+            aliases += "eleven$suffix"
+        }
+        if (norm.startsWith("elevensports")) aliases += "dazn" + norm.removePrefix("elevensports")
+        if (norm.startsWith("eleven") && !norm.startsWith("elevensports")) aliases += "dazn" + norm.removePrefix("eleven")
+        if (norm == "natgeo") aliases += "nationalgeographic"
+        if (norm == "nationalgeographic") aliases += "natgeo"
+        if (norm == "hollywood") aliases += "canalhollywood"
+        if (norm == "canalhollywood") aliases += "hollywood"
+        if (norm == "btv") aliases += "benficatv"
+        if (norm == "benficatv") aliases += "btv"
+        if (norm == "discovery") aliases += "discoverychannel"
+        if (norm == "discoverychannel") aliases += "discovery"
+        if (norm == "globo") {
+            aliases += "tvglobo"
+            aliases += "globoportugal"
+        }
+        if (norm == "tvglobo") aliases += "globo"
+        if (norm.endsWith("portugal") && norm.length > "portugal".length + 2) {
+            aliases += norm.removeSuffix("portugal")
+        }
+        return aliases
+    }
+
+    fun findChannel(tvgId: String?, name: String?, manualXmltvId: String? = null, tvgName: String? = null): EpgChannel? {
+        val id = resolveChannelId(tvgId, name, manualXmltvId, tvgName) ?: return null
         return channels[id]
     }
 
-    fun findProgrammes(tvgId: String?, name: String?, manualXmltvId: String? = null): List<EpgProgramme> {
-        val id = resolveChannelId(tvgId, name, manualXmltvId) ?: return emptyList()
+    fun findProgrammes(tvgId: String?, name: String?, manualXmltvId: String? = null, tvgName: String? = null): List<EpgProgramme> {
+        val id = resolveChannelId(tvgId, name, manualXmltvId, tvgName) ?: return emptyList()
         return programmes[id].orEmpty()
     }
 

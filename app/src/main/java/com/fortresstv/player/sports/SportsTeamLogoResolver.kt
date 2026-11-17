@@ -29,12 +29,17 @@ internal object SportsTeamLogoResolver {
     private const val BASE_URL = "https://www.thesportsdb.com/api/v1/json/123/searchteams.php?t="
     private const val LIGA_PORTUGAL_2_BADGE = "https://r2.thesportsdb.com/images/media/league/badge/pns32l1782689191.png"
     private const val PRIMEIRA_LIGA_BADGE = "https://r2.thesportsdb.com/images/media/league/badge/vuytsr1549891157.png"
+    private const val LIGA_ACB_BADGE = "https://r2.thesportsdb.com/images/media/league/badge/4n3h6z1572778356.png"
     private val ligaPortugal2Regex = Regex(
         """\b(?:liga\s*portugal\s*2|segunda\s*liga|2[ªa.]?\s*liga|ii\s*liga|liga\s*pro|meu\s*super|sabseg)\b""",
         RegexOption.IGNORE_CASE
     )
     private val primeiraLigaRegex = Regex(
         """\b(?:primeira\s*liga|liga\s*portugal(?:\s*betclic)?)\b""",
+        RegexOption.IGNORE_CASE
+    )
+    private val ligaAcbRegex = Regex(
+        """\b(?:liga\s*acb|liga\s*endesa|acb)\b""",
         RegexOption.IGNORE_CASE
     )
 
@@ -48,6 +53,7 @@ internal object SportsTeamLogoResolver {
         return when {
             ligaPortugal2Regex.containsMatchIn(trimmed) -> LIGA_PORTUGAL_2_BADGE
             primeiraLigaRegex.containsMatchIn(trimmed) -> PRIMEIRA_LIGA_BADGE
+            ligaAcbRegex.containsMatchIn(trimmed) -> LIGA_ACB_BADGE
             else -> null
         }
     }

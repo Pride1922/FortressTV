@@ -207,3 +207,24 @@ data class PlaybackVideoTrackItem(
     val trackIndex: Int
 )
 
+enum class StreamQualityTier(val label: String) {
+    UHD_4K("4K"),
+    QHD_2K("2K"),
+    FHD("FHD"),
+    HD("HD"),
+    SD("SD")
+}
+
+fun classifyStreamQuality(width: Int, height: Int): StreamQualityTier? {
+    if (width <= 0 && height <= 0) return null
+    val longSide = maxOf(width, height)
+    val shortSide = if (width > 0 && height > 0) minOf(width, height) else height
+    return when {
+        shortSide >= 2160 || longSide >= 3840 -> StreamQualityTier.UHD_4K
+        shortSide >= 1440 || longSide >= 2560 -> StreamQualityTier.QHD_2K
+        shortSide >= 1080 || longSide >= 1920 -> StreamQualityTier.FHD
+        shortSide >= 720 || longSide >= 1280 -> StreamQualityTier.HD
+        else -> StreamQualityTier.SD
+    }
+}
+

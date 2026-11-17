@@ -101,6 +101,10 @@ class SportsTeamLogoResolverTest {
             "https://r2.thesportsdb.com/images/media/league/badge/vuytsr1549891157.png",
             SportsTeamLogoResolver.competitionLogoFallback("Liga Portugal Betclic")
         )
+        assertEquals(
+            "https://r2.thesportsdb.com/images/media/league/badge/4n3h6z1572778356.png",
+            SportsTeamLogoResolver.competitionLogoFallback("Liga ACB")
+        )
         assertNull(SportsTeamLogoResolver.competitionLogoFallback("Unknown Cup"))
     }
 }

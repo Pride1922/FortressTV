@@ -87,4 +87,71 @@ class EpgMatcherTest {
         assertEquals("DAZN2.pt", guide.resolveChannelId(tvgId = null, name = "PT: DAZN 2 FHD"))
         assertEquals("DAZN4.pt", guide.resolveChannelId(tvgId = null, name = "PT: DAZN 4 FHD"))
     }
+
+    @Test
+    fun normalizesMultiSourcePortuguesePrefixesSuperscriptsAndSuffixes() {
+        assertEquals("rtp1", EpgMatcher.normalize("|PT| RTP 1"))
+        assertEquals("sporttv1", EpgMatcher.normalize("PT | FHD | Sport TV 1"))
+        assertEquals("rtp1", EpgMatcher.normalize("RTP 1 ᴴᴰ"))
+        assertEquals("sporttv1", EpgMatcher.normalize("Sport TV 1 ᶠᴴᴰ"))
+        assertEquals("rtp1", EpgMatcher.normalize("RTP 1 PT"))
+        assertEquals("cnnportugal", EpgMatcher.normalize("PT ◉ CNN Portugal"))
+    }
+
+    @Test
+    fun resolveChannelIdFallsBackToTvgNameAndCrossSourceManualMapping() {
+        val guide = EpgGuide(
+            channels = mapOf(
+                "RTP1.pt" to EpgChannel("RTP1.pt", "RTP 1"),
+                "SportTV1.pt" to EpgChannel("SportTV1.pt", "Sport TV 1"),
+                "SportTV2.pt" to EpgChannel("SportTV2.pt", "Sport TV 2")
+            ),
+            programmes = emptyMap()
+        )
+
+        // When display name is non-standard but tvgName matches
+        assertEquals(
+            "RTP1.pt",
+            guide.resolveChannelId(tvgId = null, name = "Canal Um", tvgName = "|PT| RTP 1 ᴴᴰ")
+        )
+
+        // Cross-source manual mapping reuse by normalized name + digits
+        val mappings = mapOf(
+            "src1:ch1" to EpgChannelMapping(
+                iptvSourceId = "src1",
+                iptvChannelId = "ch1",
+                epgSourceId = "pt-epg",
+                xmltvChannelId = "SportTV1.pt",
+                channelName = "PT: Sport TV 1 FHD"
+            )
+        )
+        assertEquals(
+            "SportTV1.pt",
+            mappings.resolveManualXmltvId("src2", "other-id", "|PT| Sport TV 1 ᴴᴰ")
+        )
+        assertNull(
+            mappings.resolveManualXmltvId("src2", "other-id-2", "|PT| Sport TV 2 ᴴᴰ")
+        )
+    }
+
+    @Test
+    fun resolvesPortugueseRebrandAndTrailingSeparatorAliases() {
+        val guide = EpgGuide(
+            channels = mapOf(
+                "FOX.pt" to EpgChannel("FOX.pt", "FOX"),
+                "FOXLife.pt" to EpgChannel("FOXLife.pt", "FOX Life"),
+                "Eleven1.pt" to EpgChannel("Eleven1.pt", "Eleven Sports 1"),
+                "TLC.pt" to EpgChannel("TLC.pt", "TLC"),
+                "RTP1.pt" to EpgChannel("RTP1.pt", "RTP 1")
+            ),
+            programmes = emptyMap()
+        )
+
+        assertEquals("FOX.pt", guide.resolveChannelId(null, "PT: Star Channel HD"))
+        assertEquals("FOXLife.pt", guide.resolveChannelId(null, "PT | Star Life FHD"))
+        assertEquals("Eleven1.pt", guide.resolveChannelId(null, "PT: DAZN 1 HD"))
+        assertEquals("TLC.pt", guide.resolveChannelId(null, "TLC Portugal"))
+        assertEquals("RTP1.pt", guide.resolveChannelId(null, "RTP 1 | PT"))
+        assertEquals("RTP1.pt", guide.resolveChannelId(null, "RTP 1 - PT"))
+    }
 }

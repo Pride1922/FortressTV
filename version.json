@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC2",
-    "versionCode":  75,
-    "notes":  "FortressTV 2.0.0-RC2: Fix OTA APK installer FileProvider authority mismatch, and fix skip intro/recap/credits resolution (ID validation, TMDB external ID lookup, movie support, and IntroDB.app fallback).",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC2/fortresstv.apk",
-    "sha256":  "1DA1F3F3E66288575104AC78BCF96B06F2933D0168D6D3842A888A66CD9B9F73"
+    "version":  "2.0.0-RC3",
+    "versionCode":  76,
+    "notes":  "FortressTV 2.0.0-RC3: Fix OMDb IMDb rating prefetch and cache refresh across Home, Films, Series, and Favorites, and add cached TheSportsDB team and Liga Portugal 2 badge fallback for EPG matches.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC3/fortresstv.apk",
+    "sha256":  "FC1DCB69B99376C415FF5338C90687F7C89A7F6ACD7E2706D4A9E5CAFFD12A42"
 }

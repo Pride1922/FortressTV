@@ -25,10 +25,11 @@ fun EpgGuide.snapshot(
     now: Instant = Instant.now(),
     correctionMinutes: Int = 0,
     manualXmltvId: String? = null,
-    timeShiftHours: Int? = null
+    timeShiftHours: Int? = null,
+    tvgName: String? = null
 ): ProgrammeSnapshot {
     val effectiveMinutes = if (timeShiftHours != null) timeShiftHours * 60 else correctionMinutes
-    val resolvedId = resolveChannelId(channelId, channelName, manualXmltvId) ?: return ProgrammeSnapshot(null, null)
+    val resolvedId = resolveChannelId(channelId, channelName, manualXmltvId, tvgName) ?: return ProgrammeSnapshot(null, null)
     val list = programmes[resolvedId]
     if (list.isNullOrEmpty()) return ProgrammeSnapshot(null, null)
     val targetNow = now.toEpochMilli() - (effectiveMinutes * 60_000L)

@@ -58,6 +58,7 @@ private val fixtureTeamMarker = Regex("""\b(?:(?:u|sub|under)[-\s]?\d{2}|women)\
 private val americanFootball = Regex("""\bNFL\b""")
 private val nationalChampionship = Regex("""\bCamp(?:eonato|\.)\s*Nac(?:ional\b|\.)""", RegexOption.IGNORE_CASE)
 private val nationsLeague = Regex("""^Liga das Na[cç][oõ]es\b""", RegexOption.IGNORE_CASE)
+private val basketballCompetition = Regex("""\b(?:liga\s*acb|liga\s*endesa|acb)\b""", RegexOption.IGNORE_CASE)
 
 /** Sport prefixes the guide uses, keyed by [EpgMatcher.normalize]. */
 private val knownSports: Map<String, SportsKind> = mapOf(
@@ -185,6 +186,10 @@ internal fun parseGuideAiring(programme: EpgProgramme, channel: EpgChannel): Gui
         hasTeams && americanFootball.containsMatchIn(competition) -> {
             sportLabel = "Futebol Americano"
             kind = SportsKind.OTHER
+        }
+        hasTeams && basketballCompetition.containsMatchIn(competition) -> {
+            sportLabel = "Basquetebol"
+            kind = SportsKind.BASKETBALL
         }
         // No prefix and "x": football. An unknown prefix on a match title is a competition, not a sport.
         hasTeams -> {

@@ -23,6 +23,15 @@ class MovieCatalogDeduplicationTest {
         assertEquals(entries, deduplicateCatalogMovies(entries))
     }
 
+    @Test
+    fun deduplicatesIntraSourceQualityAndLanguageVariants() {
+        val cat = XtreamCatalog("src1", "Source 1")
+        val pt4k = CatalogMovie(cat, XtreamMovie(1, "PT: Gladiator (2000) [4K]", null, "https://example.com/1", "mkv", null, "2000", null))
+        val enHd = CatalogMovie(cat, XtreamMovie(2, "EN | Gladiator (2000) 1080p", null, "https://example.com/2", "mkv", null, null, null))
+        val leg = CatalogMovie(cat, XtreamMovie(3, "Gladiator (2000) [LEGENDADO] HEVC", null, "https://example.com/3", "mkv", null, "2000", null))
+        assertEquals(listOf(pt4k), deduplicateCatalogMovies(listOf(pt4k, enHd, leg)))
+    }
+
     private fun entry(source: String, title: String, year: String?, tmdb: String? = null, imdb: String? = null) =
         CatalogMovie(
             XtreamCatalog(source, source),

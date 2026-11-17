@@ -211,6 +211,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -575,8 +576,8 @@ internal fun ProgrammeGuideScreen(
             channelResolutionReady = false
             resolvedChannelMap = withContext(Dispatchers.Default) {
                 playlist.channels.associateWith { channel ->
-                    val manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId
-                    guide.resolveChannelId(channel.tvgId, channel.name, manualXmltvId)
+                    val manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name)
+                    guide.resolveChannelId(channel.tvgId, channel.name, manualXmltvId, channel.tvgName)
                 }
             }
             channelResolutionReady = true
@@ -593,7 +594,7 @@ internal fun ProgrammeGuideScreen(
         channelsInGroup.mapNotNull { channel ->
             val resolvedId = resolvedChannelMap[channel] ?: return@mapNotNull null
             val progs = (dayProgrammesMap?.get(resolvedId))
-                ?: (if (dayProgrammesMap == null) epgGuide?.findProgrammes(channel.tvgId, channel.name, epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId).orEmpty() else emptyList())
+                ?: (if (dayProgrammesMap == null) epgGuide?.findProgrammes(channel.tvgId, channel.name, epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name), channel.tvgName).orEmpty() else emptyList())
             if (progs.isEmpty()) return@mapNotNull null
 
             val blocks = blocksByEpgChannel.getOrPut(resolvedId) {

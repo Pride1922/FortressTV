@@ -930,11 +930,33 @@ internal fun FortressTVApp(
         onPartialGuideLoaded = { epgGuide = it }
     )
 
+    fun triggerCloudSourceSync(explicitToken: String? = null) {
+        val uid = currentUserId ?: AccountRepository.get(context).currentUserId()
+        if (uid != null) {
+            scope.launch(Dispatchers.IO) {
+                val token = explicitToken ?: profileRepository.currentUnlockToken()
+                val res = CloudSourceSyncService.get(context).syncSourcesToCloud(token)
+                val err = res.exceptionOrNull()
+                if (err?.message?.contains("Adult authorization required", ignoreCase = true) == true) {
+                    withContext(Dispatchers.Main) {
+                        pendingAdultTokenAction = { unlockedToken ->
+                            triggerCloudSourceSync(unlockedToken)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun loadPlaylistProfile(
         profile: PlaylistProfile,
         forceRefresh: Boolean = false,
         startupScope: CoroutineScope? = null
     ): Job {
+        if (startupScope == null) {
+            settings.savePlaylistProfile(profile)
+            playlists = settings.getPlaylists()
+        }
         loading = true
         error = null
         retryLoad = null
@@ -1125,6 +1147,57 @@ internal fun FortressTVApp(
     var startupEpgRestoring by remember { mutableStateOf(false) }
     var automaticEpgJob by remember { mutableStateOf<Job?>(null) }
 
+    fun restoreAndSyncCloudSources(explicitToken: String? = null, promptIfPinRequired: Boolean = false) {
+        val uid = currentUserId ?: AccountRepository.get(context).currentUserId()
+        if (uid != null) {
+            scope.launch(Dispatchers.IO) {
+                val cloudSourceService = CloudSourceSyncService.get(context)
+                val token = explicitToken ?: profileRepository.currentUnlockToken()
+                val restoredResult = cloudSourceService.restoreSourcesFromCloud(token)
+                val restored = restoredResult.getOrDefault(emptyList())
+                android.util.Log.i(
+                    "CloudSourceSync",
+                    "restoreAndSyncCloudSources: success=${restoredResult.isSuccess}, restored=${restored.size}, err=${restoredResult.exceptionOrNull()?.message}"
+                )
+                if (restored.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        playlists = settings.getPlaylists()
+                        restored.filter { it.enabled }.forEach { p ->
+                            if (p.source is ContentSource.Xtream) loadXtreamProfile(p)
+                            else if (p.source is ContentSource.RemoteUrl) loadPlaylistProfile(p)
+                        }
+                    }
+                }
+                if (restoredResult.isSuccess) {
+                    val localSyncableCount = settings.getPlaylists().count {
+                        it.source is ContentSource.Xtream || it.source is ContentSource.RemoteUrl
+                    }
+                    android.util.Log.i("CloudSourceSync", "restoreAndSyncCloudSources: localSyncable=$localSyncableCount, restored=${restored.size}")
+                    if (localSyncableCount > restored.size) {
+                        val syncRes = cloudSourceService.syncSourcesToCloud(token)
+                        if (promptIfPinRequired &&
+                            syncRes.exceptionOrNull()?.message?.contains("Adult authorization required", ignoreCase = true) == true
+                        ) {
+                            withContext(Dispatchers.Main) {
+                                pendingAdultTokenAction = { unlockedToken ->
+                                    restoreAndSyncCloudSources(unlockedToken, promptIfPinRequired = false)
+                                }
+                            }
+                        }
+                    }
+                } else if (promptIfPinRequired &&
+                    restoredResult.exceptionOrNull()?.message?.contains("Adult authorization required", ignoreCase = true) == true
+                ) {
+                    withContext(Dispatchers.Main) {
+                        pendingAdultTokenAction = { unlockedToken ->
+                            restoreAndSyncCloudSources(unlockedToken, promptIfPinRequired = false)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun loadEpg(
         source: ContentSource,
         save: Boolean,
@@ -1154,19 +1227,26 @@ internal fun FortressTVApp(
                 )
                 if (refreshIfDue && !fetchRemote) return@withLock
 
+                var didFetchRemote = source is ContentSource.RemoteUrl && fetchRemote
                 runCatching {
-                    if (source is ContentSource.RemoteUrl && fetchRemote) {
+                    if (source is ContentSource.RemoteUrl && didFetchRemote) {
                         epgSyncWorkflow.refreshRemoteGuide(source, epgLoadedDays, epgSourceTimezone)
                     } else {
                         val stream = if (source is ContentSource.LocalFile) SourceReader.open(context, source)
                         else SourceReader.openCached(context, "epg")
-                        parseEpgWithCache(source, stream, allowCachedResult = !forceRefresh)
+                        val cachedGuide = parseEpgWithCache(source, stream, allowCachedResult = !forceRefresh)
+                        if (source is ContentSource.RemoteUrl && cachedGuide.programmes.isEmpty()) {
+                            didFetchRemote = true
+                            epgSyncWorkflow.refreshRemoteGuide(source, epgLoadedDays, epgSourceTimezone)
+                        } else {
+                            cachedGuide
+                        }
                     }
                 }.onSuccess { guide ->
                     withContext(Dispatchers.Main) {
                         if (background && epgSource != source) return@withContext
-                        if (fetchRemote) epgRepository.setGuide(guide)
-                        if (fetchRemote || (source is ContentSource.LocalFile && (forceRefresh || save))) {
+                        if (didFetchRemote) epgRepository.setGuide(guide)
+                        if (didFetchRemote || (source is ContentSource.LocalFile && (forceRefresh || save))) {
                             val now = System.currentTimeMillis()
                             settings.setLastEpgUpdate(now)
                             epgLastUpdate = now
@@ -1186,6 +1266,7 @@ internal fun FortressTVApp(
                     }
                 }.onFailure { err ->
                     if (err is CancellationException) throw err
+                    android.util.Log.w("FortressTV.EPG", "loadEpg failed (fetchRemote=$didFetchRemote, background=$background)", err)
                     if (!background) withContext(Dispatchers.Main) {
                         error = if (err is com.fortresstv.player.epg.EmptyEpgDownloadException) strings.noEpgData
                         else err.message ?: strings.noEpgData
@@ -1461,9 +1542,18 @@ internal fun FortressTVApp(
                 if (restored.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
                         playlists = settings.getPlaylists()
-                        restored.filter { it.enabled && it.source is ContentSource.Xtream }.forEach { p ->
-                            loadXtreamProfile(p)
+                        restored.filter { it.enabled }.forEach { p ->
+                            if (p.source is ContentSource.Xtream) loadXtreamProfile(p)
+                            else if (p.source is ContentSource.RemoteUrl) loadPlaylistProfile(p)
                         }
+                    }
+                }
+                if (restoredResult.isSuccess) {
+                    val localSyncableCount = settings.getPlaylists().count {
+                        it.source is ContentSource.Xtream || it.source is ContentSource.RemoteUrl
+                    }
+                    if (localSyncableCount > restored.size) {
+                        cloudSourceService.syncSourcesToCloud(profileRepository.currentUnlockToken())
                     }
                 }
                 val restoredEpg = settings.epgSource()
@@ -1625,6 +1715,7 @@ internal fun FortressTVApp(
                         onProfileSelected = {
                             requireProfileSelection = false
                             playbackResetGeneration++
+                            restoreAndSyncCloudSources()
                         },
                         onDismiss = {}
                     )
@@ -1925,6 +2016,9 @@ internal fun FortressTVApp(
         }
 
         if (showSettings) {
+            LaunchedEffect(showSettings) {
+                restoreAndSyncCloudSources(promptIfPinRequired = true)
+            }
             SettingsDialog(
                 initialTab = settingsInitialTab,
                 onAccountSignedOut = {
@@ -2098,32 +2192,32 @@ internal fun FortressTVApp(
                     }
                 },
                 onPlaylistEnabledChanged = { profile, enabled ->
-                    if (enabled || playlists.count { it.enabled } > 1) {
-                        val updated = profile.copy(enabled = enabled)
-                        settings.savePlaylistProfile(updated)
-                        val all = settings.getPlaylists()
-                        playlists = all
-                        if (enabled) {
-                            if (updated.source is ContentSource.Xtream) loadXtreamProfile(updated)
-                            else loadPlaylistProfile(updated)
-                        } else {
-                            xtreamLoadJobs.remove(updated.id)?.cancel()
-                            loadedPlaylists.remove(updated.id)
-                            xtreamCatalogs.remove(updated.id)
-                            activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                    val updated = profile.copy(enabled = enabled)
+                    settings.savePlaylistProfile(updated)
+                    val all = settings.getPlaylists()
+                    playlists = all
+                    if (enabled) {
+                        if (updated.source is ContentSource.Xtream) loadXtreamProfile(updated)
+                        else loadPlaylistProfile(updated)
+                    } else {
+                        xtreamLoadJobs.remove(updated.id)?.cancel()
+                        playlistRetryJobs.remove(updated.id)?.cancel()
+                        loadedPlaylists.remove(updated.id)
+                        xtreamCatalogs.remove(updated.id)
+                        activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                        if (all.none { it.enabled }) {
+                            loading = false
+                            error = null
                         }
                     }
+                    triggerCloudSourceSync()
                 },
                 onSourceRoleChanged = { profile, role ->
                     val updated = profile.copy(role = role)
                     settings.savePlaylistProfile(updated)
                     val all = settings.getPlaylists()
                     playlists = all
-                    if (updated.source is ContentSource.Xtream && currentUserId != null) {
-                        scope.launch {
-                            cloudSourceSyncService.syncSourcesToCloud(profileRepository.currentUnlockToken())
-                        }
-                    }
+                    triggerCloudSourceSync()
                     if (updated.source is ContentSource.Xtream && (loadedPlaylists[updated.id] == null || updated.role.contributesLiveTv())) {
                         loadXtreamProfile(updated)
                     } else {
@@ -2142,6 +2236,7 @@ internal fun FortressTVApp(
                         val all = settings.getPlaylists()
                         playlists = all
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
+                        triggerCloudSourceSync()
                     }
                 },
                 onRefreshPlaylist = { profile ->
@@ -2371,6 +2466,7 @@ internal fun FortressTVApp(
                         order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                     )
                     loadPlaylistProfile(profile, forceRefresh = true)
+                    triggerCloudSourceSync()
                 },
                 onAddXtream = { name, server, username, password ->
                     showAddPlaylistDialog = false
@@ -2384,12 +2480,7 @@ internal fun FortressTVApp(
                         order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                     )
                     loadXtreamProfile(profile, forceRefresh = true)
-                    val accountState = AccountRepository.get(context).getAccountState()
-                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
-                        scope.launch(Dispatchers.IO) {
-                            CloudSourceSyncService.get(context).syncSourcesToCloud(profileRepository.currentUnlockToken())
-                        }
-                    }
+                    triggerCloudSourceSync()
                 },
                 onPickFile = {
                     showAddPlaylistDialog = false
@@ -2434,6 +2525,7 @@ internal fun FortressTVApp(
                                 order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                             )
                             loadPlaylistProfile(profile, forceRefresh = true)
+                            triggerCloudSourceSync()
                         }
                         TransferKind.XTREAM -> {
                             val profile = PlaylistProfile(
@@ -2448,12 +2540,7 @@ internal fun FortressTVApp(
                                 order = (playlists.maxOfOrNull { it.order } ?: -1) + 1
                             )
                             loadXtreamProfile(profile, forceRefresh = true)
-                    val accountState = AccountRepository.get(context).getAccountState()
-                    if (accountState is com.fortresstv.player.account.AccountState.AuthenticatedOnline) {
-                        scope.launch(Dispatchers.IO) {
-                            CloudSourceSyncService.get(context).syncSourcesToCloud(profileRepository.currentUnlockToken())
-                        }
-                    }
+                            triggerCloudSourceSync()
                         }
                     }
                     payload.epgUrl?.takeIf { it.isNotBlank() }?.let { transferredEpgUrl ->
@@ -2497,6 +2584,7 @@ internal fun FortressTVApp(
                     } else {
                         activeProfile = all.filter { it.enabled }.minByOrNull { it.order }
                     }
+                    triggerCloudSourceSync()
                 }
             )
         }
@@ -2595,10 +2683,11 @@ internal fun FortressTVApp(
         if (pinPromptAction != null) {
             ParentalPinDialog(
                 mode = HouseholdPinDialogMode.VERIFY,
-                onSuccess = { _ ->
+                onSuccess = { unlockToken ->
                     val action = pinPromptAction
                     pinPromptAction = null
                     action?.invoke()
+                    restoreAndSyncCloudSources(unlockToken)
                 },
                 onDismiss = {
                     pinPromptAction = null

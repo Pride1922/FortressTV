@@ -5,7 +5,8 @@ import androidx.compose.runtime.compositionLocalOf
 data class TmdbSettings(
     val enabled: Boolean = false,
     val apiKey: String = "",
-    val language: String = TmdbLanguages.AUTO
+    val language: String = TmdbLanguages.AUTO,
+    val preferCleanPosters: Boolean = true
 )
 
 val LocalTmdbSettings = compositionLocalOf { TmdbSettings() }

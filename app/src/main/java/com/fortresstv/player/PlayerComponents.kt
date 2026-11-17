@@ -489,6 +489,8 @@ internal fun PlayerPanel(
 
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var videoSize by remember(activeChannel.streamUrl) { mutableStateOf(player.videoSize) }
+    var currentTracks by remember(activeChannel.streamUrl) { mutableStateOf<Tracks?>(player.currentTracks) }
     var isFreezeReconnecting by remember { mutableStateOf(false) }
     var consecutiveStallRecoveries by remember(channel.streamUrl) { mutableIntStateOf(0) }
     var manualFullscreen by rememberSaveable { mutableStateOf(autoEnterFullscreen) }
@@ -568,6 +570,14 @@ internal fun PlayerPanel(
                 if (state == Player.STATE_BUFFERING) {
                     isFreezeReconnecting = false
                 }
+            }
+
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                videoSize = size
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                currentTracks = tracks
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -946,8 +956,20 @@ internal fun PlayerPanel(
         }
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            val inlineVideoTrack = remember(currentTracks) {
+                com.fortresstv.player.player.TrackLanguageMatcher.extractVideoTracks(currentTracks).firstOrNull { it.isSelected }
+            }
+            val streamQuality = remember(videoSize, inlineVideoTrack) {
+                val w = videoSize.width.takeIf { it > 0 } ?: (inlineVideoTrack?.width ?: 0)
+                val h = videoSize.height.takeIf { it > 0 } ?: (inlineVideoTrack?.height ?: 0)
+                com.fortresstv.player.player.classifyStreamQuality(w, h)
+            }
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(activeChannel.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (streamQuality != null) {
+                    Spacer(Modifier.width(8.dp))
+                    StreamQualityBadge(quality = streamQuality)
+                }
                 Spacer(Modifier.width(10.dp))
                 com.fortresstv.player.telemetry.ConnectionHealthBadge(
                     snapshot = currentHealth,
@@ -1516,6 +1538,34 @@ internal fun Modifier.tvFullscreenControl(
             .onFocusChanged { if (it.isFocused) onFocused?.invoke() }
             .tvFocusHighlight(shape = shape, scaleOnFocus = scaleOnFocus)
     )
+}
+
+@Composable
+internal fun StreamQualityBadge(
+    quality: com.fortresstv.player.player.StreamQualityTier,
+    modifier: Modifier = Modifier
+) {
+    val accent = when (quality) {
+        com.fortresstv.player.player.StreamQualityTier.UHD_4K -> Color(0xFFFBBF24)
+        com.fortresstv.player.player.StreamQualityTier.QHD_2K -> Color(0xFFA855F7)
+        com.fortresstv.player.player.StreamQualityTier.FHD -> Color(0xFF38BDF8)
+        com.fortresstv.player.player.StreamQualityTier.HD -> Color(0xFF34D399)
+        com.fortresstv.player.player.StreamQualityTier.SD -> Color(0xFF94A3B8)
+    }
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = accent.copy(alpha = 0.2f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.7f)),
+        modifier = modifier
+    ) {
+        Text(
+            text = quality.label,
+            color = accent,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
 }
 
 

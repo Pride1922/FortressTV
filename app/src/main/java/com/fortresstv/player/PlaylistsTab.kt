@@ -522,7 +522,6 @@ internal fun PlaylistsTab(
                                     Switch(
                                         checked = item.enabled,
                                         onCheckedChange = { onPlaylistEnabledChanged(item, it) },
-                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
                                         colors = SwitchDefaults.colors(
                                             checkedThumbColor = Color.White,
                                             checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -588,7 +587,6 @@ internal fun PlaylistsTab(
                                         }
                                         IconButton(
                                             onClick = { onDeletePlaylist(item) },
-                                            enabled = !loading,
                                             modifier = Modifier.size(30.dp)
                                         ) {
                                             Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
@@ -666,7 +664,6 @@ internal fun PlaylistsTab(
                                     Switch(
                                         checked = item.enabled,
                                         onCheckedChange = { onPlaylistEnabledChanged(item, it) },
-                                        enabled = !loading && (!item.enabled || playlists.count { it.enabled } > 1),
                                         colors = SwitchDefaults.colors(
                                             checkedThumbColor = Color.White,
                                             checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -710,7 +707,6 @@ internal fun PlaylistsTab(
                                     }
                                     IconButton(
                                         onClick = { onDeletePlaylist(item) },
-                                        enabled = !loading,
                                         modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(15.dp))

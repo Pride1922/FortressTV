@@ -211,6 +211,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -564,7 +565,7 @@ internal fun FavoriteLibraryScreen(
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
                                 epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
-                                manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
+                                manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name),
                                 selected = false,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                 modifier = if (index == 0) Modifier.focusRequester(contentFocusRequester) else Modifier,
@@ -626,6 +627,7 @@ internal fun FavoriteLibraryScreen(
                             VodPosterCard(
                                 title = entry.series.name,
                                 posterUrl = entry.series.coverUrl,
+                                isSeries = true,
                                 subtitle = formatVodMetadata(entry.series.year, rating),
                                 imdbRating = rating,
                                 rottenTomatoes = cachedOmdb?.rottenTomatoes,

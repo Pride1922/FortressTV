@@ -211,6 +211,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import java.time.LocalTime
 import com.fortresstv.player.epg.EpgChannelMapping
+import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -696,7 +697,7 @@ internal fun ChannelBrowser(
     var unmatchedChannels by remember(allVisibleChannels, epgGuide) {
         mutableStateOf<List<PlaylistChannel>>(emptyList())
     }
-    LaunchedEffect(allVisibleChannels, epgGuide) {
+    LaunchedEffect(allVisibleChannels, epgGuide, epgMappings) {
         if (epgGuide == null) {
             matchedCount = 0
             unmatchedChannels = allVisibleChannels
@@ -705,7 +706,8 @@ internal fun ChannelBrowser(
                 var matches = 0
                 val unmatched = ArrayList<PlaylistChannel>()
                 allVisibleChannels.forEach { channel ->
-                    if (epgGuide.resolveChannelId(channel.tvgId, channel.name) != null) {
+                    val manual = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name)
+                    if (epgGuide.resolveChannelId(channel.tvgId, channel.name, manual, channel.tvgName) != null) {
                         matches++
                     } else {
                         unmatched += channel
@@ -1316,7 +1318,7 @@ internal fun ChannelBrowser(
                                     scheduleNow = scheduleNow,
                                     epgTimeShiftHours = epgTimeShiftHours,
                                     epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
-                                    manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
+                                    manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name),
                                     selected = selectedChannel == channel,
                                     isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                     onToggleFavorite = { onToggleFavorite(channel) },
@@ -1356,7 +1358,7 @@ internal fun ChannelBrowser(
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
                                 epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
-                                manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
+                                manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name),
                                 selected = selectedChannel == channel,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                 onToggleFavorite = { onToggleFavorite(channel) },
@@ -1400,7 +1402,7 @@ internal fun ChannelBrowser(
                                 scheduleNow = scheduleNow,
                                 epgTimeShiftHours = epgTimeShiftHours,
                                 epgScheduleCorrectionMinutes = epgScheduleCorrectionMinutes,
-                                manualXmltvId = epgMappings["${channel.sourceId}:${channel.sourceItemId}"]?.xmltvChannelId,
+                                manualXmltvId = epgMappings.resolveManualXmltvId(channel.sourceId, channel.sourceItemId, channel.name),
                                 selected = isSelected,
                                 isFavorite = channel.libraryId()?.let(favoriteChannelIds::contains) == true,
                                 modifier = (if (shouldAttachEffectiveFocus) Modifier.focusRequester(effectiveChannelFocusRequester) else Modifier)
@@ -1605,8 +1607,15 @@ internal fun GuideChannelRow(
         ?: channel.tvgId?.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
         ?: healthSnapshots[channel.name]
     val strings = LocalAppStrings.current
-    val presentation = remember(channel.tvgId, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId, strings) {
-        val current = epgGuide?.snapshot(channel.tvgId, channel.name, scheduleNow, correctionMinutes = epgScheduleCorrectionMinutes, manualXmltvId = manualXmltvId)?.current
+    val presentation = remember(channel.tvgId, channel.tvgName, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId, strings) {
+        val current = epgGuide?.snapshot(
+            channel.tvgId,
+            channel.name,
+            scheduleNow,
+            correctionMinutes = epgScheduleCorrectionMinutes,
+            manualXmltvId = manualXmltvId,
+            tvgName = channel.tvgName
+        )?.current
         val shiftMillis = epgScheduleCorrectionMinutes * 60_000L
         val adjustedStart = current?.startEpochMilli?.plus(shiftMillis)
         val adjustedStop = current?.stopEpochMilli?.plus(shiftMillis)

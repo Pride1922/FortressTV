@@ -10,9 +10,32 @@ data class EpgChannelMapping(
     val iptvChannelId: String,
     val epgSourceId: String?,
     val xmltvChannelId: String,
-    val isAvailable: Boolean = true
+    val isAvailable: Boolean = true,
+    val channelName: String? = null
 ) {
     fun compositeKey(): String = "${iptvSourceId}:${iptvChannelId}"
+}
+
+/**
+ * Resolves a manual XMLTV channel ID for a channel, falling back to any existing mapping
+ * from another source that shares the same normalized channel name and channel digits.
+ */
+fun Map<String, EpgChannelMapping>.resolveManualXmltvId(
+    sourceId: String,
+    sourceItemId: String,
+    channelName: String?
+): String? {
+    this["$sourceId:$sourceItemId"]?.xmltvChannelId?.let { return it }
+    if (isEmpty() || channelName.isNullOrBlank()) return null
+    val normName = EpgMatcher.normalize(channelName)
+    if (normName.isBlank()) return null
+    val digits = EpgMatcher.extractDigits(channelName)
+    return values.firstOrNull { mapping ->
+        val mappedName = mapping.channelName
+        !mappedName.isNullOrBlank() &&
+            EpgMatcher.normalize(mappedName) == normName &&
+            EpgMatcher.extractDigits(mappedName) == digits
+    }?.xmltvChannelId
 }
 
 class EpgMappingStore(
@@ -38,7 +61,8 @@ class EpgMappingStore(
                     iptvChannelId = obj.getString("iptv_channel_id"),
                     epgSourceId = obj.optString("epg_source_id").takeIf(String::isNotBlank),
                     xmltvChannelId = obj.getString("xmltv_channel_id"),
-                    isAvailable = obj.optBoolean("is_available", true)
+                    isAvailable = obj.optBoolean("is_available", true),
+                    channelName = obj.optString("channel_name").takeIf(String::isNotBlank)
                 )
                 result[mapping.compositeKey()] = mapping
             }
@@ -86,6 +110,9 @@ class EpgMappingStore(
                 put("epg_source_id", m.epgSourceId.orEmpty())
                 put("xmltv_channel_id", m.xmltvChannelId)
                 put("is_available", m.isAvailable)
+                if (!m.channelName.isNullOrBlank()) {
+                    put("channel_name", m.channelName)
+                }
             }
             array.put(obj)
         }
