@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC3",
-    "versionCode":  76,
-    "notes":  "FortressTV 2.0.0-RC3: Fix OMDb IMDb rating prefetch and cache refresh across Home, Films, Series, and Favorites, and add cached TheSportsDB team and Liga Portugal 2 badge fallback for EPG matches.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC3/fortresstv.apk",
-    "sha256":  "FC1DCB69B99376C415FF5338C90687F7C89A7F6ACD7E2706D4A9E5CAFFD12A42"
+    "version":  "2.0.0-RC4",
+    "versionCode":  77,
+    "notes":  "FortressTV 2.0.0-RC4: Fix ICU regex crash on large VOD catalogs, allow disabling/deleting any source, support M3U URL \u0026 PIN-aware cloud source sync, improve multi-list Portuguese EPG matching \u0026 unmatched source filter, add 4K/2K/FHD/HD/SD stream quality badges to Live \u0026 VOD players, replace foreign provider posters via TMDB/Cinemeta, and deduplicate intra-source movie/series variants.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC4/fortresstv.apk",
+    "sha256":  "248017B0ED95C44D5AC6999A71E1420E70513346177E544D50568E932B24E81F"
 }
