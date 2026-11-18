@@ -1,5 +1,14 @@
 # FortressTV performance roadmap
 
+## RC5 account-isolation startup cleanup (2026-11-18)
+
+The first launch runs a one-time cleanup of network source settings and parsed
+playlist, Xtream and EPG caches on `Dispatchers.IO`, before startup warmup or sync.
+Later launches only check the persisted completion flag. No provider catalogues
+are parsed by the cleanup. Physical-device startup macrobenchmarks and before/after
+timings have not been collected for this emergency fix; no performance improvement
+is claimed.
+
 Performance is a core product requirement. Changes to channel browsing, XMLTV parsing,
 programme-guide rendering, logos, or playback should be tested on the target tablet with
 a real multi-day EPG before release.

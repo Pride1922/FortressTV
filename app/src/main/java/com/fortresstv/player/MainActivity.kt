@@ -611,13 +611,38 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            var cleanupReady by remember { mutableStateOf(false) }
+            var cleanupFailed by remember { mutableStateOf(false) }
+            var cleanupAttempt by remember { mutableIntStateOf(0) }
+            LaunchedEffect(cleanupAttempt) {
+                cleanupFailed = false
+                cleanupReady = withContext(Dispatchers.IO) {
+                    runCatching {
+                        com.fortresstv.player.source.SourceIsolationCleanup.run(appContext)
+                    }.isSuccess
+                }
+                cleanupFailed = !cleanupReady
+            }
             FortressTVTheme {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .semantics { testTagsAsResourceId = true }
                 ) {
-                    FortressTVStartup(
+                    if (!cleanupReady) {
+                        val portuguese = java.util.Locale.getDefault().language == "pt"
+                        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (cleanupFailed) {
+                                Text(if (portuguese) "Não foi possível limpar a cache das listas." else "Could not clear playlist cache.")
+                                Button(onClick = { cleanupAttempt++ }) {
+                                    Text(if (portuguese) "Tentar novamente" else "Retry")
+                                }
+                            } else {
+                                CircularProgressIndicator()
+                                Text(if (portuguese) "A preparar as suas listas…" else "Preparing your playlists…")
+                            }
+                        }
+                    } else FortressTVStartup(
                         transferDeepLink = transferDeepLink,
                         onTransferDeepLinkConsumed = { transferDeepLink = null },
                         foregroundGeneration = foregroundGeneration,

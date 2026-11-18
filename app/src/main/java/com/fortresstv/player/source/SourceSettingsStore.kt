@@ -33,6 +33,17 @@ class SourceSettingsStore internal constructor(
 ) {
     constructor(context: Context) : this(context.getSharedPreferences("fortress_sources", Context.MODE_PRIVATE))
 
+    fun needsSourceIsolationCleanup(): Boolean =
+        !preferences.getBoolean("source_account_isolation_cleanup_v1", false)
+
+    /** Called before startup reads sources; never clears account or library preferences. */
+    fun clearNetworkSourcesForAccountIsolation() = synchronized(preferences) {
+        if (!needsSourceIsolationCleanup()) return@synchronized
+        replacePlaylists(getPlaylists().filter { it.source is ContentSource.LocalFile })
+        if (epgSource() is ContentSource.RemoteUrl) clearEpg()
+        check(preferences.edit().putBoolean("source_account_isolation_cleanup_v1", true).commit())
+    }
+
     fun getPlaylists(): List<PlaylistProfile> {
         val raw = preferences.getString("playlist_profiles_json", null)?.let(::decrypt)
         if (raw.isNullOrBlank()) {

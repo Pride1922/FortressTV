@@ -41,14 +41,12 @@ class CloudSourceSyncService internal constructor(
     suspend fun syncSourcesToCloud(unlockToken: String?): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             val accountState = accountRepository.resolveAccountState()
-            android.util.Log.i("CloudSourceSync", "syncSourcesToCloud: accountState is ${accountState::class.simpleName}, token=$unlockToken")
             if (accountState !is AccountState.AuthenticatedOnline) {
                 return@withLock Result.failure(IllegalStateException("Not authenticated online (${accountState::class.simpleName})"))
             }
             val token = unlockToken ?: profileRepository.currentUnlockToken()
 
             val playlists = settingsStore.getPlaylists()
-            android.util.Log.i("CloudSourceSync", "Syncing ${playlists.size} playlists to cloud with token=$token")
             var adultAuthFailure: Throwable? = null
             for (p in playlists) {
                 if (p.source is ContentSource.Xtream) {

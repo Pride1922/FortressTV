@@ -19,7 +19,10 @@ Migration `202611060007_household_sources.sql` added AES-256 encrypted source ba
 Migration `202611060008_client_sync_versioning.sql` and `202611060009_clock_skew_and_versioning.sql`
 added server-managed sequence numbers and monotonic clock resolution for durable synchronization.
 Migration `202611060010_categories_preferences_history.sql` added categories customization and history sync.
-Migration `202611060011_shared_sources.sql` added cross-household source sharing.
+Migration `202611060011_shared_sources.sql` introduced unsafe cross-household source access.
+Corrective migration `202611180001_restore_source_account_isolation.sql` restores ownership
+checks for source reads, writes, deletes and parent links. Apply this corrective migration
+to every existing deployment; source connections must never be shared between accounts.
 Migration `202611060012_opensubtitles_and_extended_preferences.sql` added encrypted OpenSubtitles credential storage and subtitle preferences.
 Migration `202611060013_epg_mappings_and_correction.sql` added custom EPG mappings synchronization.
 Migration `202611060014_opensubtitles_auth_fix.sql` eliminated PIN barriers on profile session acquisition and OpenSubtitles sync so auto-resumed profiles sync favorites, watchlist, and subtitle accounts seamlessly. Alternatively, `CONSOLIDATED_SETUP.sql` contains the complete cumulative schema for fresh deployments.
