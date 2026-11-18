@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC4",
-    "versionCode":  77,
-    "notes":  "FortressTV 2.0.0-RC4: Fix ICU regex crash on large VOD catalogs, allow disabling/deleting any source, support M3U URL \u0026 PIN-aware cloud source sync, improve multi-list Portuguese EPG matching \u0026 unmatched source filter, add 4K/2K/FHD/HD/SD stream quality badges to Live \u0026 VOD players, replace foreign provider posters via TMDB/Cinemeta, and deduplicate intra-source movie/series variants.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC4/fortresstv.apk",
-    "sha256":  "248017B0ED95C44D5AC6999A71E1420E70513346177E544D50568E932B24E81F"
+  "version": "2.0.0-RC5",
+  "versionCode": 78,
+  "notes": "Security fix: restore strict account ownership for cloud playlists and EPG sources. First launch performs a one-time cleanup of saved network playlists and source caches before restoring only the signed-in account's sources. Favorites, watch progress, login details and local-file playlists are preserved. Network playlists not backed up to the account must be added again. Correcao de seguranca: isolamento das listas e fontes EPG por conta. Na primeira abertura, limpeza unica das listas de rede e da cache antes de restaurar apenas as fontes da conta com sessao iniciada. Favoritos, progresso, sessao e listas de ficheiros locais sao preservados. As listas de rede sem copia na conta devem ser adicionadas novamente.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC5/fortresstv.apk",
+  "sha256": "F50E89BDB809EE0740751936404ED29A2D121CFEBA9E706EC4C6425D0140D371"
 }
