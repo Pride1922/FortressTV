@@ -49,6 +49,12 @@ const SOCCER_LEAGUES = [
     logo: "https://r2.thesportsdb.com/images/media/league/badge/vuytsr1549891157.png"
   },
   {
+    slug: "por.taca.portugal",
+    name: "Taça de Portugal",
+    defaultBroadcaster: "Sport TV 1",
+    logo: null
+  },
+  {
     slug: "eng.1",
     name: "Premier League",
     defaultBroadcaster: "DAZN 1",

@@ -87,6 +87,10 @@ private val clubAffixes = setOf("sl", "fc", "sc", "cf", "cp", "cd", "ud", "gd", 
 private val teamAliases = mapOf(
     "atlmadrid" to "atleticomadrid",
     "atleticodemadrid" to "atleticomadrid",
+    "celtadevigo" to "celtavigo",
+    "napoles" to "napoli",
+    "vitoriadeguimaraes" to "vitoriasc",
+    "vitoriaguimaraes" to "vitoriasc",
     "repirlanda" to "irlanda",
     "republicadairlanda" to "irlanda"
 )

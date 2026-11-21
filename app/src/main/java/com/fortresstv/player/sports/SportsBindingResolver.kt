@@ -309,8 +309,8 @@ object SportsBindingResolver {
                 val stopMs = prog.stopEpochMilli ?: (prog.startEpochMilli + 90 * 60 * 1000L)
                 if (stopMs < windowStartMs || prog.startEpochMilli > windowEndMs) continue
 
-                val titleLower = prog.title.lowercase(Locale.ROOT)
-                val descLower = prog.description?.lowercase(Locale.ROOT).orEmpty()
+                val titleLower = stripAccents(prog.title).lowercase(Locale.ROOT)
+                val descLower = stripAccents(prog.description.orEmpty()).lowercase(Locale.ROOT)
 
                 val isCommentaryProgramme = COMMENTARY_PROGRAMME_REGEX.containsMatchIn(titleLower) ||
                     NON_LIVE_KEYWORDS.any { titleLower.contains(it) }
@@ -368,14 +368,19 @@ object SportsBindingResolver {
         return if (bestScore >= 100) bestChannel else null
     }
 
+    private fun stripAccents(value: String): String =
+        java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+
     fun extractTeamKeywords(teamName: String): List<String> {
-        val cleaned = teamName.replace(TEAM_PREFIXES, " ").trim()
+        val ascii = stripAccents(teamName)
+        val cleaned = ascii.replace(TEAM_PREFIXES, " ").trim()
         val tokens = cleaned.split(Regex("[^a-zA-Z0-9]+"))
             .map { it.lowercase(Locale.ROOT).trim() }
             .filter { it.length >= 3 }
 
         return tokens.ifEmpty {
-            listOf(teamName.lowercase(Locale.ROOT).trim())
+            listOf(ascii.lowercase(Locale.ROOT).trim())
         }
     }
 }

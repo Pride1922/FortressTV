@@ -83,6 +83,7 @@ internal object SportsFilterCatalog {
 
     val supportedCompetitions: List<Pair<SportsKind, String>> = listOf(
         SportsKind.FOOTBALL to "Primeira Liga",
+        SportsKind.FOOTBALL to "Taça de Portugal",
         SportsKind.FOOTBALL to "Premier League",
         SportsKind.FOOTBALL to "La Liga",
         SportsKind.FOOTBALL to "Serie A",

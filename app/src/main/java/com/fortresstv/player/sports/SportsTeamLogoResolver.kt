@@ -42,6 +42,15 @@ internal object SportsTeamLogoResolver {
         """\b(?:liga\s*acb|liga\s*endesa|acb)\b""",
         RegexOption.IGNORE_CASE
     )
+    private val searchAliases = mapOf(
+        "napoles" to "Napoli",
+        "celta de vigo" to "Celta Vigo",
+        "vitoria sc" to "Vitória de Guimarães",
+        "vitoria de guimaraes" to "Vitória de Guimarães",
+        "vitoria guimaraes" to "Vitória de Guimarães",
+        "v guimaraes" to "Vitória de Guimarães",
+        "sc braga" to "Braga"
+    )
 
     private val memoryCache = ConcurrentHashMap<String, String>()
     private val inFlightMutex = Mutex()
@@ -85,13 +94,17 @@ internal object SportsTeamLogoResolver {
                     return@withContext cached.takeIf { it.isNotBlank() }
                 }
 
-                val resolved = networkSemaphore.withPermit {
+                val result = networkSemaphore.withPermit {
                     lookupTeamBadge(teamName, sport)
                 }
-                val storedValue = resolved ?: NEGATIVE_SENTINEL
-                memoryCache[key] = storedValue
-                writePrefEntry(prefs, key, storedValue, System.currentTimeMillis())
-                resolved
+                if (result.resolvedUrl != null) {
+                    memoryCache[key] = result.resolvedUrl
+                    writePrefEntry(prefs, key, result.resolvedUrl, System.currentTimeMillis())
+                } else if (result.authoritativeMiss) {
+                    memoryCache[key] = NEGATIVE_SENTINEL
+                    writePrefEntry(prefs, key, NEGATIVE_SENTINEL, System.currentTimeMillis())
+                }
+                result.resolvedUrl
             }
         }
     }
@@ -109,6 +122,7 @@ internal object SportsTeamLogoResolver {
         val trimmed = teamName.trim()
         if (trimmed.isBlank()) return emptyList()
         val candidates = LinkedHashSet<String>()
+        searchAliases[normalizeForMatch(trimmed)]?.let { candidates.add(it) }
         candidates.add(trimmed)
         val stripped = stripClubAffixes(trimmed)
         if (stripped.isNotBlank() && stripped != trimmed) {
@@ -175,14 +189,22 @@ internal object SportsTeamLogoResolver {
         return bestUrl
     }
 
-    private fun lookupTeamBadge(teamName: String, sport: SportsKind?): String? {
+    private data class LookupResult(
+        val resolvedUrl: String?,
+        val authoritativeMiss: Boolean
+    )
+
+    private fun lookupTeamBadge(teamName: String, sport: SportsKind?): LookupResult {
+        var gotHttpOk = false
         for (candidate in buildSearchCandidates(teamName)) {
             val encoded = URLEncoder.encode(candidate, "UTF-8")
             val json = fetchJson("$BASE_URL$encoded") ?: continue
-            val badge = parseBestBadgeFromJson(json, teamName, sport)
-            if (!badge.isNullOrBlank()) return badge
+            gotHttpOk = true
+            val badge = parseBestBadgeFromJson(json, candidate, sport)
+                ?: parseBestBadgeFromJson(json, teamName, sport)
+            if (!badge.isNullOrBlank()) return LookupResult(badge, authoritativeMiss = false)
         }
-        return null
+        return LookupResult(null, authoritativeMiss = gotHttpOk)
     }
 
     private fun fetchJson(urlString: String): String? {

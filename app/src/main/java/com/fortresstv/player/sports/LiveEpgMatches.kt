@@ -27,7 +27,10 @@ private val portugueseCountryNames by lazy {
         "england" to "inglaterra",
         "scotland" to "escocia",
         "wales" to "paisdegales",
-        "northernireland" to "irlandadonorte"
+        "northernireland" to "irlandadonorte",
+        "napoli" to "napoles",
+        "vitoriadeguimaraes" to "vitoriasc",
+        "vitoriaguimaraes" to "vitoriasc"
     )
 }
 
