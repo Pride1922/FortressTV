@@ -1,7 +1,7 @@
 {
-  "version": "2.0.0-RC5",
-  "versionCode": 78,
-  "notes": "Security fix: restore strict account ownership for cloud playlists and EPG sources. First launch performs a one-time cleanup of saved network playlists and source caches before restoring only the signed-in account's sources. Favorites, watch progress, login details and local-file playlists are preserved. Network playlists not backed up to the account must be added again. Correcao de seguranca: isolamento das listas e fontes EPG por conta. Na primeira abertura, limpeza unica das listas de rede e da cache antes de restaurar apenas as fontes da conta com sessao iniciada. Favoritos, progresso, sessao e listas de ficheiros locais sao preservados. As listas de rede sem copia na conta devem ser adicionadas novamente.",
-  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC5/fortresstv.apk",
-  "sha256": "F50E89BDB809EE0740751936404ED29A2D121CFEBA9E706EC4C6425D0140D371"
+    "version":  "2.0.0-RC6",
+    "versionCode":  79,
+    "notes":  "Fix missing Portuguese EPG channel matching and 4K digit extraction; allow reinstalling the latest release from Check for Updates.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC6/fortresstv.apk",
+    "sha256":  "FD11FE3E231B771DA4838F3102C945BD32F44D9CEDA278C857414A597C747662"
 }
