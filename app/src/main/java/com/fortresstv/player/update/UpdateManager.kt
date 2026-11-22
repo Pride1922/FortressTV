@@ -40,17 +40,22 @@ object UpdateManager {
 
     suspend fun checkForUpdates(
         currentVersionCode: Int = BuildConfig.VERSION_CODE,
-        endpointUrl: String = updateEndpointUrl
+        endpointUrl: String = updateEndpointUrl,
+        allowSameVersion: Boolean = false
     ): AppUpdateInfo? = withContext(Dispatchers.IO) {
-        val primary = queryEndpoint(endpointUrl, currentVersionCode)
+        val primary = queryEndpoint(endpointUrl, currentVersionCode, allowSameVersion)
         if (primary != null) return@withContext primary
         if (endpointUrl == updateEndpointUrl && fallbackEndpointUrl.isNotBlank() && fallbackEndpointUrl != endpointUrl) {
-            return@withContext queryEndpoint(fallbackEndpointUrl, currentVersionCode)
+            return@withContext queryEndpoint(fallbackEndpointUrl, currentVersionCode, allowSameVersion)
         }
         null
     }
 
-    private fun queryEndpoint(endpointUrl: String, currentVersionCode: Int): AppUpdateInfo? {
+    private fun queryEndpoint(
+        endpointUrl: String,
+        currentVersionCode: Int,
+        allowSameVersion: Boolean = false
+    ): AppUpdateInfo? {
         return runCatching {
             val url = URL(endpointUrl)
             require(url.protocol.equals("https", true)) { "Update checks require HTTPS." }
@@ -77,47 +82,60 @@ object UpdateManager {
             if (connection.responseCode != 200) return@runCatching null
 
             val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(jsonText)
+            parseUpdateInfo(jsonText, currentVersionCode, allowSameVersion)
+        }.getOrNull()
+    }
 
-            val tagName = json.optString("version", json.optString("tag_name", "")).removePrefix("v").removePrefix("V").trim()
-            val targetVersionCode = json.optInt("versionCode", -1)
-            val releaseNotes = json.optString("notes", json.optString("body", "")).trim()
-            val htmlUrl = json.optString("html_url", "")
-            val sha256 = json.optString("sha256", json.optString("apkSha256", "")).trim().lowercase()
+    internal fun parseUpdateInfo(
+        jsonText: String,
+        currentVersionCode: Int,
+        allowSameVersion: Boolean = false
+    ): AppUpdateInfo? = runCatching {
+        val json = JSONObject(jsonText)
 
-            if (tagName.isBlank() || targetVersionCode <= currentVersionCode) {
-                return@runCatching null
-            }
+        val tagName = json.optString("version", json.optString("tag_name", "")).removePrefix("v").removePrefix("V").trim()
+        val targetVersionCode = json.optInt("versionCode", -1)
+        val releaseNotes = json.optString("notes", json.optString("body", "")).trim()
+        val htmlUrl = json.optString("html_url", "")
+        val sha256 = json.optString("sha256", json.optString("apkSha256", "")).trim().lowercase()
 
-            var downloadUrl = json.optString("downloadUrl", json.optString("apkUrl", "")).trim()
-            if (downloadUrl.isBlank()) {
-                val assets = json.optJSONArray("assets")
-                if (assets != null) {
-                    for (i in 0 until assets.length()) {
-                        val asset = assets.getJSONObject(i)
-                        val assetName = asset.optString("name", "")
-                        if (assetName.endsWith(".apk", ignoreCase = true)) {
-                            downloadUrl = asset.optString("browser_download_url", "")
-                            if (assetName.contains("release", ignoreCase = true)) break
-                        }
+        val hasEligibleVersion = if (allowSameVersion) {
+            targetVersionCode >= currentVersionCode
+        } else {
+            targetVersionCode > currentVersionCode
+        }
+        if (tagName.isBlank() || !hasEligibleVersion) {
+            return@runCatching null
+        }
+
+        var downloadUrl = json.optString("downloadUrl", json.optString("apkUrl", "")).trim()
+        if (downloadUrl.isBlank()) {
+            val assets = json.optJSONArray("assets")
+            if (assets != null) {
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    val assetName = asset.optString("name", "")
+                    if (assetName.endsWith(".apk", ignoreCase = true)) {
+                        downloadUrl = asset.optString("browser_download_url", "")
+                        if (assetName.contains("release", ignoreCase = true)) break
                     }
                 }
             }
+        }
 
-            if (downloadUrl.isBlank()) {
-                downloadUrl = htmlUrl
-            }
+        if (downloadUrl.isBlank()) {
+            downloadUrl = htmlUrl
+        }
 
-            AppUpdateInfo(
-                versionName = tagName,
-                versionCode = targetVersionCode,
-                releaseNotes = releaseNotes,
-                downloadUrl = downloadUrl,
-                sha256 = sha256,
-                htmlUrl = htmlUrl
-            )
-        }.getOrNull()
-    }
+        AppUpdateInfo(
+            versionName = tagName,
+            versionCode = targetVersionCode,
+            releaseNotes = releaseNotes,
+            downloadUrl = downloadUrl,
+            sha256 = sha256,
+            htmlUrl = htmlUrl
+        )
+    }.getOrNull()
 
     fun isNewerVersion(current: String, target: String): Boolean {
         val currentParts = current.split("-", "_")[0].split(".").mapNotNull { it.toIntOrNull() }
@@ -137,6 +155,7 @@ object UpdateManager {
         context: Context,
         downloadUrl: String,
         expectedSha256: String,
+        allowSameVersion: Boolean = false,
         onProgress: (Float) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val updateDir = context.cacheDir.resolve("updates").apply { mkdirs() }
@@ -206,7 +225,7 @@ object UpdateManager {
                 apkFile.delete()
                 "The update checksum does not match. The file was deleted."
             }
-            verifyDownloadedApk(context, apkFile)
+            verifyDownloadedApk(context, apkFile, allowSameVersion)
 
             withContext(Dispatchers.Main) {
                 installApk(context, apkFile)
@@ -215,7 +234,11 @@ object UpdateManager {
     }
 
     @Suppress("DEPRECATION")
-    private fun verifyDownloadedApk(context: Context, apkFile: File) {
+    private fun verifyDownloadedApk(
+        context: Context,
+        apkFile: File,
+        allowSameVersion: Boolean = false
+    ) {
         val packageManager = context.packageManager
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             // Some Android 9 TV package managers leave SigningInfo empty for archive APKs.
@@ -234,7 +257,12 @@ object UpdateManager {
             "The update belongs to a different application. The file was deleted."
         }
         val installedInfo = packageManager.getPackageInfo(context.packageName, flags)
-        require(versionCode(archiveInfo) > versionCode(installedInfo)) {
+        val versionAllowed = if (allowSameVersion) {
+            versionCode(archiveInfo) >= versionCode(installedInfo)
+        } else {
+            versionCode(archiveInfo) > versionCode(installedInfo)
+        }
+        require(versionAllowed) {
             apkFile.delete()
             "The downloaded APK is not newer than the installed version."
         }
@@ -324,13 +352,13 @@ object UpdateManager {
         }
     }
 
-    fun retryPendingInstall(context: Context): Result<Unit> = runCatching {
+    fun retryPendingInstall(context: Context, allowSameVersion: Boolean = false): Result<Unit> = runCatching {
         val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
         val pendingPath = preferences.getString(PENDING_APK_PATH, null)
             ?: error("The downloaded update is no longer available. Please download it again.")
         val apkFile = File(pendingPath)
         require(apkFile.exists()) { "The downloaded update is no longer available. Please download it again." }
-        verifyDownloadedApk(context, apkFile)
+        verifyDownloadedApk(context, apkFile, allowSameVersion)
         installApk(context, apkFile)
     }.onFailure {
         if (it !is SecurityException) {
@@ -338,13 +366,13 @@ object UpdateManager {
         }
     }
 
-    fun hasPendingInstall(context: Context): Boolean {
+    fun hasPendingInstall(context: Context, allowSameVersion: Boolean = false): Boolean {
         val preferences = context.getSharedPreferences(INSTALL_STATE, Context.MODE_PRIVATE)
         val pendingPath = preferences.getString(PENDING_APK_PATH, null) ?: return false
         val apkFile = File(pendingPath)
         return runCatching {
             require(apkFile.exists())
-            verifyDownloadedApk(context, apkFile)
+            verifyDownloadedApk(context, apkFile, allowSameVersion)
             true
         }.getOrElse {
             clearPendingInstall(context)

@@ -76,6 +76,10 @@ object EpgMatcher {
 
     fun extractDigits(text: String?): String {
         if (text.isNullOrBlank()) return ""
-        return digitPattern.findAll(text).joinToString("") { it.value }
+        val withoutQuality = qualityTagPattern.replace(
+            superscriptQualityPattern.replace(text, " "),
+            " "
+        )
+        return digitPattern.findAll(withoutQuality).joinToString("") { it.value }
     }
 }

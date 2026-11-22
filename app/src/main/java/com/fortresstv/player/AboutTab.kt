@@ -410,11 +410,16 @@ internal fun AboutTab() {
         upToDateNotice = false
         updateError = null
         scope.launch {
-            val info = UpdateManager.checkForUpdates(BuildConfig.VERSION_CODE)
+            val info = UpdateManager.checkForUpdates(
+                currentVersionCode = BuildConfig.VERSION_CODE,
+                allowSameVersion = true
+            )
             checkingUpdate = false
             if (info != null) {
+                val isSameVersion = info.versionCode == BuildConfig.VERSION_CODE
                 updateInfo = info
-                if (withContext(Dispatchers.IO) { UpdateManager.hasPendingInstall(context) }) {
+                upToDateNotice = isSameVersion
+                if (withContext(Dispatchers.IO) { UpdateManager.hasPendingInstall(context, allowSameVersion = isSameVersion) }) {
                     downloadProgress = 1f
                     updateDownloaded = true
                 }
@@ -429,7 +434,12 @@ internal fun AboutTab() {
         updateDownloaded = false
         updateError = null
         scope.launch {
-            val result = UpdateManager.downloadAndInstall(context, info.downloadUrl, info.sha256) { progress ->
+            val result = UpdateManager.downloadAndInstall(
+                context = context,
+                downloadUrl = info.downloadUrl,
+                expectedSha256 = info.sha256,
+                allowSameVersion = info.versionCode == BuildConfig.VERSION_CODE
+            ) { progress ->
                 downloadProgress = progress
             }
             if (result.isFailure) {
@@ -533,6 +543,7 @@ internal fun AboutTab() {
                 }
 
                 updateInfo?.let { info ->
+                    val isSameVersion = info.versionCode == BuildConfig.VERSION_CODE
                     Spacer(Modifier.height(8.dp))
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -545,7 +556,11 @@ internal fun AboutTab() {
                                 Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    strings.updateAvailableDesc("v${info.versionName}"),
+                                    if (isSameVersion) {
+                                        strings.reinstallVersionDesc("v${info.versionName}")
+                                    } else {
+                                        strings.updateAvailableDesc("v${info.versionName}")
+                                    },
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.primary
@@ -565,7 +580,10 @@ internal fun AboutTab() {
                             if (updateDownloaded) {
                                 Button(
                                     onClick = {
-                                        val result = UpdateManager.retryPendingInstall(context)
+                                        val result = UpdateManager.retryPendingInstall(
+                                            context = context,
+                                            allowSameVersion = isSameVersion
+                                        )
                                         if (result.isFailure) {
                                             updateDownloaded = false
                                             downloadProgress = -1f
@@ -616,7 +634,7 @@ internal fun AboutTab() {
                                 ) {
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text(strings.updateNow, fontSize = 11.sp)
+                                    Text(if (isSameVersion) strings.reinstallNow else strings.updateNow, fontSize = 11.sp)
                                 }
                             }
                         }

@@ -154,4 +154,42 @@ class EpgMatcherTest {
         assertEquals("RTP1.pt", guide.resolveChannelId(null, "RTP 1 | PT"))
         assertEquals("RTP1.pt", guide.resolveChannelId(null, "RTP 1 - PT"))
     }
+
+    @Test
+    fun resolvesAdditionalPortugueseProviderAliases() {
+        val guide = EpgGuide(
+            channels = mapOf(
+                "elevensports1.pt" to EpgChannel("elevensports1.pt", "DAZN 1"),
+                "elevensports2.pt" to EpgChannel("elevensports2.pt", "DAZN 2"),
+                "elevensports3.pt" to EpgChannel("elevensports3.pt", "DAZN 3"),
+                "elevensports4.pt" to EpgChannel("elevensports4.pt", "DAZN 4"),
+                "ID" to EpgChannel("ID", "Investigation Discovery"),
+                "localvisaotv.pt" to EpgChannel("localvisaotv.pt", "Localvisão TV"),
+                "nationalgeographicwild.pt" to EpgChannel("nationalgeographicwild.pt", "National Geographic Wild"),
+                "recordtv.pt" to EpgChannel("recordtv.pt", "Record TV"),
+                "sick.pt" to EpgChannel("sick.pt", "SIC K"),
+                "StingrayiConcerts.ca" to EpgChannel("StingrayiConcerts.ca", "Stingray iConcerts"),
+                "tpainternational.pt" to EpgChannel("tpainternational.pt", "TPA Notícias"),
+                "toros.pt" to EpgChannel("toros.pt", "OneToro TV"),
+                "GloboNews.br" to EpgChannel("GloboNews.br", "Globo News"),
+                "NBATV" to EpgChannel("NBATV", "NBA TV")
+            ),
+            programmes = emptyMap()
+        )
+
+        assertEquals("elevensports1.pt", guide.resolveChannelId(null, "PT: ELEVEN SPORT 1 4K"))
+        assertEquals("elevensports2.pt", guide.resolveChannelId(null, "PT: ELEVEN SPORT 2 4K"))
+        assertEquals("elevensports3.pt", guide.resolveChannelId(null, "PT: ELEVEN SPORT 3 4K"))
+        assertEquals("elevensports4.pt", guide.resolveChannelId(null, "PT: ELEVEN SPORT 4 4K"))
+        assertEquals("ID", guide.resolveChannelId(null, "PT: ID INVESTIGATION DISCOVERY FHD"))
+        assertEquals("localvisaotv.pt", guide.resolveChannelId(null, "PT: LOCALVISAO HD"))
+        assertEquals("nationalgeographicwild.pt", guide.resolveChannelId(null, "PT: NAT GEO WILD FHD"))
+        assertEquals("recordtv.pt", guide.resolveChannelId(null, "PT: TV RECORD FHD"))
+        assertEquals("sick.pt", guide.resolveChannelId(null, "PT: SIC KIDS FHD"))
+        assertEquals("StingrayiConcerts.ca", guide.resolveChannelId(null, "PT: ICONCERTS FHD"))
+        assertEquals("tpainternational.pt", guide.resolveChannelId(null, "PT: TPA"))
+        assertEquals("toros.pt", guide.resolveChannelId(null, "PT: TOROS TV"))
+        assertEquals("GloboNews.br", guide.resolveChannelId(null, "PT: TV GLOBO NEWS"))
+        assertEquals("NBATV", guide.resolveChannelId(null, "PT: NBA FHD"))
+    }
 }

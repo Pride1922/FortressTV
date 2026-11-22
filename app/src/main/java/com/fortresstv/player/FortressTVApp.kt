@@ -1126,6 +1126,7 @@ internal fun FortressTVApp(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
+                android.util.Log.w("XtreamClient", "loadXtreamProfile failed for ${profile.name}", failure)
                 withContext(Dispatchers.Main) {
                     // The cached catalogue stays usable; the next start or a manual refresh tries again.
                     if (showingCachedCatalog) return@withContext
@@ -1747,6 +1748,22 @@ internal fun FortressTVApp(
                             settingsInitialTab = 1
                             showSettings = true
                         }
+                    },
+                    savedPlaylists = playlists.sortedBy { it.order },
+                    onSelectPlaylist = { selected ->
+                        val enabledProfile = if (selected.enabled) selected else selected.copy(enabled = true)
+                        if (!selected.enabled) {
+                            settings.savePlaylistProfile(enabledProfile)
+                            playlists = settings.getPlaylists()
+                        }
+                        error = null
+                        activeProfile = enabledProfile
+                        if (enabledProfile.source is ContentSource.Xtream) {
+                            loadXtreamProfile(enabledProfile, forceRefresh = true)
+                        } else {
+                            loadPlaylistProfile(enabledProfile, forceRefresh = true)
+                        }
+                        if (!selected.enabled) triggerCloudSourceSync()
                     }
                 )
             } else key(playbackResetGeneration) {

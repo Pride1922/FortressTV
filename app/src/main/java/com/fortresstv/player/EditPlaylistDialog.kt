@@ -612,6 +612,27 @@ internal fun EditPlaylistDialog(
                         Text(strings.cancel)
                     }
                     Spacer(Modifier.width(8.dp))
+                    if (initialSource is ContentSource.Xtream && connectionError != null && pendingHttpServerUrl == null && canSave) {
+                        OutlinedButton(
+                            onClick = {
+                                hideKeyboard()
+                                onConfirm(
+                                    name.trim(),
+                                    ContentSource.Xtream(
+                                        value = XtreamClient.normalizeServerUrl(serverUrl.trim()),
+                                        displayName = name.trim(),
+                                        username = username.trim(),
+                                        password = password
+                                    ),
+                                    role
+                                )
+                            },
+                            enabled = !isConnecting
+                        ) {
+                            Text(if (strings.languageTag == "pt-PT") "Guardar" else "Save anyway")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
                     Button(
                         onClick = {
                             hideKeyboard()
@@ -671,6 +692,7 @@ internal fun EditPlaylistDialog(
                                             )
                                         }
                                     }.onFailure { failure ->
+                                        android.util.Log.w("EditPlaylistDialog", "Xtream connection check failed", failure)
                                         connectionError = xtreamConnectionErrorMessage(failure, strings)
                                     }
                                 }

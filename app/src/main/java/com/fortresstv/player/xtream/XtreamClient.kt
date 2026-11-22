@@ -324,13 +324,20 @@ class XtreamClient(
         parameters.putAll(extra)
         val query = parameters.entries.joinToString("&") { "${query(it.key)}=${query(it.value)}" }
 
-        fun executeConnection(targetBaseUrl: String): T {
+        fun executeConnection(
+            targetBaseUrl: String,
+            userAgent: String = "FortressTV",
+            closeConnection: Boolean = false
+        ): T {
             val connection = URI("$targetBaseUrl/player_api.php?$query").toURL().openConnection() as HttpURLConnection
             connection.connectTimeout = 15_000
             connection.readTimeout = 45_000
             connection.instanceFollowRedirects = true
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "FortressTV")
+            connection.setRequestProperty("User-Agent", userAgent)
+            if (closeConnection) {
+                connection.setRequestProperty("Connection", "close")
+            }
             return try {
                 val code = connection.responseCode
                 if (code !in 200..299) throw HttpStatusException(code)
@@ -350,6 +357,27 @@ class XtreamClient(
                 val httpUrl = baseUrl.replaceFirst("https://", "http://", ignoreCase = true)
                 baseUrl = httpUrl
                 executeConnection(httpUrl)
+            } else {
+                throw e
+            }
+        } catch (e: java.io.IOException) {
+            val isEmptyDrop = e is java.io.EOFException ||
+                e is java.net.SocketException ||
+                e.cause is java.io.EOFException ||
+                e.cause is java.net.SocketException ||
+                e.message?.contains("unexpected end of stream", ignoreCase = true) == true
+            if (isEmptyDrop) {
+                try {
+                    executeConnection(baseUrl, userAgent = "IPTVSmartersPro", closeConnection = true)
+                } catch (retryErr: java.io.IOException) {
+                    if (baseUrl.startsWith("https://", ignoreCase = true)) {
+                        val httpUrl = baseUrl.replaceFirst("https://", "http://", ignoreCase = true)
+                        baseUrl = httpUrl
+                        executeConnection(httpUrl, userAgent = "IPTVSmartersPro", closeConnection = true)
+                    } else {
+                        throw retryErr
+                    }
+                }
             } else {
                 throw e
             }

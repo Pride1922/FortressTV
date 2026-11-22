@@ -390,7 +390,9 @@ internal fun WelcomeScreen(
     onRetry: (() -> Unit)?,
     onAddSource: () -> Unit,
     onEditPlaylist: (() -> Unit)? = null,
-    onOpenSettings: (() -> Unit)? = null
+    onOpenSettings: (() -> Unit)? = null,
+    savedPlaylists: List<PlaylistProfile> = emptyList(),
+    onSelectPlaylist: ((PlaylistProfile) -> Unit)? = null
 ) {
     val strings = LocalAppStrings.current
     val context = LocalContext.current
@@ -531,6 +533,45 @@ internal fun WelcomeScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text(strings.editPlaylist)
                             }
+                        }
+                        if (onOpenSettings != null) {
+                            OutlinedButton(
+                                onClick = onOpenSettings,
+                                enabled = !loading,
+                                modifier = Modifier.tvFocusHighlight(
+                                    scaleOnFocus = if (isTv) 1.05f else 1.0f
+                                )
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(strings.sources)
+                            }
+                        }
+                    }
+                }
+                if (savedPlaylists.isNotEmpty() && onSelectPlaylist != null && !loading) {
+                    Spacer(Modifier.height(16.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) {
+                        items(savedPlaylists, key = { it.id }) { profile ->
+                            FilterChip(
+                                selected = profile.enabled,
+                                onClick = { onSelectPlaylist(profile) },
+                                label = { Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingIcon = {
+                                    Icon(
+                                        when (profile.source) {
+                                            is ContentSource.LocalFile -> Icons.Default.FolderOpen
+                                            is ContentSource.RemoteUrl -> Icons.Default.Link
+                                            is ContentSource.Xtream -> Icons.Default.LiveTv
+                                        },
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
                         }
                     }
                 }

@@ -162,23 +162,17 @@ data class EpgGuide(
         if (norm.startsWith("dazn")) {
             val suffix = norm.removePrefix("dazn")
             aliases += "elevensports$suffix"
+            aliases += "elevensport$suffix"
             aliases += "eleven$suffix"
         }
         if (norm.startsWith("elevensports")) aliases += "dazn" + norm.removePrefix("elevensports")
-        if (norm.startsWith("eleven") && !norm.startsWith("elevensports")) aliases += "dazn" + norm.removePrefix("eleven")
-        if (norm == "natgeo") aliases += "nationalgeographic"
-        if (norm == "nationalgeographic") aliases += "natgeo"
-        if (norm == "hollywood") aliases += "canalhollywood"
-        if (norm == "canalhollywood") aliases += "hollywood"
-        if (norm == "btv") aliases += "benficatv"
-        if (norm == "benficatv") aliases += "btv"
-        if (norm == "discovery") aliases += "discoverychannel"
-        if (norm == "discoverychannel") aliases += "discovery"
-        if (norm == "globo") {
-            aliases += "tvglobo"
-            aliases += "globoportugal"
+        if (norm.startsWith("elevensport") && !norm.startsWith("elevensports")) {
+            val suffix = norm.removePrefix("elevensport")
+            aliases += "elevensports$suffix"
+            aliases += "dazn$suffix"
         }
-        if (norm == "tvglobo") aliases += "globo"
+        if (norm.startsWith("eleven") && !norm.startsWith("elevensport")) aliases += "dazn" + norm.removePrefix("eleven")
+        EXACT_PORTUGUESE_ALIASES[norm]?.let { aliases += it }
         if (norm.endsWith("portugal") && norm.length > "portugal".length + 2) {
             aliases += norm.removeSuffix("portugal")
         }
@@ -197,6 +191,31 @@ data class EpgGuide(
 
     private companion object {
         const val NO_CHANNEL_MATCH = "\u0000"
+
+        val EXACT_PORTUGUESE_ALIASES = mapOf(
+            "natgeo" to listOf("nationalgeographic"),
+            "nationalgeographic" to listOf("natgeo"),
+            "natgeowild" to listOf("nationalgeographicwild"),
+            "nationalgeographicwild" to listOf("natgeowild"),
+            "hollywood" to listOf("canalhollywood"),
+            "canalhollywood" to listOf("hollywood"),
+            "btv" to listOf("benficatv"),
+            "benficatv" to listOf("btv"),
+            "discovery" to listOf("discoverychannel"),
+            "discoverychannel" to listOf("discovery"),
+            "globo" to listOf("tvglobo", "globoportugal"),
+            "tvglobo" to listOf("globo"),
+            "tvglobonews" to listOf("globonews"),
+            "globonews" to listOf("tvglobonews"),
+            "idinvestigationdiscovery" to listOf("id", "investigationdiscovery"),
+            "localvisao" to listOf("localvisaotv"),
+            "tvrecord" to listOf("recordtv"),
+            "sickids" to listOf("sick"),
+            "iconcerts" to listOf("stingrayiconcerts"),
+            "tpa" to listOf("tpanoticias", "tpainternational"),
+            "torostv" to listOf("onetorotv", "toros"),
+            "nba" to listOf("nbatv")
+        )
     }
 }
 

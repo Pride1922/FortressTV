@@ -556,11 +556,13 @@ interface Strings {
     val checkingForUpdates: String
     val updateAvailable: String
     fun updateAvailableDesc(version: String): String
+    fun reinstallVersionDesc(version: String): String
     val upToDate: String
     val downloadingUpdate: String
     val updateDownloaded: String
     val installUpdateHint: String
     val updateNow: String
+    val reinstallNow: String
     val installUpdate: String
     val later: String
     val hideAdultContent: String
@@ -1164,11 +1166,13 @@ object EnglishStrings : Strings {
     override val checkingForUpdates = "Checking for updates..."
     override val updateAvailable = "Update Available"
     override fun updateAvailableDesc(version: String) = "Version $version is available."
+    override fun reinstallVersionDesc(version: String) = "You are already on $version. You can reinstall this release."
     override val upToDate = "You are using the latest version"
     override val downloadingUpdate = "Downloading update..."
     override val updateDownloaded = "Download complete"
     override val installUpdateHint = "If Android's installer was dismissed, tap Install Update to continue. The update will not be downloaded again."
     override val updateNow = "Update Now"
+    override val reinstallNow = "Reinstall"
     override val installUpdate = "Install Update"
     override val later = "Later"
     override val hideAdultContent = "Hide Adult Content"
@@ -1773,11 +1777,13 @@ object PortugueseStrings : Strings {
     override val checkingForUpdates = "A verificar atualizações..."
     override val updateAvailable = "Atualização Disponível"
     override fun updateAvailableDesc(version: String) = "A versão $version está disponível."
+    override fun reinstallVersionDesc(version: String) = "Já está na versão $version. Pode reinstalar esta versão."
     override val upToDate = "Está a utilizar a versão mais recente"
     override val downloadingUpdate = "A transferir atualização..."
     override val updateDownloaded = "Transferência concluída"
     override val installUpdateHint = "Se fechou o instalador do Android, toque em Instalar Atualização para continuar. A atualização não será transferida novamente."
     override val updateNow = "Atualizar Agora"
+    override val reinstallNow = "Reinstalar"
     override val installUpdate = "Instalar Atualização"
     override val later = "Mais Tarde"
     override val hideAdultContent = "Ocultar Conteúdo para Adultos"

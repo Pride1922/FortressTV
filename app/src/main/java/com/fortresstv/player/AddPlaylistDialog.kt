@@ -701,6 +701,25 @@ internal fun AddPlaylistDialog(
                             )
                         ) { Text(strings.addPlaylist) }
                     } else {
+                        if (connectionError != null && pendingHttpServerUrl == null &&
+                            (url.startsWith("http://", true) || url.startsWith("https://", true)) &&
+                            username.isNotBlank() && password.isNotBlank()
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    onAddXtream(
+                                        name.trim(),
+                                        XtreamClient.normalizeServerUrl(url.trim()),
+                                        username.trim(),
+                                        password
+                                    )
+                                },
+                                enabled = !isConnecting
+                            ) {
+                                Text(if (strings.languageTag == "pt-PT") "Guardar" else "Save anyway")
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
                         Button(
                             onClick = {
                                 hideKeyboard()
@@ -735,6 +754,7 @@ internal fun AddPlaylistDialog(
                                             onAddXtream(name.trim(), check.resolvedServerUrl, username.trim(), password)
                                         }
                                     }.onFailure { failure ->
+                                        android.util.Log.w("AddPlaylistDialog", "Xtream connection check failed", failure)
                                         connectionError = xtreamConnectionErrorMessage(failure, strings)
                                     }
                                 }
@@ -817,6 +837,11 @@ internal fun xtreamConnectionErrorMessage(failure: Throwable, strings: Strings):
             if (portuguese) "Nome de utilizador ou palavra-passe incorretos." else "Incorrect username or password."
         causes.any { it is java.net.UnknownHostException } ->
             if (portuguese) "Não foi possível encontrar o servidor." else "The server could not be found."
+        causes.any { it is java.net.ConnectException } ->
+            if (portuguese) "Não foi possível ligar ao servidor (ligação recusada)." else "Could not connect to the server (connection refused)."
+        causes.any { it is java.net.SocketException || it is java.io.EOFException } ||
+            message.contains("unexpected end of stream", ignoreCase = true) ->
+            if (portuguese) "O servidor fechou a ligação sem resposta." else "The server closed the connection without a response."
         causes.any { it is java.net.SocketTimeoutException } ->
             if (portuguese) "A ligação ao servidor excedeu o tempo limite." else "The server connection timed out."
         causes.any { it is javax.net.ssl.SSLException } ->
