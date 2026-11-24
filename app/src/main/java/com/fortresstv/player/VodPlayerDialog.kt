@@ -518,9 +518,10 @@ internal fun VodPlayerDialog(
     val sleepTimerRemainingText = sleepTimerActivity?.sleepTimerState?.remainingMinutes?.let { "${it}m" }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
 
-    var currentTracks by remember(request.key) { mutableStateOf<Tracks?>(null) }
-    var videoSize by remember(request.key) { mutableStateOf(player.videoSize) }
-    var userManuallySelectedTracks by remember(request.key) { mutableStateOf(false) }
+    var currentTracks by remember(player) { mutableStateOf<Tracks?>(player.currentTracks) }
+    var videoSize by remember(player) { mutableStateOf(player.videoSize) }
+    var userManuallySelectedAudio by remember(player, request.key) { mutableStateOf(false) }
+    var userManuallySelectedSubtitles by remember(player, request.key) { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var selectedTrackTab by remember { mutableIntStateOf(0) }
     var seekOverlayPositionMs by remember { mutableLongStateOf(-1L) }
@@ -553,46 +554,45 @@ internal fun VodPlayerDialog(
         }
     }
 
-    LaunchedEffect(currentTracks, preferredAudioLanguage, preferredSubtitleLanguage, subtitleFallbackEnglish) {
-        if (!userManuallySelectedTracks && currentTracks != null) {
-            val audioList = TrackLanguageMatcher.extractAudioTracks(currentTracks)
-            val subtitleList = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
+    LaunchedEffect(
+        player, currentTracks, preferredAudioLanguage, preferredSubtitleLanguage,
+        subtitleFallbackEnglish, userManuallySelectedAudio, userManuallySelectedSubtitles
+    ) {
+        val audioList = TrackLanguageMatcher.extractAudioTracks(currentTracks)
+        val subtitleList = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
+        var builder = player.trackSelectionParameters.buildUpon()
 
-            var builder = player.trackSelectionParameters.buildUpon()
-
-            // 1. Preferred Audio
-            if (preferredAudioLanguage != "default") {
-                val targetAudio = TrackLanguageMatcher.findBestAudioTrack(audioList, preferredAudioLanguage)
-                if (targetAudio != null && !targetAudio.isSelected) {
-                    builder = builder.setOverrideForType(
-                        TrackSelectionOverride(targetAudio.group.mediaTrackGroup, targetAudio.trackIndex)
-                    )
-                }
-            }
-
-            // 2. Preferred Subtitles
-            if (preferredSubtitleLanguage == "off") {
-                builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            } else {
-                val targetSub = TrackLanguageMatcher.findBestSubtitleTrack(
-                    subtitleList,
-                    preferredSubtitleLanguage,
-                    subtitleFallbackEnglish
+        // Apply native preferences even before tracks arrive; label matching below
+        // also handles sources with missing or unconventional language metadata.
+        if (!userManuallySelectedAudio) {
+            val languages = TrackLanguageMatcher.preferredLanguages(preferredAudioLanguage, true)
+            builder = builder.clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                .setPreferredAudioLanguages(*languages.toTypedArray())
+            val targetAudio = TrackLanguageMatcher.findBestAudioTrack(audioList, preferredAudioLanguage)
+            if (targetAudio != null) {
+                builder = builder.setOverrideForType(
+                    TrackSelectionOverride(targetAudio.group.mediaTrackGroup, targetAudio.trackIndex)
                 )
-                if (targetSub != null) {
-                    builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                        .setOverrideForType(
-                            TrackSelectionOverride(targetSub.group.mediaTrackGroup, targetSub.trackIndex)
-                        )
-                } else {
-                    builder = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                }
             }
-
-            player.trackSelectionParameters = builder.build()
         }
+
+        // A subtitle choice/download must not suppress preferred audio selection.
+        if (!userManuallySelectedSubtitles) {
+            val languages = TrackLanguageMatcher.preferredLanguages(preferredSubtitleLanguage, subtitleFallbackEnglish)
+            val targetSub = TrackLanguageMatcher.findBestSubtitleTrack(
+                subtitleList, preferredSubtitleLanguage, subtitleFallbackEnglish
+            )
+            builder = builder.clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .setPreferredTextLanguages(*languages.toTypedArray())
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, targetSub == null)
+            if (targetSub != null) {
+                builder = builder.setOverrideForType(
+                    TrackSelectionOverride(targetSub.group.mediaTrackGroup, targetSub.trackIndex)
+                )
+            }
+        }
+
+        player.trackSelectionParameters = builder.build()
     }
 
     LaunchedEffect(request.seriesId, loadAllEpisodes) {
@@ -910,7 +910,7 @@ internal fun VodPlayerDialog(
     }
 
     fun attachAndSelectSubtitle(item: OpenSubtitlesItem, file: java.io.File) {
-        userManuallySelectedTracks = true
+        userManuallySelectedSubtitles = true
         val updated = attachedSubtitles.filter { it.first.fileId != item.fileId } + (item to file)
         attachedSubtitles = updated
         val label = "OpenSubtitles · ${item.release}"
@@ -943,9 +943,11 @@ internal fun VodPlayerDialog(
     }
 
     var autoSearchAttempted by remember(request.key) { mutableStateOf(false) }
-    LaunchedEffect(currentTracks, openSubtitlesSettings, preferredSubtitleLanguage) {
-        if (autoSearchAttempted) return@LaunchedEffect
-        if (currentTracks == null) return@LaunchedEffect
+    LaunchedEffect(currentTracks, playbackState, openSubtitlesSettings, preferredSubtitleLanguage, userManuallySelectedSubtitles) {
+        if (autoSearchAttempted || userManuallySelectedSubtitles) return@LaunchedEffect
+        // An empty startup snapshot is not evidence that embedded subtitles are
+        // missing. Wait for discovery before searching/downloading another file.
+        if (playbackState != Player.STATE_READY || currentTracks?.groups.isNullOrEmpty()) return@LaunchedEffect
 
         val subTracks = TrackLanguageMatcher.extractSubtitleTracks(currentTracks)
         val shouldSearch = shouldAutoSearchOpenSubtitles(
@@ -1988,7 +1990,10 @@ internal fun VodPlayerDialog(
                             showOpenSubtitlesSearchDialog = true
                         }
                     } else null,
-                    onUserTrackSelected = { userManuallySelectedTracks = true },
+                    onUserTrackSelected = { type ->
+                        if (type == C.TRACK_TYPE_AUDIO) userManuallySelectedAudio = true
+                        if (type == C.TRACK_TYPE_TEXT) userManuallySelectedSubtitles = true
+                    },
                     onAudioLanguageSelected = onPreferredAudioLanguageChanged,
                     onSubtitleLanguageSelected = onPreferredSubtitleLanguageChanged,
                     onClose = { showTracksDialog = false }
@@ -2132,7 +2137,7 @@ internal fun PlayerControlsDrawer(
     videoTracks: List<PlaybackVideoTrackItem>,
     isLive: Boolean,
     onSearchOpenSubtitles: (() -> Unit)? = null,
-    onUserTrackSelected: () -> Unit = {},
+    onUserTrackSelected: (Int) -> Unit = {},
     onAudioLanguageSelected: ((String) -> Unit)? = null,
     onSubtitleLanguageSelected: ((String) -> Unit)? = null,
     onClose: () -> Unit
@@ -2327,7 +2332,7 @@ internal fun PlayerControlsDrawer(
                                 val isSelected = track.isSelected
                                 Surface(
                                     onClick = {
-                                        onUserTrackSelected()
+                                        onUserTrackSelected(C.TRACK_TYPE_AUDIO)
                                         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                                             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
                                             .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
@@ -2379,7 +2384,7 @@ internal fun PlayerControlsDrawer(
                         val isOff = selectedSubtitle == null
                         Surface(
                             onClick = {
-                                onUserTrackSelected()
+                                onUserTrackSelected(C.TRACK_TYPE_TEXT)
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -2414,7 +2419,7 @@ internal fun PlayerControlsDrawer(
                             val isSelected = track.isSelected
                             Surface(
                                 onClick = {
-                                    onUserTrackSelected()
+                                    onUserTrackSelected(C.TRACK_TYPE_TEXT)
                                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                                         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                                         .clearOverridesOfType(C.TRACK_TYPE_TEXT)

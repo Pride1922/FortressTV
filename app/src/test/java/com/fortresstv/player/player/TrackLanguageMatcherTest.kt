@@ -9,6 +9,30 @@ import org.junit.Test
 class TrackLanguageMatcherTest {
 
     @Test
+    fun matchesLanguage_acceptsSourceLanguageCodesWithRegionsAndCodecLabels() {
+        assertTrue(TrackLanguageMatcher.matchesLanguage("en_US", null, "en"))
+        assertTrue(TrackLanguageMatcher.matchesLanguage("ENG_GB", null, "en"))
+        assertTrue(TrackLanguageMatcher.matchesLanguage(null, "ENG · AAC 5.1", "en"))
+        assertTrue(TrackLanguageMatcher.matchesLanguage("und", "[EN] AC3", "en"))
+        assertTrue(TrackLanguageMatcher.matchesLanguage(null, "en_US · SDH", "en"))
+        assertTrue(TrackLanguageMatcher.matchesLanguage(null, "POR · AAC", "pt"))
+        assertFalse(TrackLanguageMatcher.matchesLanguage(null, "Bengali", "en"))
+        assertFalse(TrackLanguageMatcher.matchesLanguage(null, "French · AAC", "en"))
+        assertFalse(TrackLanguageMatcher.matchesLanguage(null, "Track 2", "en"))
+    }
+
+    @Test
+    fun preferredLanguages_preservesPreferenceAndOptionalEnglishFallback() {
+        assertEquals(listOf("en"), TrackLanguageMatcher.preferredLanguages("en", true))
+        assertEquals(listOf("en-us"), TrackLanguageMatcher.preferredLanguages(" EN_US ", true))
+        assertEquals(listOf("pt", "en"), TrackLanguageMatcher.preferredLanguages("pt", true))
+        assertEquals(listOf("pt"), TrackLanguageMatcher.preferredLanguages("pt", false))
+        assertEquals(emptyList<String>(), TrackLanguageMatcher.preferredLanguages("default", true))
+        assertEquals(emptyList<String>(), TrackLanguageMatcher.preferredLanguages("off", true))
+        assertEquals(emptyList<String>(), TrackLanguageMatcher.preferredLanguages("", true))
+    }
+
+    @Test
     fun matchesLanguage_identifiesPortugueseVariants() {
         assertTrue(TrackLanguageMatcher.matchesLanguage("pt", "Track 1", "pt"))
         assertTrue(TrackLanguageMatcher.matchesLanguage("por", "Track 1", "pt"))

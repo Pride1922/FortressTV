@@ -19,6 +19,14 @@ data class PlaybackTrackItem(
 @UnstableApi
 object TrackLanguageMatcher {
 
+    fun preferredLanguages(language: String, fallbackEnglish: Boolean): List<String> {
+        val preferred = language.trim().lowercase(Locale.ROOT).replace('_', '-')
+        if (preferred.isBlank() || preferred == "off" || preferred == "default") return emptyList()
+        return if (fallbackEnglish && !matchesLanguage(preferred, null, "en")) {
+            listOf(preferred, "en")
+        } else listOf(preferred)
+    }
+
     fun extractAudioTracks(currentTracks: Tracks?): List<PlaybackTrackItem> {
         val list = mutableListOf<PlaybackTrackItem>()
         currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_AUDIO }?.forEach { group ->
@@ -74,11 +82,11 @@ object TrackLanguageMatcher {
     }
 
     fun matchesLanguage(trackLang: String?, trackLabel: String?, targetLangCode: String): Boolean {
-        val target = targetLangCode.trim().lowercase()
+        val target = targetLangCode.trim().lowercase(Locale.ROOT)
         if (target.isBlank() || target == "off" || target == "default") return false
 
-        val lang = trackLang?.trim()?.lowercase()
-        val label = trackLabel?.trim()?.lowercase()
+        val lang = trackLang?.trim()?.lowercase(Locale.ROOT)?.replace('_', '-')
+        val label = trackLabel?.trim()?.lowercase(Locale.ROOT)?.replace('_', '-')
 
         // 1. Check ISO 639-1 / 639-2 / BCP-47 language tags
         if (lang != null) {
@@ -95,6 +103,19 @@ object TrackLanguageMatcher {
 
         // 2. Check label strings
         if (label != null) {
+            // Some sources supply only a language code alongside codec/channel
+            // information, such as "ENG · AAC 5.1". Match whole tokens so "en"
+            // cannot accidentally match an unrelated word.
+            val languageCodes = when (target) {
+                "pt" -> listOf("pt", "por")
+                "en" -> listOf("en", "eng")
+                "es" -> listOf("es", "spa")
+                "fr" -> listOf("fr", "fra", "fre")
+                "de" -> listOf("de", "deu", "ger")
+                "it" -> listOf("it", "ita")
+                else -> emptyList()
+            }
+            if (languageCodes.any { Regex("(?<![\\p{L}\\p{N}])$it(?![\\p{L}\\p{N}])").containsMatchIn(label) }) return true
             when (target) {
                 "pt" -> if (label.contains("portugu") || label.contains("pt-pt") || label.contains("pt-br") || label == "pt" || label == "por") return true
                 "en" -> if (label.contains("english") || label.contains("inglês") || label.contains("ingles") || label.contains("en-us") || label.contains("en-gb") || label == "en" || label == "eng") return true

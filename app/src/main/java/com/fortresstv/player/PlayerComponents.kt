@@ -489,8 +489,10 @@ internal fun PlayerPanel(
 
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
-    var videoSize by remember(activeChannel.streamUrl) { mutableStateOf(player.videoSize) }
-    var currentTracks by remember(activeChannel.streamUrl) { mutableStateOf<Tracks?>(player.currentTracks) }
+    // These states must share the listener's player lifetime. Recreating them on a
+    // channel switch leaves the listener updating the previous channel's states.
+    var videoSize by remember(player) { mutableStateOf(player.videoSize) }
+    var currentTracks by remember(player) { mutableStateOf<Tracks?>(player.currentTracks) }
     var isFreezeReconnecting by remember { mutableStateOf(false) }
     var consecutiveStallRecoveries by remember(channel.streamUrl) { mutableIntStateOf(0) }
     var manualFullscreen by rememberSaveable { mutableStateOf(autoEnterFullscreen) }

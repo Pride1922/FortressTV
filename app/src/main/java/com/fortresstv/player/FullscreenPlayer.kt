@@ -431,8 +431,8 @@ internal fun FullscreenPlayer(
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var resizeModeNotice by remember { mutableStateOf<String?>(null) }
     var scheduleNow by remember { mutableStateOf(Instant.now()) }
-    var currentTracks by remember { mutableStateOf<Tracks?>(player.currentTracks) }
-    var videoSize by remember(channel.streamUrl) { mutableStateOf(player.videoSize) }
+    var currentTracks by remember(player) { mutableStateOf<Tracks?>(player.currentTracks) }
+    var videoSize by remember(player) { mutableStateOf(player.videoSize) }
     var channelSwitchNotice by remember { mutableStateOf<PlaylistChannel?>(null) }
 
     DisposableEffect(player) {
