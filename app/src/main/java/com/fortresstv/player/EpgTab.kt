@@ -605,7 +605,7 @@ internal fun EpgTab(
 
         // Channel Matching Status
         if (effectiveChannels.isNotEmpty()) {
-            SettingsGroup(title = "EPG Matching") {
+            SettingsGroup(title = strings.epgManualMapping) {
                 if (isCompact) {
                     Column(
                         Modifier.fillMaxWidth().padding(12.dp),

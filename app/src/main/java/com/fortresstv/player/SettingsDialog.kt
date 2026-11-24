@@ -476,6 +476,9 @@ internal fun SettingsDialog(
     var showSection by rememberSaveable { mutableStateOf(initialTab > 0) }
     val tabFocusRequesters = remember(tabItems.size) { List(tabItems.size) { FocusRequester() } }
     var settingsContentHasFocus by remember { mutableStateOf(false) }
+    var settingsQuery by rememberSaveable { mutableStateOf("") }
+    val searchEntries = remember(strings) { settingsSearchEntries(strings) }
+    val searchNavigator = remember { SettingsSearchNavigator() }
 
     LaunchedEffect(isTv) {
         if (isTv) {
@@ -495,7 +498,9 @@ internal fun SettingsDialog(
 
     fun goBack() {
         hideKeyboard()
-        if (isPhoneLayout && showSection) {
+        if (settingsQuery.isNotBlank()) {
+            settingsQuery = ""
+        } else if (isPhoneLayout && showSection) {
             showSection = false
         } else if (isTv && settingsContentHasFocus) {
             runCatching { tabFocusRequesters.getOrNull(selectedTab)?.requestFocus() }
@@ -505,6 +510,7 @@ internal fun SettingsDialog(
     }
     BackHandler(onBack = ::goBack)
 
+    androidx.compose.runtime.CompositionLocalProvider(LocalSettingsSearchNavigator provides searchNavigator) {
     Dialog(
         onDismissRequest = if (isPhoneLayout) ::goBack else onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -586,7 +592,26 @@ internal fun SettingsDialog(
 
                 Spacer(Modifier.height(8.dp))
 
-                if (isTwoPane) {
+                OutlinedTextField(
+                    value = settingsQuery,
+                    onValueChange = { settingsQuery = it },
+                    label = { Text(strings.searchSettings) },
+                    singleLine = true,
+                    trailingIcon = if (settingsQuery.isNotEmpty()) {
+                        { IconButton(onClick = { settingsQuery = "" }) { Icon(Icons.Default.Close, contentDescription = strings.clearSearch) } }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).tvFocusHighlight()
+                )
+
+                if (settingsQuery.isNotBlank()) {
+                    SettingsSearchResults(searchEntries, settingsQuery, tabItems.map { it.first }, Modifier.weight(1f).fillMaxWidth()) { entry ->
+                        hideKeyboard()
+                        selectedTab = entry.tab
+                        showSection = true
+                        settingsQuery = ""
+                        searchNavigator.open(entry)
+                    }
+                } else if (isTwoPane) {
                     Row(Modifier.fillMaxSize()) {
                         // Left Tab Navigation Rail
                         Column(
@@ -637,6 +662,7 @@ internal fun SettingsDialog(
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .onFocusChanged { settingsContentHasFocus = it.hasFocus }
+                                .settingsSearchTarget(tabItems[selectedTab].first, group = true)
                         ) {
                             when (selectedTab) {
                                 0 -> GeneralTab(
@@ -802,7 +828,7 @@ internal fun SettingsDialog(
 
                     if (!isPhoneLayout) Spacer(Modifier.height(10.dp))
 
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                    Box(Modifier.weight(1f).fillMaxWidth().settingsSearchTarget(tabItems[selectedTab].first, group = true)) {
                         when (selectedTab) {
                             0 -> GeneralTab(
                                 appLanguage = appLanguage,
@@ -917,6 +943,8 @@ internal fun SettingsDialog(
         }
     }
     }
+}
+
 }
 
 

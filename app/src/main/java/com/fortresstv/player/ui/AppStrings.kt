@@ -348,6 +348,8 @@ interface Strings {
     val selectM3uError: String
 
     val settingsTitle: String
+    val searchSettings: String
+    val noSettingsFound: String
     val tabAccount: String
     val tabProfiles: String
     val profiles: String
@@ -963,6 +965,8 @@ object EnglishStrings : Strings {
     override val selectM3uError = "Please enter an M3U URL or select a local file."
 
     override val settingsTitle = "Settings"
+    override val searchSettings = "Search settings"
+    override val noSettingsFound = "No matching settings. Try another search."
     override val tabAccount = "Account"
     override val tabProfiles = "Profiles"
     override val profiles = "Profiles"
@@ -1581,6 +1585,8 @@ object PortugueseStrings : Strings {
     override val selectM3uError = "Por favor insira um URL M3U ou selecione um ficheiro local."
 
     override val settingsTitle = "Definições"
+    override val searchSettings = "Pesquisar definições"
+    override val noSettingsFound = "Nenhuma definição encontrada. Experimente outra pesquisa."
     override val tabAccount = "Conta"
     override val tabProfiles = "Perfis"
     override val profiles = "Perfis"

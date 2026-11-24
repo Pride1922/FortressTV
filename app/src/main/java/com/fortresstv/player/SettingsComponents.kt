@@ -410,7 +410,7 @@ internal fun SettingsGroup(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.settingsSearchTarget(title, group = true), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             title,
             fontSize = 11.sp,
@@ -445,6 +445,7 @@ internal fun SettingsActionRow(
         color = Color.Transparent,
         modifier = Modifier
             .fillMaxWidth()
+            .settingsSearchTarget(title)
             .tvFocusHighlight(
                 shape = RoundedCornerShape(8.dp),
                 scaleOnFocus = if (isTv) 1.02f else 1.0f
@@ -499,6 +500,7 @@ internal fun SettingsToggleRow(
         color = Color.Transparent,
         modifier = Modifier
             .fillMaxWidth()
+            .settingsSearchTarget(title)
             .tvFocusHighlight(
                 shape = RoundedCornerShape(8.dp),
                 scaleOnFocus = if (isTv && enabled) 1.02f else 1.0f
@@ -613,7 +615,7 @@ internal fun SettingsDropdownPickerRow(
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                modifier = Modifier.tvFocusHighlight(
+                modifier = Modifier.settingsSearchTarget(title).tvFocusHighlight(
                     shape = RoundedCornerShape(8.dp),
                     scaleOnFocus = if (isTv) 1.05f else 1.0f
                 )

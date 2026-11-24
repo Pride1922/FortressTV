@@ -38,6 +38,7 @@ FortressTV brings your own IPTV and media sources into one organised library. Wa
 - **Use several sources together.** Combine M3U/M3U8 playlists and Xtream sources, with independent refreshes and caches.
 - **Choose a version.** Select a matching movie version before playback, or choose an alternative live channel from fullscreen controls. Your choice is remembered locally per profile.
 - **Find something quickly.** Search across channels, movies, and series from Home, or return to a recent channel.
+- **Find a setting.** Search Settings in English or Portuguese and jump to the relevant control or group.
 
 ## Playback that fits the moment
 

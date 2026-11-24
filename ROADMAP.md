@@ -62,6 +62,8 @@ Explicit movie/live version selection is implemented; matching alternatives rema
 
 VOD subtitle timing is implemented for subtitles supported by Media3's extraction-time parsers: ±5 seconds in 100 ms steps, reset, and local persistence per source item/profile. Changes reprepare the same media at the current position to reparse buffered cues and may briefly buffer. Live captions and unsupported subtitle formats do not expose timing controls. Device playback/lifecycle validation remains outstanding.
 
+Settings search is implemented with a local bilingual index of controls/groups, accent-insensitive matching, and navigation that scrolls to and highlights the destination. No credentials, source details, or other user-entered values are indexed. Device keyboard/D-pad validation remains outstanding.
+
 Existing directions, subject to product prioritisation:
 
 1. Complete Android TV D-pad workflow audits, focus restoration, Back behavior, and emulator/physical-device validation against [ANDROID_TV_PLAN.md](ANDROID_TV_PLAN.md).
