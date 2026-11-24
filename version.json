@@ -1,7 +1,7 @@
 {
-    "version":  "2.1",
-    "versionCode":  81,
-    "notes":  "FortressTV 2.1: measured stream quality badges in channel lists, Supabase resolution telemetry, multi-source category visibility fix, and improved channel row layout.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.1/fortresstv.apk",
-    "sha256":  "F2809131AE8CDB1E762A29AAA0A4757FE00FA838E0BA9E424AD9D46478219348"
+    "version":  "2.1.1",
+    "versionCode":  82,
+    "notes":  "FortressTV 2.1.1: fix Trakt popular series title fallback matching across all sources, fix Home series poster lookups, and pass VOD year/TMDB/IMDb metadata for cleaner poster matching.",
+    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.1.1/fortresstv.apk",
+    "sha256":  "0D72B08FF27E81A884D05523CB8E0AB353917E63C392E9662224DF35860AD525"
 }
