@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.0-RC6",
-    "versionCode":  79,
-    "notes":  "Fix missing Portuguese EPG channel matching and 4K digit extraction; allow reinstalling the latest release from Check for Updates.",
-    "downloadUrl":  "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC6/fortresstv.apk",
-    "sha256":  "FD11FE3E231B771DA4838F3102C945BD32F44D9CEDA278C857414A597C747662"
+  "version": "2.0.0-RC24",
+  "versionCode": 80,
+  "notes": "## What's new\n- Choose matching movie versions before playback and alternative live channels from fullscreen controls. Choices are remembered locally per profile, including M3U quality variants that share an EPG ID.\n- Adjust supported VOD subtitle timing by up to 5 seconds in 100 ms steps. Offsets are saved per title/profile; applying an adjustment may briefly buffer playback.\n- Search Settings in English or Portuguese (Portugal), then jump to the matching control or group.\n\n## Fixes\n- Correct stale resolution badges when switching channels between the mini player and fullscreen.\n- Apply preferred movie audio/subtitle languages earlier, recognise more language labels, and keep subtitle choices from suppressing audio selection.\n- Wait for track discovery before automatically searching for external subtitles.\n\n## Validation\n- Kotlin compilation, 513 unit tests, lint, and debug APK assembly passed before release preparation. The release script also runs unit tests and builds/signature-verifies the release APK.\n- Physical tablet playback, PiP, and D-pad interaction checks for these changes remain outstanding.\n\n## Novidades\n- Escolha versões de filmes e canais em direto, com a seleção guardada localmente por perfil.\n- Ajuste a sincronização das legendas VOD suportadas em passos de 100 ms, até 5 segundos para cada lado, com o ajuste guardado por título/perfil.\n- Pesquise nas Definições e aceda ao controlo ou grupo correspondente.\n- Corrigidos os indicadores de resolução e a seleção automática dos idiomas de áudio e legendas.\n\nFortressTV includes no content or source credentials. Use sources you are authorised to access.",
+  "downloadUrl": "https://github.com/Pride1922/FortressTV/releases/download/v2.0.0-RC24/fortresstv.apk",
+  "sha256": "598E66222204DD6832584896B8E3B9178B537966ED061E06976260944A8DC08E"
 }
