@@ -36,6 +36,7 @@ FortressTV brings your own IPTV and media sources into one organised library. Wa
 - **Pick up where you left off.** Resume movies and episodes, track watched titles, and move to the next episode with optional autoplay.
 - **Make it yours.** Save favourite channels, build a movie watchlist, follow series, and customise Home shelves and category visibility/order.
 - **Use several sources together.** Combine M3U/M3U8 playlists and Xtream sources, with independent refreshes and caches.
+- **Choose a version.** Select a matching movie version before playback, or choose an alternative live channel from fullscreen controls. Your choice is remembered locally per profile.
 - **Find something quickly.** Search across channels, movies, and series from Home, or return to a recent channel.
 
 ## Playback that fits the moment

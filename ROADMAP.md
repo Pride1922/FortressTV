@@ -56,6 +56,10 @@ The implemented table above also covers later work that was not represented accu
 
 ## Remaining work
 
+Approved sequence (24 November 2026): validate the language-selection fix, add explicit movie/live version selection with profile preferences, add saved subtitle timing, then add searchable Settings. Recording is not part of this work.
+
+Explicit movie/live version selection is implemented; matching alternatives remain distinct source items. Movie version discovery runs on demand off the main thread, and choices are saved locally per profile. Tablet/TV interaction validation remains outstanding.
+
 Existing directions, subject to product prioritisation:
 
 1. Complete Android TV D-pad workflow audits, focus restoration, Back behavior, and emulator/physical-device validation against [ANDROID_TV_PLAN.md](ANDROID_TV_PLAN.md).

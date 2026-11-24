@@ -7,6 +7,20 @@ import org.junit.Test
 
 class MovieCatalogDeduplicationTest {
     @Test
+    fun versionGroupsRetainSourceIdentityAndProviderOrder() {
+        val first = entry("first", "Movie", "2019", tmdb = "123")
+        val second = entry("second", "Movie [4K]", "2019", tmdb = "123")
+        val remake = entry("third", "Movie", "2022", tmdb = "456")
+        assertEquals(listOf(listOf(first, second), listOf(remake)), groupCatalogMovieVersions(listOf(first, second, first, remake)))
+    }
+
+    @Test
+    fun versionGroupsDoNotMergeConflictingIdsOrUnknownCrossSourceYears() {
+        val first = entry("first", "Movie", null)
+        val second = entry("second", "Movie", null)
+        assertEquals(listOf(listOf(first), listOf(second)), groupCatalogMovieVersions(listOf(first, second)))
+    }
+    @Test
     fun mergesAcrossSourcesWithDifferentArtworkAndMetadataIds() {
         val first = entry("first", "10 Minutes Gone (2019)", null, tmdb = "123")
         val second = entry("second", "10 minutes gone", "2019", imdb = "tt456")

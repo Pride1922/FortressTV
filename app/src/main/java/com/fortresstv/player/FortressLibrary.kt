@@ -661,6 +661,16 @@ internal fun FortressLibrary(
     var requestedChannel by remember { mutableStateOf<PlaylistChannel?>(null) }
     var requestedChannelFullscreen by remember { mutableStateOf(false) }
     var vodPlayback by remember { mutableStateOf<VodPlaybackRequest?>(null) }
+    var requestedMovieVersion by remember(traktNamespace) { mutableStateOf<CatalogMovie?>(null) }
+    val playbackChoices = remember(traktNamespace) { PlaybackChoiceStore(context, traktNamespace) }
+    fun playMovieVersion(entry: CatalogMovie) {
+        requestedMovieVersion = null
+        val source = xtreamProfiles.firstOrNull { it.id == entry.catalog.sourceId }?.source as? ContentSource.Xtream
+        if (source != null) {
+            val url = XtreamClient(context.applicationContext, entry.catalog.sourceId, source).movieStreamUrl(entry.movie)
+            vodPlayback = entry.movie.toPlaybackRequest(entry.catalog.sourceId, url)
+        }
+    }
     var openHomeSearch by remember { mutableStateOf(false) }
     // Keep catalogue positions and tab state alive while the user moves between primary destinations.
     val homeListState = rememberLazyListState()
@@ -870,11 +880,7 @@ internal fun FortressLibrary(
                         onToggleEpisodeWatched(sourceId, ep, series)
                     },
                     onPlayMovie = { catalog, movie ->
-                        val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
-                        if (source != null) {
-                            val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
-                            vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
-                        }
+                        requestedMovieVersion = CatalogMovie(catalog, movie)
                     },
                     onPlayEpisode = { catalog, series, episode, url ->
                         vodPlayback = VodPlaybackRequest(
@@ -1039,11 +1045,7 @@ internal fun FortressLibrary(
                         onToggleMovieWatched(sourceId, movie)
                     },
                     onPlay = { catalog, movie ->
-                        val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
-                        if (source != null) {
-                            val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
-                            vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
-                        }
+                        requestedMovieVersion = CatalogMovie(catalog, movie)
                     },
                     tabState = moviesTabState,
                     sharedRecommendedMovies = shelvesState.matchedTraktRecs.movies,
@@ -1127,11 +1129,7 @@ internal fun FortressLibrary(
                         onToggleEpisodeWatched(sourceId, ep, series)
                     },
                     onPlayMovie = { catalog, movie ->
-                        val source = xtreamProfiles.firstOrNull { it.id == catalog.sourceId }?.source as? ContentSource.Xtream
-                        if (source != null) {
-                            val url = XtreamClient(context.applicationContext, catalog.sourceId, source).movieStreamUrl(movie)
-                            vodPlayback = movie.toPlaybackRequest(catalog.sourceId, url)
-                        }
+                        requestedMovieVersion = CatalogMovie(catalog, movie)
                     },
                     onPlayEpisode = { catalog, series, episode, url ->
                         vodPlayback = VodPlaybackRequest(
@@ -1150,6 +1148,12 @@ internal fun FortressLibrary(
                     }
                 )
             }
+        }
+        requestedMovieVersion?.let { requested ->
+            MovieVersionPicker(
+                requested, xtreamCatalogs, hideAdultContent, maximumAge, blockUnrated,
+                playbackChoices, onDismiss = { requestedMovieVersion = null }, onPlay = ::playMovieVersion
+            )
         }
         vodPlayback?.let { request ->
             val previous = progressEntries.firstOrNull { it.key == request.key } ?: progressStore.entries().firstOrNull { it.key == request.key }

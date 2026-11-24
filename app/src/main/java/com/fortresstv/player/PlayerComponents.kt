@@ -418,7 +418,18 @@ internal fun PlayerPanel(
     var showHealthDialog by remember { mutableStateOf(false) }
     val currentHouseholdId = remember { com.fortresstv.player.account.AccountRepository.get(context.applicationContext).currentUserId() ?: "local" }
     val currentProfileId = remember { com.fortresstv.player.profile.ProfileRepository.get(context.applicationContext).activeProfile.value.id }
-    var activeChannel by remember(channel) { mutableStateOf(channel) }
+    val playbackChoices = remember(currentHouseholdId, currentProfileId) {
+        PlaybackChoiceStore(context, com.fortresstv.player.library.profileProgressNamespace(
+            currentHouseholdId.takeUnless { it == "local" }, currentProfileId
+        ))
+    }
+    var activeChannel by remember(channel, channels, playbackChoices) {
+        val preferredId = channel.libraryId()?.let(playbackChoices::savedVersion)
+        // A remembered alternative is used only while it is still in the visible library.
+        mutableStateOf(preferredId?.let { id -> channels.firstOrNull {
+            it.libraryId() == id && (it == channel || com.fortresstv.player.player.ChannelFailoverResolver.isCandidate(channel, it))
+        } } ?: channel)
+    }
     var attemptedFailoverUrls by remember(channel) { mutableStateOf(setOf(channel.streamUrl)) }
     var retriedSourceUrls by remember(channel) { mutableStateOf(emptySet<String>()) }
     var failoverMessage by remember { mutableStateOf<String?>(null) }
@@ -538,8 +549,9 @@ internal fun PlayerPanel(
     }
 
     fun handleChannelSwitch(next: PlaylistChannel) {
-        if (next != channel) {
-            previousWatchedChannel = channel
+        if (next != activeChannel) {
+            previousWatchedChannel = activeChannel
+            activeChannel = next
             onChannelSelected(next)
         }
     }

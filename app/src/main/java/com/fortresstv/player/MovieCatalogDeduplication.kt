@@ -13,18 +13,33 @@ private class VodCardGroup<T>(
 )
 
 internal fun deduplicateCatalogMovies(entries: List<CatalogMovie>): List<CatalogMovie> =
-    deduplicateVodEntries(
+    deduplicateMovieEntries(entries)
+
+internal fun groupCatalogMovieVersions(entries: List<CatalogMovie>): List<List<CatalogMovie>> {
+    val versions = linkedMapOf<Pair<String, Int>, MutableList<CatalogMovie>>()
+    deduplicateMovieEntries(entries) { representative, entry ->
+        versions.getOrPut(representative.catalog.sourceId to representative.movie.id) { mutableListOf() }.add(entry)
+    }
+    return versions.values.toList()
+}
+
+private fun deduplicateMovieEntries(
+    entries: List<CatalogMovie>,
+    onGrouped: ((CatalogMovie, CatalogMovie) -> Unit)? = null
+): List<CatalogMovie> =
+    groupVodEntries(
         entries = entries,
         sourceIdOf = { it.catalog.sourceId },
         itemIdOf = { it.movie.id },
         nameOf = { it.movie.name },
         yearOf = { it.movie.year },
         tmdbIdOf = { it.movie.tmdbId },
-        imdbIdOf = { it.movie.imdbId }
+        imdbIdOf = { it.movie.imdbId },
+        onGrouped = onGrouped
     )
 
 internal fun deduplicateCatalogSeries(entries: List<CatalogSeries>): List<CatalogSeries> =
-    deduplicateVodEntries(
+    groupVodEntries(
         entries = entries,
         sourceIdOf = { it.catalog.sourceId },
         itemIdOf = { it.series.id },
@@ -34,14 +49,15 @@ internal fun deduplicateCatalogSeries(entries: List<CatalogSeries>): List<Catalo
         imdbIdOf = { it.series.imdbId }
     )
 
-private fun <T> deduplicateVodEntries(
+private fun <T> groupVodEntries(
     entries: List<T>,
     sourceIdOf: (T) -> String,
     itemIdOf: (T) -> Int,
     nameOf: (T) -> String,
     yearOf: (T) -> String?,
     tmdbIdOf: (T) -> String?,
-    imdbIdOf: (T) -> String?
+    imdbIdOf: (T) -> String?,
+    onGrouped: ((T, T) -> Unit)? = null
 ): List<T> {
     val groups = mutableListOf<VodCardGroup<T>>()
     val byTmdb = mutableMapOf<Int, VodCardGroup<T>>()
@@ -72,6 +88,7 @@ private fun <T> deduplicateVodEntries(
             }
 
         val group = existing ?: VodCardGroup(entry, tmdb, imdb, year).also { groups.add(it) }
+        onGrouped?.invoke(group.entry, entry)
         if (group.tmdb == null) group.tmdb = tmdb
         if (group.imdb == null) group.imdb = imdb
         if (group.year == null) group.year = year

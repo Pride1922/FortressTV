@@ -283,6 +283,8 @@ interface Strings {
     val nowPlayingBadge: String
 
     val videoQuality: String
+    val chooseVersion: String
+    val versionPreferenceHint: String
     val qualityAuto: String
     val qualityAdaptive: String
     val goLive: String
@@ -891,6 +893,8 @@ object EnglishStrings : Strings {
     override val nowPlayingBadge = "Now Playing"
 
     override val videoQuality = "Video Quality"
+    override val chooseVersion = "Choose version"
+    override val versionPreferenceHint = "Choose a source and version. Your selection is remembered for this profile."
     override val qualityAuto = "Auto"
     override val qualityAdaptive = "Adaptive bitrate (ABR)"
     override val goLive = "Go Live"
@@ -1502,6 +1506,8 @@ object PortugueseStrings : Strings {
     override val nowPlayingBadge = "A reproduzir"
 
     override val videoQuality = "Qualidade de vídeo"
+    override val chooseVersion = "Escolher versão"
+    override val versionPreferenceHint = "Escolha uma fonte e uma versão. A seleção fica guardada neste perfil."
     override val qualityAuto = "Automático"
     override val qualityAdaptive = "Taxa de bits adaptativa (ABR)"
     override val goLive = "Ir para Direto"

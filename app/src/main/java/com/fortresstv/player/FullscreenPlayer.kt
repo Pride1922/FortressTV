@@ -414,6 +414,7 @@ internal fun FullscreenPlayer(
     var showChannels by remember { mutableStateOf(false) }
     var showGuide by remember { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
+    var showVersionPicker by remember(channel) { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showQuickZap by remember { mutableStateOf(false) }
     val channelMap = remember(channels) { channels.associateBy { it.libraryId() } }
@@ -1211,6 +1212,9 @@ internal fun FullscreenPlayer(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Spacer(Modifier.width(8.dp))
+                                        TextButton(onClick = { showVersionPicker = true }, modifier = Modifier.tvFocusHighlight()) {
+                                            Text(strings.chooseVersion)
+                                        }
                                         val isFavorited = channel.libraryId()?.let(favoriteChannelIds::contains) == true
                                         IconButton(
                                             onClick = { onToggleFavorite(channel) },
@@ -1420,6 +1424,12 @@ internal fun FullscreenPlayer(
                         player.play()
                     }
                 )
+            }
+            if (showVersionPicker) {
+                LiveVersionPicker(channel, channels, onDismiss = { showVersionPicker = false }) { next ->
+                    showVersionPicker = false
+                    if (next != channel) onChannelSelected(next)
+                }
             }
             if (showSleepTimerDialog) {
                 AlertDialog(
