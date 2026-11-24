@@ -66,6 +66,8 @@ Settings search is implemented with a local bilingual index of controls/groups, 
 
 Playback telemetry now captures the last valid decoder resolution after a frame is rendered, with an observation timestamp and an opaque identifier scoped to the source/item/stream variant. Supabase derives SD/HD/FHD/2K/4K from the dimensions. Legacy summaries remain valid, and collection uses the existing telemetry toggle and bounded upload queue. This stores observations; it does not sync preferred versions or add pre-playback quality badges.
 
+Channel lists now show a last-played quality badge from those measurements. A bounded, household/profile-isolated cache updates during playback and survives restarts. With telemetry enabled, account sync can restore up to 500 recent measured sessions, at most once per minute, without per-row network requests. No measurement means no badge; this does not infer quality from channel names or sync preferred versions. The badge scrolling macrobenchmark is added; physical-device timing remains to be measured.
+
 Existing directions, subject to product prioritisation:
 
 1. Complete Android TV D-pad workflow audits, focus restoration, Back behavior, and emulator/physical-device validation against [ANDROID_TV_PLAN.md](ANDROID_TV_PLAN.md).

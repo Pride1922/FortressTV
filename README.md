@@ -32,6 +32,7 @@ FortressTV brings your own IPTV and media sources into one organised library. Wa
 ## One home for your viewing
 
 - **Live TV with a guide.** Browse channels, see what is on now and next, and explore an XMLTV programme guide with automatic and manual channel matching.
+- **Measured channel quality.** Channel lists show a compact last-played quality badge once a stream has been measured. Results stay separate for each source/version and are cached locally per profile.
 - **Movies and series.** Browse poster grids, search and sort your catalogues, open title details, and load episodes when you need them.
 - **Pick up where you left off.** Resume movies and episodes, track watched titles, and move to the next episode with optional autoplay.
 - **Make it yours.** Save favourite channels, build a movie watchlist, follow series, and customise Home shelves and category visibility/order.

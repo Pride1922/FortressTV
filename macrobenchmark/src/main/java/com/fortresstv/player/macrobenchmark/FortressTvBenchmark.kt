@@ -120,6 +120,29 @@ class FortressTvBenchmark {
     }
 
     @Test
+    fun channelListMeasuredQualityFling() = benchmarkRule.measureRepeated(
+        packageName = PACKAGE_NAME,
+        metrics = listOf(FrameTimingMetric()),
+        compilationMode = CompilationMode.Full(),
+        startupMode = StartupMode.WARM,
+        iterations = 5,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait()
+            ensureChannelBrowser()
+            assertNotNull(device.wait(Until.findObject(By.res("channel_list")), UI_TIMEOUT))
+            assumeTrue("Play a visible channel first to populate its measured-quality cache",
+                device.wait(Until.hasObject(By.res("channel_measured_quality")), UI_TIMEOUT))
+        }
+    ) {
+        val list = device.findObject(By.res("channel_list"))
+        list.setGestureMargin(device.displayWidth / 5)
+        list.fling(Direction.DOWN)
+        list.fling(Direction.UP)
+        device.waitForIdle()
+    }
+
+    @Test
     fun moviesOpen() = benchmarkRule.measureRepeated(
         packageName = PACKAGE_NAME,
         metrics = listOf(FrameTimingMetric()),

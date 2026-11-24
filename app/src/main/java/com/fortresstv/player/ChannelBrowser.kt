@@ -215,6 +215,7 @@ import com.fortresstv.player.epg.resolveManualXmltvId
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -1606,6 +1607,12 @@ internal fun GuideChannelRow(
         ?: channel.sourceItemId.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
         ?: channel.tvgId?.takeIf { it.isNotBlank() }?.let { healthSnapshots[it] }
         ?: healthSnapshots[channel.name]
+    val qualityStore = com.fortresstv.player.telemetry.LocalChannelQualityStore.current
+    val qualitySnapshots = qualityStore?.snapshots?.collectAsState()?.value.orEmpty()
+    val qualityVariant = remember(channel.sourceId, channel.sourceItemId, channel.streamUrl) {
+        com.fortresstv.player.telemetry.playbackStreamVariantId(channel.sourceId, channel.sourceItemId, channel.streamUrl)
+    }
+    val measuredQuality = qualityVariant?.let(qualitySnapshots::get)
     val strings = LocalAppStrings.current
     val presentation = remember(channel.tvgId, channel.tvgName, channel.name, epgGuide, scheduleNow, epgScheduleCorrectionMinutes, manualXmltvId, strings) {
         val current = epgGuide?.snapshot(
@@ -1647,6 +1654,7 @@ internal fun GuideChannelRow(
         selected = selected,
         isFavorite = isFavorite,
         healthSnapshot = effectiveHealth,
+        measuredQuality = measuredQuality,
         modifier = modifier,
         sidebarFocusRequester = sidebarFocusRequester,
         fallbackFocusRequester = fallbackFocusRequester,
@@ -1672,6 +1680,7 @@ internal fun ChannelRow(
     selected: Boolean,
     isFavorite: Boolean = false,
     healthSnapshot: com.fortresstv.player.telemetry.ChannelHealthSnapshot? = null,
+    measuredQuality: com.fortresstv.player.telemetry.MeasuredVideoQuality? = null,
     modifier: Modifier = Modifier,
     sidebarFocusRequester: FocusRequester? = null,
     fallbackFocusRequester: FocusRequester? = null,
@@ -1763,8 +1772,19 @@ internal fun ChannelRow(
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
+                        measuredQuality?.let { quality ->
+                            Spacer(Modifier.width(6.dp))
+                            StreamQualityBadge(
+                                quality = com.fortresstv.player.player.classifyStreamQuality(quality.width, quality.height)!!,
+                                label = strings.lastPlayedQuality(quality.tier),
+                                modifier = Modifier.testTag("channel_measured_quality").semantics {
+                                    contentDescription = "${strings.lastPlayedQuality(quality.tier)} (${quality.width} × ${quality.height})"
+                                }
+                            )
+                        }
                     }
                     if (timeRange != null) {
                         Spacer(Modifier.width(8.dp))

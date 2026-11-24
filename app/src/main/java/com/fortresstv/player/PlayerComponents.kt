@@ -460,16 +460,25 @@ internal fun PlayerPanel(
     LaunchedEffect(liveChannelId, currentHealth?.state) {
         adaptiveLoadControl.updateHealthState(currentHealth?.state ?: com.fortresstv.player.telemetry.ConnectionHealthState.UNKNOWN)
     }
-    val tracker = remember(activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl, player) {
+    val channelQualityStore = com.fortresstv.player.telemetry.LocalChannelQualityStore.current
+    val qualityScope = rememberCoroutineScope()
+    val qualityVariantId = remember(activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl) {
+        com.fortresstv.player.telemetry.playbackStreamVariantId(activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl)
+    }
+    val tracker = remember(activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl, player, channelQualityStore) {
         com.fortresstv.player.telemetry.PlaybackHealthTracker(
             householdId = currentHouseholdId,
             profileId = currentProfileId,
             channelId = liveChannelId,
             streamKind = com.fortresstv.player.telemetry.StreamKindWire.LIVE,
             providerId = activeChannel.sourceId,
-            streamVariantId = com.fortresstv.player.telemetry.playbackStreamVariantId(
-                activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl
-            ),
+            streamVariantId = qualityVariantId,
+            onVideoQualityObserved = { quality ->
+                val variant = qualityVariantId
+                if (variant != null && channelQualityStore != null) qualityScope.launch(Dispatchers.IO) {
+                    channelQualityStore.mergeObservations(mapOf(variant to quality))
+                }
+            },
             onActiveMetricsUpdated = { startMs, stalls, stallMs, errCode, reg ->
                 channelHealthRepo.recordActiveMetrics(
                     channelId = liveChannelId,
@@ -1558,7 +1567,8 @@ internal fun Modifier.tvFullscreenControl(
 @Composable
 internal fun StreamQualityBadge(
     quality: com.fortresstv.player.player.StreamQualityTier,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    label: String = quality.label
 ) {
     val accent = when (quality) {
         com.fortresstv.player.player.StreamQualityTier.UHD_4K -> Color(0xFFFBBF24)
@@ -1574,7 +1584,7 @@ internal fun StreamQualityBadge(
         modifier = modifier
     ) {
         Text(
-            text = quality.label,
+            text = label,
             color = accent,
             fontSize = 10.sp,
             fontWeight = FontWeight.ExtraBold,

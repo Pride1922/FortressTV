@@ -24,6 +24,11 @@ bounded telemetry queue. Deploy this migration before releasing the updated app.
 constraints, index, and enabled RLS without reading or changing customer rows.
 It is safe to run against the hosted schema as well as the disposable test database.
 
+Channel badges restore a bounded set of recent measurements through a GET filtered
+by the authenticated household and selected profile. Migration
+`20261124173958_index_latest_profile_channel_quality.sql` adds the matching partial
+index. This uses the existing table/RLS and adds no read grants or functions.
+
 ## Account schema history
 
 Status: the database foundation and cloud sync extensions have been applied to the

@@ -437,6 +437,35 @@ internal class SupabaseSyncApi(
         return acknowledgedSessionIds
     }
 
+    fun fetchChannelQualities(
+        householdId: String, profileId: String, accessToken: String
+    ): Map<String, com.fortresstv.player.telemetry.MeasuredVideoQuality> = runCatching {
+        // Normalize UUIDs before placing them in REST filters, matching telemetry uploads.
+        fun uuid(value: String) = runCatching { java.util.UUID.fromString(value).toString() }
+            .getOrElse { java.util.UUID.nameUUIDFromBytes(value.toByteArray(Charsets.UTF_8)).toString() }
+        val household = uuid(householdId)
+        val profile = uuid(profileId)
+        val text = transport.request(
+            "GET", "/rest/v1/playback_health_summaries?select=household_id,profile_id,stream_variant_id,video_width,video_height,quality_observed_at" +
+                "&household_id=eq.$household&profile_id=eq.$profile&stream_kind=eq.live" +
+                "&quality_observed_at=not.is.null&order=quality_observed_at.desc&limit=500",
+            null, accessToken, null
+        )
+        val rows = JSONArray(text)
+        val result = mutableMapOf<String, com.fortresstv.player.telemetry.MeasuredVideoQuality>()
+        for (i in 0 until minOf(rows.length(), 500)) {
+            val row = rows.optJSONObject(i) ?: continue
+            if (row.optString("household_id") != household || row.optString("profile_id") != profile) continue
+            val variant = com.fortresstv.player.telemetry.validStreamVariantId(row.optString("stream_variant_id")) ?: continue
+            val quality = runCatching {
+                com.fortresstv.player.telemetry.MeasuredVideoQuality(row.getInt("video_width"), row.getInt("video_height"),
+                    java.time.Instant.parse(row.getString("quality_observed_at")).toEpochMilli())
+            }.getOrNull() ?: continue
+            if (quality.observedAtEpochMs > (result[variant]?.observedAtEpochMs ?: 0L)) result[variant] = quality
+        }
+        result
+    }.getOrDefault(emptyMap())
+
     fun fetchChannelHealthAggregates(
         accessToken: String
     ): Map<String, com.fortresstv.player.telemetry.ChannelHealthSnapshot> {

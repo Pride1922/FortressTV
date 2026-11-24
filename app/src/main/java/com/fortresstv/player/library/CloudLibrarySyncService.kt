@@ -44,6 +44,9 @@ class CloudLibrarySyncService internal constructor(
     private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressDebounceJob: kotlinx.coroutines.Job? = null
+    private val qualityPullLock = Any()
+    private var lastQualityPullNamespace: String? = null
+    private var lastQualityPullAtMs = 0L
 
     init {
         registerNetworkCallback()
@@ -305,7 +308,7 @@ class CloudLibrarySyncService internal constructor(
             val preferencesSynced = flushPreferences(pending, accountState.accessToken)
             val remaining = pending.filterNot { it.actionType == SyncActionType.UPSERT_PREFERENCES }
             if (remaining.isEmpty()) {
-                runCatching { flushTelemetryInternal(accountState.accessToken) }
+                runCatching { flushTelemetryInternal(accountState) }
                 return@withLock preferencesSynced
             }
             val sessionToken = profileRepository.getOrOpenActiveSessionToken() ?: return@withLock false
@@ -389,7 +392,7 @@ class CloudLibrarySyncService internal constructor(
                     allSynced = false
                 }
             }
-            runCatching { flushTelemetryInternal(accountState.accessToken) }
+            runCatching { flushTelemetryInternal(accountState) }
             allSynced
         }
     }
@@ -413,12 +416,33 @@ class CloudLibrarySyncService internal constructor(
         return synced
     }
 
-    private fun flushTelemetryInternal(accessToken: String) {
+    private fun flushTelemetryInternal(accountState: AccountState.AuthenticatedOnline) {
+        val accessToken = accountState.accessToken
         val batch = telemetryStore.pendingBatch(50)
         if (batch.isNotEmpty()) {
             val acknowledged = syncApi.uploadPlaybackHealthSummaries(batch, accessToken)
             if (acknowledged.isNotEmpty()) {
                 telemetryStore.acknowledge(acknowledged)
+            }
+        }
+        if (accountRepository.currentUserId() == accountState.userId &&
+            com.fortresstv.player.source.SourceSettingsStore(context).telemetryEnabled()) {
+            val profileId = profileRepository.activeProfile.value.id
+            val namespace = profileProgressNamespace(accountState.userId, profileId)
+            val now = android.os.SystemClock.elapsedRealtime()
+            val shouldPull = synchronized(qualityPullLock) {
+                if (lastQualityPullNamespace != namespace || now - lastQualityPullAtMs >= 60_000) {
+                    lastQualityPullNamespace = namespace
+                    lastQualityPullAtMs = now
+                    true
+                } else false
+            }
+            if (shouldPull) {
+                val qualities = syncApi.fetchChannelQualities(accountState.userId, profileId, accessToken)
+                if (qualities.isNotEmpty() && accountRepository.currentUserId() == accountState.userId &&
+                    profileRepository.activeProfile.value.id == profileId) {
+                    com.fortresstv.player.telemetry.ChannelQualityStore(context, namespace).mergeObservations(qualities)
+                }
             }
         }
         val aggregates = syncApi.fetchChannelHealthAggregates(accessToken)
@@ -434,7 +458,7 @@ class CloudLibrarySyncService internal constructor(
     suspend fun flushTelemetry(): Unit = withContext(Dispatchers.IO) {
         val accountState = accountRepository.resolveAccountState()
         if (accountState is AccountState.AuthenticatedOnline) {
-            flushTelemetryInternal(accountState.accessToken)
+            flushTelemetryInternal(accountState)
         }
     }
 

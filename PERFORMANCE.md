@@ -1,5 +1,19 @@
 # FortressTV performance roadmap
 
+## Measured channel quality badges (2026-11-24)
+
+Channel rows read a bounded 500-variant cache, isolated per household/profile.
+Only composed rows compute a remembered variant hash; there are no per-row
+database or network requests. Cache loading, merging, and persistence run on IO
+dispatchers. Live observations publish only when the resolution changes; cloud
+restoration reads at most 500 sessions and is throttled to once per minute.
+
+`channelListMeasuredQualityFling` benchmarks scrolling with a measured badge
+visible. Play a visible channel first, then use the data-preserving procedure in
+`macrobenchmark/README.md` with an explicit physical-device serial. Compilation
+does not establish scrolling performance: physical before/after measurements and
+tablet/TV layout verification remain outstanding for this change.
+
 ## RC5 account-isolation startup cleanup (2026-11-18)
 
 The first launch runs a one-time cleanup of network source settings and parsed

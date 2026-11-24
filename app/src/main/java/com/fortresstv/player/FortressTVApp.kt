@@ -1652,7 +1652,14 @@ internal fun FortressTVApp(
         }
     }
 
+    val channelQualityNamespace = com.fortresstv.player.library.profileProgressNamespace(currentUserId, activeHouseholdProfile.id)
+    val channelQualityStore = remember(channelQualityNamespace) {
+        com.fortresstv.player.telemetry.ChannelQualityStore(context.applicationContext, channelQualityNamespace)
+    }
+    LaunchedEffect(channelQualityStore) { channelQualityStore.observe() }
+
     CompositionLocalProvider(
+        com.fortresstv.player.telemetry.LocalChannelQualityStore provides channelQualityStore,
         LocalAppStrings provides strings,
         LocalFormFactor provides formFactor,
         LocalPlaybackMode provides playbackMode,

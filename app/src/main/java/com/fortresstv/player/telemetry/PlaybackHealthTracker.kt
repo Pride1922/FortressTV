@@ -33,6 +33,7 @@ class PlaybackHealthTracker(
     private val clock: () -> Long = System::currentTimeMillis,
     private val onActiveMetricsUpdated: ((startupMs: Long, stallCount: Int, totalStallMs: Long, errorCode: String?, region: String) -> Unit)? = null,
     val streamVariantId: String? = null,
+    private val onVideoQualityObserved: ((MeasuredVideoQuality) -> Unit)? = null,
     private val onFinalized: (PlaybackHealthSummary) -> Unit
 ) : AnalyticsListener {
 
@@ -91,7 +92,11 @@ class PlaybackHealthTracker(
         if (validStreamVariantId(streamVariantId) == null) return
         val size = pendingVideoSize ?: return
         val observedAt = clock().takeIf { it > 0 } ?: return
+        val previous = measuredVideoQuality
         measuredVideoQuality = MeasuredVideoQuality(size.width, size.height, observedAt)
+        if (previous == null || previous.width != size.width || previous.height != size.height) {
+            onVideoQualityObserved?.invoke(measuredVideoQuality!!)
+        }
     }
 
     override fun onPlaybackStateChanged(
