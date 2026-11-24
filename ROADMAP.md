@@ -64,6 +64,8 @@ VOD subtitle timing is implemented for subtitles supported by Media3's extractio
 
 Settings search is implemented with a local bilingual index of controls/groups, accent-insensitive matching, and navigation that scrolls to and highlights the destination. No credentials, source details, or other user-entered values are indexed. Device keyboard/D-pad validation remains outstanding.
 
+Playback telemetry now captures the last valid decoder resolution after a frame is rendered, with an observation timestamp and an opaque identifier scoped to the source/item/stream variant. Supabase derives SD/HD/FHD/2K/4K from the dimensions. Legacy summaries remain valid, and collection uses the existing telemetry toggle and bounded upload queue. This stores observations; it does not sync preferred versions or add pre-playback quality badges.
+
 Existing directions, subject to product prioritisation:
 
 1. Complete Android TV D-pad workflow audits, focus restoration, Back behavior, and emulator/physical-device validation against [ANDROID_TV_PLAN.md](ANDROID_TV_PLAN.md).

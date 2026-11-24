@@ -54,6 +54,8 @@ enum class StreamKindWire(val wire: String) {
  * @property playerErrorCode Media3 player error code name if session suffered a fatal failure, or null.
  * @property region Coarse geographical region (2-letter country code or "unknown").
  * @property completed True if playback finished or user exited cleanly; false on unhandled error/crash.
+ * @property streamVariantId Opaque source/item/stream hash; never a raw URL.
+ * @property videoQuality Last valid decoder-size observation after rendering a video frame, or unknown.
  */
 data class PlaybackHealthSummary(
     val sessionId: String,
@@ -71,8 +73,15 @@ data class PlaybackHealthSummary(
     val droppedFramesPct: Float,
     val playerErrorCode: String?,
     val region: String,
-    val completed: Boolean
+    val completed: Boolean,
+    val streamVariantId: String? = null,
+    val videoQuality: MeasuredVideoQuality? = null
 ) {
+    init {
+        require(streamVariantId == null || validStreamVariantId(streamVariantId) != null)
+        require(videoQuality == null || streamVariantId != null)
+    }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("session_id", sessionId)
         put("household_id", householdId)
@@ -90,6 +99,12 @@ data class PlaybackHealthSummary(
         if (playerErrorCode != null) put("player_error_code", playerErrorCode)
         put("region", region)
         put("completed", completed)
+        if (streamVariantId != null) put("stream_variant_id", streamVariantId)
+        videoQuality?.let {
+            put("video_width", it.width)
+            put("video_height", it.height)
+            put("quality_observed_at_ms", it.observedAtEpochMs)
+        }
     }
 
     /**
@@ -112,6 +127,13 @@ data class PlaybackHealthSummary(
         if (playerErrorCode != null) put("player_error_code", playerErrorCode) else put("player_error_code", JSONObject.NULL)
         put("region", region)
         put("completed", completed)
+        if (streamVariantId != null) put("stream_variant_id", streamVariantId)
+        videoQuality?.let {
+            put("video_width", it.width)
+            put("video_height", it.height)
+            put("quality_observed_at", Instant.ofEpochMilli(it.observedAtEpochMs).toString())
+            // quality_tier is derived by Postgres; clients must not write it.
+        }
     }
 
     private fun toValidUuid(raw: String): String = runCatching {
@@ -121,24 +143,29 @@ data class PlaybackHealthSummary(
     }
 
     companion object {
-        fun fromJson(json: JSONObject): PlaybackHealthSummary = PlaybackHealthSummary(
-            sessionId = json.getString("session_id"),
-            householdId = json.getString("household_id"),
-            profileId = json.getString("profile_id"),
-            channelId = json.optString("channel_id", ""),
-            streamKind = StreamKindWire.fromWire(json.getString("stream_kind")),
-            providerId = json.optString("provider_id").takeIf { it.isNotBlank() && it != "null" },
-            startedAtEpochMs = json.optLong("started_at_ms", 0L),
-            endedAtEpochMs = json.optLong("ended_at_ms", 0L),
-            startupMs = json.optLong("startup_ms", 0L),
-            stallCount = json.optInt("stall_count", 0),
-            totalStallMs = json.optLong("total_stall_ms", 0L),
-            avgBitrateKbps = json.optInt("avg_bitrate_kbps", 0),
-            droppedFramesPct = json.optDouble("dropped_frames_pct", 0.0).toFloat(),
-            playerErrorCode = json.optString("player_error_code").takeIf { it.isNotBlank() && it != "null" },
-            region = json.optString("region", "unknown"),
-            completed = json.optBoolean("completed", true)
-        )
+        fun fromJson(json: JSONObject): PlaybackHealthSummary {
+            val variantId = validStreamVariantId(json.optString("stream_variant_id"))
+            return PlaybackHealthSummary(
+                sessionId = json.getString("session_id"),
+                householdId = json.getString("household_id"),
+                profileId = json.getString("profile_id"),
+                channelId = json.optString("channel_id", ""),
+                streamKind = StreamKindWire.fromWire(json.getString("stream_kind")),
+                providerId = json.optString("provider_id").takeIf { it.isNotBlank() && it != "null" },
+                startedAtEpochMs = json.optLong("started_at_ms", 0L),
+                endedAtEpochMs = json.optLong("ended_at_ms", 0L),
+                startupMs = json.optLong("startup_ms", 0L),
+                stallCount = json.optInt("stall_count", 0),
+                totalStallMs = json.optLong("total_stall_ms", 0L),
+                avgBitrateKbps = json.optInt("avg_bitrate_kbps", 0),
+                droppedFramesPct = json.optDouble("dropped_frames_pct", 0.0).toFloat(),
+                playerErrorCode = json.optString("player_error_code").takeIf { it.isNotBlank() && it != "null" },
+                region = json.optString("region", "unknown"),
+                completed = json.optBoolean("completed", true),
+                streamVariantId = variantId,
+                videoQuality = variantId?.let { MeasuredVideoQuality.fromJson(json) }
+            )
+        }
 
         @VisibleForTesting
         fun createForTest(

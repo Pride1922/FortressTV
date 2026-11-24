@@ -480,6 +480,9 @@ internal fun VodPlayerDialog(
             channelId = telemetryChannelId,
             streamKind = streamKind,
             providerId = request.sourceId,
+            streamVariantId = com.fortresstv.player.telemetry.playbackStreamVariantId(
+                request.sourceId, request.itemId, request.streamUrl
+            ),
             onActiveMetricsUpdated = { startMs, stalls, stallMs, errCode, reg ->
                 channelHealthRepo.recordActiveMetrics(
                     channelId = telemetryChannelId,
@@ -495,6 +498,13 @@ internal fun VodPlayerDialog(
                 telemetryStore.enqueue(summary)
             }
         )
+    }
+    DisposableEffect(tracker, player) {
+        player.addAnalyticsListener(tracker)
+        onDispose {
+            tracker.finalizeSession()
+            player.removeAnalyticsListener(tracker)
+        }
     }
     val vodNetworkGeneration = rememberPlaybackNetworkGeneration()
     var resumePositionMs by remember(request.key) { mutableLongStateOf(initialPositionMs) }
@@ -893,10 +903,7 @@ internal fun VodPlayerDialog(
             override fun onPlayerError(error: PlaybackException) { playbackError = error.message ?: strings.playbackError }
         }
         player.addListener(listener)
-        player.addAnalyticsListener(tracker)
         onDispose {
-            tracker.finalizeSession()
-            player.removeAnalyticsListener(tracker)
             PlaybackOrchestrationWorkflow.updatePiPState(context = context, autoPiPEnabled = false, isFullscreen = false, isPlaying = false)
             mainActivity?.setOnPictureInPictureDismissedListener(null)
             val pos = maxOf(player.currentPosition.coerceAtLeast(0L), currentPositionMs)

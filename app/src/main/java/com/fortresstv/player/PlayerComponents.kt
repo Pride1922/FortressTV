@@ -460,13 +460,16 @@ internal fun PlayerPanel(
     LaunchedEffect(liveChannelId, currentHealth?.state) {
         adaptiveLoadControl.updateHealthState(currentHealth?.state ?: com.fortresstv.player.telemetry.ConnectionHealthState.UNKNOWN)
     }
-    val tracker = remember(activeChannel.streamUrl, player) {
+    val tracker = remember(activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl, player) {
         com.fortresstv.player.telemetry.PlaybackHealthTracker(
             householdId = currentHouseholdId,
             profileId = currentProfileId,
             channelId = liveChannelId,
             streamKind = com.fortresstv.player.telemetry.StreamKindWire.LIVE,
             providerId = activeChannel.sourceId,
+            streamVariantId = com.fortresstv.player.telemetry.playbackStreamVariantId(
+                activeChannel.sourceId, activeChannel.sourceItemId, activeChannel.streamUrl
+            ),
             onActiveMetricsUpdated = { startMs, stalls, stallMs, errCode, reg ->
                 channelHealthRepo.recordActiveMetrics(
                     channelId = liveChannelId,
@@ -483,7 +486,7 @@ internal fun PlayerPanel(
             }
         )
     }
-    DisposableEffect(activeChannel.streamUrl, player) {
+    DisposableEffect(tracker, player) {
         player.addAnalyticsListener(tracker)
         onDispose {
             tracker.finalizeSession()

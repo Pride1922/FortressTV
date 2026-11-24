@@ -2,6 +2,7 @@ package com.fortresstv.player.telemetry
 
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -31,12 +32,15 @@ class PlaybackHealthTracker(
     val region: String = resolveRegion(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val onActiveMetricsUpdated: ((startupMs: Long, stallCount: Int, totalStallMs: Long, errorCode: String?, region: String) -> Unit)? = null,
+    val streamVariantId: String? = null,
     private val onFinalized: (PlaybackHealthSummary) -> Unit
 ) : AnalyticsListener {
 
     private val startedAtEpochMs: Long = clock()
     private var startupMs: Long = 0L
     private var firstFrameRendered: Boolean = false
+    private var pendingVideoSize: VideoSize? = null
+    private var measuredVideoQuality: MeasuredVideoQuality? = null
 
     private var stallCount: Int = 0
     private var totalStallMs: Long = 0L
@@ -68,11 +72,26 @@ class PlaybackHealthTracker(
         output: Any,
         renderTimeMs: Long
     ) {
+        if (isFinalized.get()) return
         if (!firstFrameRendered) {
             startupMs = (clock() - startedAtEpochMs).coerceAtLeast(0L)
             firstFrameRendered = true
+            recordMeasuredVideoQuality()
             onActiveMetricsUpdated?.invoke(startupMs, stallCount, totalStallMs, playerErrorCode, region)
         }
+    }
+
+    override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: VideoSize) {
+        if (isFinalized.get() || videoSize.width !in 1..32_768 || videoSize.height !in 1..32_768) return
+        pendingVideoSize = videoSize
+        if (firstFrameRendered) recordMeasuredVideoQuality()
+    }
+
+    private fun recordMeasuredVideoQuality() {
+        if (validStreamVariantId(streamVariantId) == null) return
+        val size = pendingVideoSize ?: return
+        val observedAt = clock().takeIf { it > 0 } ?: return
+        measuredVideoQuality = MeasuredVideoQuality(size.width, size.height, observedAt)
     }
 
     override fun onPlaybackStateChanged(
@@ -189,7 +208,9 @@ class PlaybackHealthTracker(
             droppedFramesPct = droppedFramesPct,
             playerErrorCode = playerErrorCode,
             region = region,
-            completed = completedCleanly
+            completed = completedCleanly,
+            streamVariantId = validStreamVariantId(streamVariantId),
+            videoQuality = measuredVideoQuality
         )
 
         onFinalized(summary)

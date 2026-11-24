@@ -90,6 +90,7 @@ FortressTV uses the same APK on phones, tablets, and Android TV. The app include
 - Source caches are kept separate from user-library data so refreshes can preserve favourites and progress.
 - Multiple enabled sources retain their own identity, configuration, and refresh state.
 - Cloud sync and external integrations are optional. Enabling them involves communication with the corresponding services.
+- When telemetry is enabled, playback summaries include the last measured video resolution and an opaque source/stream-variant identifier. Stream URLs and credentials are not included in these new fields.
 - Playback outside the app requires visible PiP; invisible background audio is not a supported mode.
 
 When reporting a problem, remove playlist URLs, usernames, passwords, tokens, private guide links, and provider data from logs and screenshots.

@@ -1,5 +1,31 @@
 # FortressTV accounts: schema and implementation plan
 
+## Measured playback quality
+
+Migration `20261124172221_add_measured_playback_quality.sql` adds nullable
+`stream_variant_id`, `video_width`, `video_height`, and `quality_observed_at` fields
+to `playback_health_summaries`. `quality_tier` is a stored generated column using
+the same resolution thresholds as the player badges; clients must omit it from
+insert payloads. Old clients and queued sessions without measurements remain valid.
+
+The Android tracker uses valid Media3 decoder-size events after a video frame is
+rendered. Each session records its last valid observed size, not a manifest maximum
+or a quality inferred from a name. The timestamp is the client observation time.
+Audio-only/failed sessions without a rendered video frame leave quality unknown.
+
+Variant IDs are lowercase SHA-256 hashes of source/item/stream identity. The new
+fields contain no raw URLs, credentials, channel titles, or device identifiers.
+The existing household RLS remains in place; the migration adds no grants or
+cross-household views. A partial index supports future latest-quality lookups by
+household, provider, and variant. Uploads continue through the existing optional,
+bounded telemetry queue. Deploy this migration before releasing the updated app.
+
+`supabase/tests/measured_playback_quality.sql` verifies the generated tier,
+constraints, index, and enabled RLS without reading or changing customer rows.
+It is safe to run against the hosted schema as well as the disposable test database.
+
+## Account schema history
+
 Status: the database foundation and cloud sync extensions have been applied to the
 project. Migration `202611060002_profiles_and_parental_pin.sql` introduced
 parental controls and profile RPCs. Corrective migration
