@@ -1782,7 +1782,7 @@ internal fun ChannelRow(
                             Spacer(Modifier.width(6.dp))
                             StreamQualityBadge(
                                 quality = com.fortresstv.player.player.classifyStreamQuality(quality.width, quality.height)!!,
-                                label = strings.lastPlayedQuality(quality.tier),
+                                label = quality.tier,
                                 modifier = Modifier.testTag("channel_measured_quality").semantics {
                                     contentDescription = "${strings.lastPlayedQuality(quality.tier)} (${quality.width} × ${quality.height})"
                                 }
