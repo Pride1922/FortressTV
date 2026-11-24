@@ -2,7 +2,13 @@
 
 ## Status
 
-This document defines the implementation and test plan for making the existing FortressTV application a complete Android TV experience.
+Reviewed against the repository on 24 November 2026. This document defines the implementation and test plan for completing the existing Android TV experience; it is not a record that every milestone has passed.
+
+Already implemented: optional Leanback/touchscreen declarations, TV launcher category and banner, form-factor detection, shared focus helpers, remote player key dispatch, and local source transfer through QR/PIN setup and native discovery/send flows. See `AndroidManifest.xml`, `ui/AppFormFactor.kt`, `ui/TvFocus.kt`, `ui/TvPlayerKeyDispatcher.kt`, `TvReceiveSourceDialog.kt`, and `transfer/` under the application sources.
+
+Local source transfer uses session authentication and encrypted source payloads with confirmation on the receiving TV. It is a setup/import feature, not the persistent device-pairing and playback-control protocol specified under FortressTV Connect below. Long-term paired identities, Play on TV, resume-position handoff, and phone-based remote playback controls remain planned.
+
+Remaining work includes an end-to-end D-pad audit, focus restoration and Back-behavior verification, device/performance testing, and the remaining Connect milestones. The milestone and test sections below are acceptance targets, not evidence of completed validation.
 
 Android TV support will use the existing application rather than a separate companion app:
 
@@ -499,6 +505,6 @@ Before a TV-capable release, manually verify:
 - Pairing secrets, credentials, private URLs, and provider data do not appear in logs.
 - Network loss and remote disconnection do not leave invisible playback running.
 
-## First implementation boundary
+## Original first implementation boundary
 
-The first implementation change should stop after Milestone 1 and the navigation audit. It must not publish an APK, alter OTA metadata, install to a device, or change the release version unless those actions are separately requested.
+The original first change was scoped to Milestone 1 and the navigation audit. Implementation has since progressed beyond that boundary; use the current status above to select remaining work. Publishing an APK, altering OTA metadata, installing to a device, or changing the release version still requires explicit user instruction under `AGENTS.md`.

@@ -6,7 +6,11 @@ This file contains the permanent working rules for contributors and coding agent
 
 FortressTV is a private, content-neutral Android IPTV and media player. It does not ship channels, movies, credentials, playlists, EPG data, or links to copyrighted content. Users provide sources they are authorized to access.
 
-The primary target is an Android tablet, with Android TV and D-pad support considered in future UI decisions. The application currently supports M3U/M3U8 playlists, XMLTV EPG data, AndroidX Media3 playback, an FFmpeg audio-decoder extension, fullscreen playback, and fullscreen-only Picture-in-Picture.
+The primary target is an Android tablet. Phones and Android TV share the same application and APK; TV launcher support, focus helpers, remote playback keys, and local source transfer are implemented. Complete D-pad workflow and physical-device validation remain ongoing. Preserve both touch and remote navigation when changing the UI.
+
+The application supports multiple M3U/M3U8 and Xtream sources, XMLTV with automatic/manual channel mapping, live and VOD playback through AndroidX Media3 with the FFmpeg audio-decoder extension, fullscreen-only Picture-in-Picture, source-supported catch-up, sleep timer, and next-episode autoplay. Home, favourites, watchlists, followed series, watched state, and resume progress are implemented, as are optional household accounts/profiles, parental controls, cloud sync, metadata integrations, Trakt, and OpenSubtitles.
+
+Use `ROADMAP.md` for implementation status, `DESIGN_ROADMAP.md` for UX proposals, and `ANDROID_TV_PLAN.md` for remaining TV/Connect work. Existing code is the implementation reference; a planning document is not evidence that a feature is missing or validated. Update affected documentation alongside meaningful feature changes, distinguishing implemented behavior, device verification, and future proposals.
 
 ## Repository and release paths
 
@@ -38,7 +42,7 @@ The primary target is an Android tablet, with Android TV and D-pad support consi
 - Every user-visible feature must include English and Portuguese (Portugal), `pt-PT`, text in the same change.
 - Do not use Brazilian Portuguese terminology when a Portuguese (Portugal) form differs.
 - Keep tablet layouts touch-friendly and responsive in portrait and landscape.
-- Keep future D-pad focus and Android TV navigation possible; avoid UI structures that inherently require touch.
+- Preserve D-pad focus and Android TV navigation; primary actions must not inherently require touch. Keep focus visible and restore focus and scroll position when returning from details or playback.
 - Preserve the original order of channels and categories within a source unless the user explicitly customizes it.
 - Picture-in-Picture is fullscreen-only. Pressing Home from inline playback must pause playback instead of opening PiP.
 - Closing PiP must stop playback promptly. Restoring the PiP window must continue playback.
@@ -52,6 +56,8 @@ The primary target is an Android tablet, with Android TV and D-pad support consi
 - Refresh, cache, and report errors independently per source. One failing source must not remove or block other sources.
 - Keep credentials encrypted with the existing Android KeyStore-backed storage approach.
 - Database and preference migrations must preserve existing installations and saved playlists.
+- External metadata, subtitle, sports, and Trakt services must remain optional. Service outages or missing keys must not block source browsing or playback. Do not embed personal service keys in the application.
+- Local TV source transfer is distinct from the planned Connect playback handoff and remote-control protocol. Preserve session expiry, encrypted source payloads, attempt limits, receiving-device confirmation, and secret redaction when changing transfer code.
 
 ## Performance requirements
 
@@ -89,6 +95,10 @@ For UI or packaging changes, also run:
 ```
 
 For performance-sensitive changes, run the relevant tests and macrobenchmarks on the explicitly selected physical device. Multiple Android devices may be connected; never rely on an implicit ADB target.
+
+For TV UI changes, verify affected workflows with D-pad-only input, including visible focus, Back behavior, and focus restoration. Do not describe a TV milestone as verified based only on compilation or the presence of focus helpers.
+
+For documentation-only changes, check the diff, relative links, and implementation claims against the relevant code; Android builds and device tests are not required. Do not mark proposed features as agreed priorities without a product decision.
 
 ## Release procedure
 

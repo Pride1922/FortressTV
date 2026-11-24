@@ -1,6 +1,20 @@
 # FortressTV Design & UX Roadmap
 
-This document outlines the strategic UI/UX evolution of FortressTV from a functional IPTV utility into a cinematic personal media deck, while preserving its core tenets: absolute privacy, multi-source independence, offline cache resilience, and hardware efficiency.
+## Implementation status — 24 November 2026
+
+This document retains the original UX proposals, not a list of entirely missing features. Use [ROADMAP.md](ROADMAP.md) as the current feature inventory. Implementation does not imply completed device validation.
+
+| Original area | Current status | Remaining scope |
+|---|---|---|
+| Home and unified hub | Home shelves, Continue Watching, next episodes, favourite/recent channels, unified search, startup destination, and shelf customisation are implemented. | Refine interaction and measure performance. |
+| Live TV workspace | Responsive channel browsing, docked-player paths, and fullscreen quick-zap controls exist. | Validate continuity, responsive layouts, and remote focus across supported devices. |
+| Series and VOD | Details/artwork, season/episode browsing, progress, watched state, sorting, and catalogue navigation exist. | Audit exact visual specifications below before treating them as delivered. |
+| Player controls | Audio/subtitle selection, quality controls, Go Live, resilience settings, sleep timer, and next-episode autoplay exist. | Subtitle timing calibration and the proposed flyout presentation need separate assessment. |
+| Visual polish | Shared theme and TV focus helpers exist. | Blur, ambient artwork colouring, typography, and motion below remain design targets unless individually verified. |
+
+The detailed sections below describe intended interactions and visual treatments. Exact thresholds, gesture mappings, default values, and layouts must be checked against code before implementation or documentation changes. They are not acceptance-test results. New features require English and Portuguese (Portugal), touch and D-pad accessibility, and the verification defined in [AGENTS.md](AGENTS.md).
+
+This document outlines the UI/UX evolution of FortressTV while preserving private credential storage, optional external integrations, multi-source independence, offline cache resilience, and hardware efficiency.
 
 ---
 
