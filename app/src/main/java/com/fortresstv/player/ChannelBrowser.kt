@@ -1783,22 +1783,22 @@ internal fun ChannelRow(
                 if (measuredQuality != null || timeRange != null) {
                     Spacer(Modifier.height(3.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (timeRange != null) {
+                            Text(
+                                timeRange,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         measuredQuality?.let { quality ->
+                            if (timeRange != null) Spacer(Modifier.width(8.dp))
                             StreamQualityBadge(
                                 quality = com.fortresstv.player.player.classifyStreamQuality(quality.width, quality.height)!!,
                                 label = quality.tier,
                                 modifier = Modifier.testTag("channel_measured_quality").semantics {
                                     contentDescription = "${strings.lastPlayedQuality(quality.tier)} (${quality.width} × ${quality.height})"
                                 }
-                            )
-                        }
-                        if (timeRange != null) {
-                            if (measuredQuality != null) Spacer(Modifier.width(8.dp))
-                            Text(
-                                timeRange,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
