@@ -1425,7 +1425,7 @@ internal fun FullscreenPlayer(
                     }
                 )
             }
-            if (showVersionPicker) {
+            if (showVersionPicker && !inPictureInPicture) {
                 LiveVersionPicker(channel, channels, onDismiss = { showVersionPicker = false }) { next ->
                     showVersionPicker = false
                     if (next != channel) onChannelSelected(next)

@@ -70,7 +70,7 @@ Existing directions, subject to product prioritisation:
 2. Extend local TV setup into persistent Connect pairing, playback handoff, and remote control. The current source-transfer protocol must not be treated as a completed remote-control protocol.
 3. Refine individual channel/movie/series hiding and category rename/custom organisation beyond current category visibility/order controls.
 4. Evaluate advanced per-source request headers, Referer, User-Agent, and timeout controls against the existing request pipeline.
-5. Assess subtitle timing calibration and remaining layout/control refinements in [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md).
+5. Validate the implemented subtitle timing controls on devices and assess remaining layout/control refinements in [DESIGN_ROADMAP.md](DESIGN_ROADMAP.md).
 6. Continue measuring startup, channel/EPG scrolling, and large-catalogue browsing under [PERFORMANCE.md](PERFORMANCE.md); document measured changes rather than inferring performance from implementation alone.
 
 ## Ideas awaiting a product decision
@@ -81,7 +81,6 @@ These were discussed as possibilities and are not approved implementation milest
 - Personal collections per profile.
 - Remembered player choices per channel or series.
 - A consolidated per-source health dashboard.
-- Explicit selection of another available version from an enabled source.
 - Movie discovery filtered by available viewing time.
 
 ## Deferred scope

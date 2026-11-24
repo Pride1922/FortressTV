@@ -424,11 +424,9 @@ internal fun PlayerPanel(
         ))
     }
     var activeChannel by remember(channel, channels, playbackChoices) {
-        val preferredId = channel.libraryId()?.let(playbackChoices::savedVersion)
+        val preferredId = channelVersionKey(channel)?.let(playbackChoices::savedVersion)
         // A remembered alternative is used only while it is still in the visible library.
-        mutableStateOf(preferredId?.let { id -> channels.firstOrNull {
-            it.libraryId() == id && (it == channel || com.fortresstv.player.player.ChannelFailoverResolver.isCandidate(channel, it))
-        } } ?: channel)
+        mutableStateOf(resolveSavedChannelVersion(channel, channels, preferredId))
     }
     var attemptedFailoverUrls by remember(channel) { mutableStateOf(setOf(channel.streamUrl)) }
     var retriedSourceUrls by remember(channel) { mutableStateOf(emptySet<String>()) }

@@ -22,6 +22,7 @@ import com.fortresstv.player.ui.tvFocusHighlight
 import com.fortresstv.player.xtream.XtreamCatalog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 /** User choices only. Never stores stream URLs, credentials, or catalogue data. */
 internal class PlaybackChoiceStore(context: Context, profileId: String) {
@@ -47,6 +48,24 @@ internal class PlaybackChoiceStore(context: Context, profileId: String) {
 
 internal data class PlaybackVersionOption(val id: String, val title: String, val sourceName: String)
 
+/** Quality variants may share an EPG/library ID. Keep their choice IDs distinct
+ * without storing a credential-bearing stream URL in the preference store. */
+internal fun channelVersionKey(channel: PlaylistChannel): String? {
+    val libraryId = channel.libraryId() ?: return null
+    val digest = MessageDigest.getInstance("SHA-256").digest(channel.streamUrl.trim().toByteArray(Charsets.UTF_8))
+    return "$libraryId:version:" + digest.joinToString("") { "%02x".format(it) }
+}
+
+internal fun resolveSavedChannelVersion(channel: PlaylistChannel, channels: List<PlaylistChannel>, savedId: String?): PlaylistChannel {
+    if (savedId == null) return channel
+    val savedLibraryId = savedId.substringBefore(":version:")
+    return channels.firstOrNull {
+        // Avoid hashing every stream in a large playlist on the UI thread.
+        it.libraryId() == savedLibraryId && channelVersionKey(it) == savedId &&
+            (it == channel || ChannelFailoverResolver.isCandidate(channel, it))
+    } ?: channel
+}
+
 @Composable
 internal fun LiveVersionPicker(
     channel: PlaylistChannel,
@@ -68,7 +87,7 @@ internal fun LiveVersionPicker(
         }
         versions = withContext(Dispatchers.Default) {
             channels.filter { it.libraryId() != null && (it == channel || ChannelFailoverResolver.isCandidate(channel, it)) }
-                .distinctBy { it.libraryId() }
+                .distinctBy(::channelVersionKey)
         }
     }
     val available = versions
@@ -78,11 +97,11 @@ internal fun LiveVersionPicker(
         AlertDialog(onDismissRequest = onDismiss, text = { Text(strings.continueWatchingUnavailable) },
             confirmButton = { TextButton(onClick = onDismiss) { Text(strings.close) } })
     } else {
-        val options = available.map { PlaybackVersionOption(it.libraryId()!!, it.name, sourceNames[it.sourceId].orEmpty()) }
+        val options = available.map { PlaybackVersionOption(channelVersionKey(it)!!, it.name, sourceNames[it.sourceId].orEmpty()) }
         val ids = options.map { it.id }
-        PlaybackVersionPicker(options, choices.preferredVersion(ids) ?: channel.libraryId(), onDismiss) { id ->
+        PlaybackVersionPicker(options, choices.preferredVersion(ids) ?: channelVersionKey(channel), onDismiss) { id ->
             choices.saveVersion(ids, id)
-            onSelect(available.first { it.libraryId() == id })
+            onSelect(available.first { channelVersionKey(it) == id })
         }
     }
 }
