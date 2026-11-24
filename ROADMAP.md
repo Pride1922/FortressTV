@@ -60,6 +60,8 @@ Approved sequence (24 November 2026): validate the language-selection fix, add e
 
 Explicit movie/live version selection is implemented; matching alternatives remain distinct source items. Movie version discovery runs on demand off the main thread, and choices are saved locally per profile. Tablet/TV interaction validation remains outstanding.
 
+VOD subtitle timing is implemented for subtitles supported by Media3's extraction-time parsers: ±5 seconds in 100 ms steps, reset, and local persistence per source item/profile. Changes reprepare the same media at the current position to reparse buffered cues and may briefly buffer. Live captions and unsupported subtitle formats do not expose timing controls. Device playback/lifecycle validation remains outstanding.
+
 Existing directions, subject to product prioritisation:
 
 1. Complete Android TV D-pad workflow audits, focus restoration, Back behavior, and emulator/physical-device validation against [ANDROID_TV_PLAN.md](ANDROID_TV_PLAN.md).

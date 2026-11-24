@@ -406,6 +406,12 @@ object FortressPlayerFactory {
         return mediaSourceFactory(context, tune, fastLiveStartup = mode == PlaybackMode.AUTO).createMediaSource(mediaItem)
     }
 
+    fun vodSource(context: Context, mediaItem: MediaItem, subtitleOffsetMs: Int): MediaSource {
+        val factory = mediaSourceFactory(context)
+        if (subtitleOffsetMs != 0) factory.setSubtitleParserFactory(OffsetSubtitleParserFactory(subtitleOffsetMs))
+        return factory.createMediaSource(mediaItem)
+    }
+
     private fun mediaSourceFactory(
         context: Context,
         tune: LiveTuneBenchmark? = null,

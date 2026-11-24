@@ -450,6 +450,8 @@ internal fun VodPlayerDialog(
     var attachedSubtitles by remember(request.key) { mutableStateOf<List<Pair<OpenSubtitlesItem, java.io.File>>>(emptyList()) }
     var pendingSubtitleOverrideLabel by remember(request.key) { mutableStateOf<String?>(null) }
     var showOpenSubtitlesSearchDialog by remember { mutableStateOf(false) }
+    val playbackChoices = remember(traktNamespace) { PlaybackChoiceStore(context, traktNamespace) }
+    var subtitleOffsetMs by remember(traktNamespace, request.key) { mutableIntStateOf(playbackChoices.subtitleOffsetMs(request.key)) }
 
     val playbackMode = LocalPlaybackMode.current
     val player = remember(request.streamUrl, playbackMode) {
@@ -932,7 +934,7 @@ internal fun VodPlayerDialog(
                 }
             )
             .build()
-        player.setMediaItem(newMediaItem, currentPos)
+        player.setMediaSource(FortressPlayerFactory.vodSource(context, newMediaItem, subtitleOffsetMs), currentPos)
         player.prepare()
         player.playWhenReady = wasPlaying
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -940,6 +942,21 @@ internal fun VodPlayerDialog(
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredTextLanguage(item.language)
             .build()
+    }
+
+    fun adjustSubtitleTiming(value: Int) {
+        val bounded = com.fortresstv.player.player.boundedSubtitleOffsetMs(value)
+        if (bounded == subtitleOffsetMs) return
+        val mediaItem = player.currentMediaItem ?: return
+        val position = player.currentPosition.coerceAtLeast(0L)
+        val wasPlaying = player.playWhenReady
+        playbackChoices.saveSubtitleOffsetMs(request.key, bounded)
+        subtitleOffsetMs = bounded
+        // Reparse buffered cues with the new timing while keeping the same media,
+        // position, playback state, and track-selection parameters.
+        player.setMediaSource(FortressPlayerFactory.vodSource(context, mediaItem, bounded), position)
+        player.prepare()
+        player.playWhenReady = wasPlaying
     }
 
     var autoSearchAttempted by remember(request.key) { mutableStateOf(false) }
@@ -1026,7 +1043,7 @@ internal fun VodPlayerDialog(
                 }
             }
             .build()
-        player.setMediaItem(mediaItem)
+        player.setMediaSource(FortressPlayerFactory.vodSource(context, mediaItem, subtitleOffsetMs))
         player.prepare()
         if (resumePositionMs > 0L) player.seekTo(resumePositionMs)
         player.play()
@@ -1994,6 +2011,12 @@ internal fun VodPlayerDialog(
                         if (type == C.TRACK_TYPE_AUDIO) userManuallySelectedAudio = true
                         if (type == C.TRACK_TYPE_TEXT) userManuallySelectedSubtitles = true
                     },
+                    subtitleOffsetMs = subtitleOffsetMs,
+                    onSubtitleOffsetChanged = if (subtitleTracks.any { track ->
+                        val format = track.group.getTrackFormat(track.trackIndex)
+                        track.isSelected && (format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES ||
+                            androidx.media3.extractor.text.DefaultSubtitleParserFactory().supportsFormat(format))
+                    }) ::adjustSubtitleTiming else null,
                     onAudioLanguageSelected = onPreferredAudioLanguageChanged,
                     onSubtitleLanguageSelected = onPreferredSubtitleLanguageChanged,
                     onClose = { showTracksDialog = false }
@@ -2138,6 +2161,8 @@ internal fun PlayerControlsDrawer(
     isLive: Boolean,
     onSearchOpenSubtitles: (() -> Unit)? = null,
     onUserTrackSelected: (Int) -> Unit = {},
+    subtitleOffsetMs: Int = 0,
+    onSubtitleOffsetChanged: ((Int) -> Unit)? = null,
     onAudioLanguageSelected: ((String) -> Unit)? = null,
     onSubtitleLanguageSelected: ((String) -> Unit)? = null,
     onClose: () -> Unit
@@ -2374,6 +2399,10 @@ internal fun PlayerControlsDrawer(
 
                         Spacer(Modifier.height(8.dp))
 
+                        if (onSubtitleOffsetChanged != null) {
+                            SubtitleTimingControls(subtitleOffsetMs, onSubtitleOffsetChanged)
+                            HorizontalDivider()
+                        }
                         // Subtitles Section
                         Text(
                             strings.subtitles,

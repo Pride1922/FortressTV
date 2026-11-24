@@ -29,6 +29,12 @@ internal class PlaybackChoiceStore(context: Context, profileId: String) {
 
     fun savedVersion(itemId: String): String? = prefs.getString("version:$itemId", null)
 
+    fun subtitleOffsetMs(itemId: String): Int = com.fortresstv.player.player.boundedSubtitleOffsetMs(prefs.getInt("subtitle_offset:$itemId", 0))
+
+    fun saveSubtitleOffsetMs(itemId: String, value: Int) {
+        prefs.edit().putInt("subtitle_offset:$itemId", com.fortresstv.player.player.boundedSubtitleOffsetMs(value)).apply()
+    }
+
     fun preferredVersion(itemIds: List<String>): String? = itemIds.asSequence()
         .mapNotNull(::savedVersion)
         .firstOrNull { it in itemIds }

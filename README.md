@@ -44,7 +44,7 @@ FortressTV brings your own IPTV and media sources into one organised library. Wa
 | Feature | What you can do |
 |---|---|
 | Fullscreen and Picture-in-Picture | Watch fullscreen, then use PiP on supported devices. PiP is available from fullscreen playback only. |
-| Audio and subtitles | Select tracks, set preferred languages, and optionally search for subtitles through OpenSubtitles. |
+| Audio and subtitles | Select tracks, set preferred languages, and optionally search for subtitles through OpenSubtitles. Adjust supported VOD subtitle timing in 100 ms steps, saved per title and profile. |
 | Sleep timer | Stop playback after a timer or at supported programme/episode boundaries. |
 | Catch-up | Watch archived programmes when your configured source supports them. Availability and retention depend on the source. |
 | Quality and resilience | Choose available video quality options, return to the live edge, and adjust playback resilience settings. |

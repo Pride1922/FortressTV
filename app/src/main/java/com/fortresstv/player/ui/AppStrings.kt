@@ -285,6 +285,11 @@ interface Strings {
     val videoQuality: String
     val chooseVersion: String
     val versionPreferenceHint: String
+    val subtitleTiming: String
+    val subtitleTimingHint: String
+    val subtitlesEarlier: String
+    val subtitlesLater: String
+    val resetSubtitleTiming: String
     val qualityAuto: String
     val qualityAdaptive: String
     val goLive: String
@@ -895,6 +900,11 @@ object EnglishStrings : Strings {
     override val videoQuality = "Video Quality"
     override val chooseVersion = "Choose version"
     override val versionPreferenceHint = "Choose a source and version. Your selection is remembered for this profile."
+    override val subtitleTiming = "Subtitle timing"
+    override val subtitleTimingHint = "Negative: earlier. Positive: later. Saved for this title and profile. Applying an adjustment may briefly buffer playback."
+    override val subtitlesEarlier = "Earlier"
+    override val subtitlesLater = "Later"
+    override val resetSubtitleTiming = "Reset timing"
     override val qualityAuto = "Auto"
     override val qualityAdaptive = "Adaptive bitrate (ABR)"
     override val goLive = "Go Live"
@@ -1508,6 +1518,11 @@ object PortugueseStrings : Strings {
     override val videoQuality = "Qualidade de vídeo"
     override val chooseVersion = "Escolher versão"
     override val versionPreferenceHint = "Escolha uma fonte e uma versão. A seleção fica guardada neste perfil."
+    override val subtitleTiming = "Sincronização das legendas"
+    override val subtitleTimingHint = "Negativo: mais cedo. Positivo: mais tarde. Guardado para este título e perfil. O ajuste pode interromper brevemente a reprodução para carregar dados."
+    override val subtitlesEarlier = "Mais cedo"
+    override val subtitlesLater = "Mais tarde"
+    override val resetSubtitleTiming = "Repor sincronização"
     override val qualityAuto = "Automático"
     override val qualityAdaptive = "Taxa de bits adaptativa (ABR)"
     override val goLive = "Ir para Direto"
