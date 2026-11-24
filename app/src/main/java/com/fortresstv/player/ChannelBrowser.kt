@@ -1760,11 +1760,11 @@ internal fun ChannelRow(
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.Start
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier.weight(1f)
                     ) {
                         if (healthSnapshot != null) {
                             com.fortresstv.player.telemetry.ConnectionHealthDot(snapshot = healthSnapshot)
@@ -1774,12 +1774,16 @@ internal fun ChannelRow(
                             channel.name,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                            modifier = Modifier.weight(1f)
                         )
+                    }
+                }
+                if (measuredQuality != null || timeRange != null) {
+                    Spacer(Modifier.height(3.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         measuredQuality?.let { quality ->
-                            Spacer(Modifier.width(6.dp))
                             StreamQualityBadge(
                                 quality = com.fortresstv.player.player.classifyStreamQuality(quality.width, quality.height)!!,
                                 label = quality.tier,
@@ -1788,15 +1792,15 @@ internal fun ChannelRow(
                                 }
                             )
                         }
-                    }
-                    if (timeRange != null) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            timeRange,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        if (timeRange != null) {
+                            if (measuredQuality != null) Spacer(Modifier.width(8.dp))
+                            Text(
+                                timeRange,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
                 if (nowPlaying != null) {
