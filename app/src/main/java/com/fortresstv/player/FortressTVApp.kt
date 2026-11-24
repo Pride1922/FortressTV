@@ -630,8 +630,8 @@ internal fun FortressTVApp(
 
         val activeSourceId = activeProfile?.id
         if (activeSourceId != null) {
-            hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
-            categoryOrder = userLibrary.categoryOrder(activeSourceId)
+            hiddenCategories = userLibrary.scopedHiddenCategories(playlists.map { it.id })
+            categoryOrder = userLibrary.scopedCategoryOrder(playlists.map { it.id })
         }
 
         val isPrimaryAdult = !activeHouseholdProfile.isChild && (householdProfiles.firstOrNull { !it.isChild }?.id == targetProfileId || householdProfiles.isEmpty())
@@ -775,8 +775,8 @@ internal fun FortressTVApp(
                         homeSectionOrder = settings.homeSectionOrder(targetProfileId)
                         hiddenSportsFilters = settings.hiddenSportsFilters(targetProfileId)
                         if (activeSourceId != null) {
-                            hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
-                            categoryOrder = userLibrary.categoryOrder(activeSourceId)
+                            hiddenCategories = userLibrary.scopedHiddenCategories(playlists.map { it.id })
+                            categoryOrder = userLibrary.scopedCategoryOrder(playlists.map { it.id })
                         }
                     }
                 }
@@ -784,12 +784,9 @@ internal fun FortressTVApp(
         }
     }
 
-    LaunchedEffect(activeProfile?.id) {
-        val activeSourceId = activeProfile?.id
-        if (activeSourceId != null) {
-            hiddenCategories = userLibrary.hiddenCategories(activeSourceId)
-            categoryOrder = userLibrary.categoryOrder(activeSourceId)
-        }
+    LaunchedEffect(playlists.map { it.id }, libraryNamespace) {
+        hiddenCategories = userLibrary.scopedHiddenCategories(playlists.map { it.id })
+        categoryOrder = userLibrary.scopedCategoryOrder(playlists.map { it.id })
     }
 
     LaunchedEffect(activeHouseholdProfile.id, activeHouseholdProfile.language) {
@@ -1810,11 +1807,11 @@ internal fun FortressTVApp(
                     hiddenCategories = hiddenCategories,
                     categoryOrder = categoryOrder,
                     progressRefreshTrigger = progressRefreshTrigger,
-                    onCategoriesChanged = { newHidden, newOrder ->
-                        hiddenCategories = newHidden
-                        categoryOrder = newOrder
-                        val sourceId = activeProfile?.id
-                        if (sourceId != null && currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
+                    onCategoriesChanged = { sourceId, newHidden, newOrder ->
+                        userLibrary.saveCategoryCustomization(sourceId, newHidden, newOrder)
+                        hiddenCategories = userLibrary.scopedHiddenCategories(playlists.map { it.id })
+                        categoryOrder = userLibrary.scopedCategoryOrder(playlists.map { it.id })
+                        if (currentUserId != null && activeHouseholdProfile.id != "restricted_default") {
                             cloudLibrarySyncService.recordCategoriesMutation(
                                 profileId = activeHouseholdProfile.id,
                                 sourceId = sourceId,

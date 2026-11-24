@@ -610,7 +610,7 @@ internal fun FortressLibrary(
     recentChannelIds: List<String>,
     hiddenCategories: Set<String> = emptySet(),
     categoryOrder: List<String> = emptyList(),
-    onCategoriesChanged: (Set<String>, List<String>) -> Unit = { _, _ -> },
+    onCategoriesChanged: (String, Set<String>, List<String>) -> Unit = { _, _, _ -> },
     onRecordChannelWatched: (PlaylistChannel) -> Unit,
     movieWatchlistIds: Set<String>,
     followedSeriesIds: Set<String>,
@@ -939,46 +939,50 @@ internal fun FortressLibrary(
                     categoryOrder = categoryOrder,
                     hideAdultContent = hideAdultContent,
                     onToggleCategoryHidden = { category ->
-                        val targetSourceId = playlist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
-                        val isAdult = isAdultContent(null, category)
+                        val (targetSourceId, name) = sourceCategoryParts(category) ?: return@ChannelBrowser
+                        val isAdult = isAdultContent(null, name)
                         val isHidden = category in hiddenCategories || (hideAdultContent && isAdult)
+                        val currentHidden = userLibrary.hiddenCategories(targetSourceId)
                         val updatedHidden = if (isHidden) {
-                            hiddenCategories - category
+                            currentHidden - name
                         } else {
-                            hiddenCategories + category
+                            currentHidden + name
                         }
-                        userLibrary.setCategoryHidden(targetSourceId, category, !isHidden)
                         if (isAdult && isHidden && hideAdultContent) {
                             onHideAdultContentChanged?.invoke(false)
                         }
-                        onCategoriesChanged(updatedHidden, categoryOrder)
+                        onCategoriesChanged(targetSourceId, updatedHidden, userLibrary.categoryOrder(targetSourceId))
                     },
                     onMoveCategory = { category, moveUp ->
-                        val targetSourceId = playlist.channels.firstOrNull { it.group == category }?.sourceId ?: activeProfile.id
-                        val list = (if (categoryOrder.isEmpty()) playlist.groups else categoryOrder).toMutableList()
-                        if (category !in list) list.add(category)
-                        val index = list.indexOf(category)
+                        val (targetSourceId, name) = sourceCategoryParts(category) ?: return@ChannelBrowser
+                        val available = playlist.channels.filter { it.sourceId == targetSourceId }.mapNotNull { it.group }.distinct()
+                        val savedOrder = userLibrary.categoryOrder(targetSourceId)
+                        val list = (savedOrder + available.filterNot { it in savedOrder }).toMutableList()
+                        if (name !in list) list.add(name)
+                        val index = list.indexOf(name)
                         if (moveUp && index > 0) {
                             list.removeAt(index)
-                            list.add(index - 1, category)
+                            list.add(index - 1, name)
                         } else if (!moveUp && index < list.size - 1) {
                             list.removeAt(index)
-                            list.add(index + 1, category)
+                            list.add(index + 1, name)
                         }
-                        val updatedOrder = userLibrary.setCategoryOrder(targetSourceId, list)
-                        onCategoriesChanged(hiddenCategories, updatedOrder)
+                        onCategoriesChanged(targetSourceId, userLibrary.hiddenCategories(targetSourceId), list)
                     },
                     onUnhideAllCategories = {
-                        val updatedHidden = userLibrary.unhideAllCategories(activeProfile.id)
-                        onCategoriesChanged(updatedHidden, categoryOrder)
+                        enabledSources.forEach { source ->
+                            onCategoriesChanged(source.id, emptySet(), userLibrary.categoryOrder(source.id))
+                        }
                     },
                     onHideAllCategories = { cats ->
-                        val updatedHidden = userLibrary.hideAllCategories(activeProfile.id, cats)
-                        onCategoriesChanged(updatedHidden, categoryOrder)
+                        cats.mapNotNull(::sourceCategoryParts).groupBy({ it.first }, { it.second }).forEach { (sourceId, names) ->
+                            onCategoriesChanged(sourceId, userLibrary.hiddenCategories(sourceId) + names, userLibrary.categoryOrder(sourceId))
+                        }
                     },
                     onResetCategoryOrder = {
-                        val updatedOrder = userLibrary.resetCategoryOrder(activeProfile.id)
-                        onCategoriesChanged(hiddenCategories, updatedOrder)
+                        enabledSources.forEach { source ->
+                            onCategoriesChanged(source.id, userLibrary.hiddenCategories(source.id), emptyList())
+                        }
                     },
                     onToggleFavorite = onToggleFavorite,
                     requestedChannel = requestedChannel,

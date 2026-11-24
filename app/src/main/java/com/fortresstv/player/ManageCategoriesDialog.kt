@@ -381,6 +381,7 @@ import coil.size.Precision
 
 @Composable
 internal fun ManageCategoriesDialog(
+    categoryLabels: Map<String, String> = emptyMap(),
     categories: List<String>,
     groupCounts: Map<String, Int>,
     hiddenCategories: Set<String>,
@@ -420,13 +421,12 @@ internal fun ManageCategoriesDialog(
     }
 
     val orderedCategories = remember(categories, categoryOrder) {
-        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
-        categories.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
+        orderedSourceCategories(categories, categoryOrder)
     }
 
-    val filteredCategories = remember(orderedCategories, searchQuery) {
+    val filteredCategories = remember(orderedCategories, searchQuery, categoryLabels) {
         if (searchQuery.isBlank()) orderedCategories
-        else orderedCategories.filter { it.contains(searchQuery.trim(), ignoreCase = true) }
+        else orderedCategories.filter { (categoryLabels[it] ?: sourceCategoryName(it)).contains(searchQuery.trim(), ignoreCase = true) }
     }
 
     BackHandler(onBack = {
@@ -624,7 +624,7 @@ internal fun ManageCategoriesDialog(
                                 Spacer(Modifier.width(6.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        category,
+                                        categoryLabels[category] ?: sourceCategoryName(category),
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp,
                                         color = if (isHidden) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurface,
@@ -643,7 +643,7 @@ internal fun ManageCategoriesDialog(
                                             hideKeyboard()
                                             onMoveCategory(category, true)
                                         },
-                                        enabled = index > 0,
+                                        enabled = index > 0 && sourceCategoryParts(filteredCategories[index - 1])?.first == sourceCategoryParts(category)?.first,
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(Icons.Default.ArrowUpward, contentDescription = strings.moveSourceUp, modifier = Modifier.size(16.dp))
@@ -653,7 +653,7 @@ internal fun ManageCategoriesDialog(
                                             hideKeyboard()
                                             onMoveCategory(category, false)
                                         },
-                                        enabled = index < filteredCategories.size - 1,
+                                        enabled = index < filteredCategories.size - 1 && sourceCategoryParts(filteredCategories[index + 1])?.first == sourceCategoryParts(category)?.first,
                                         modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(Icons.Default.ArrowDownward, contentDescription = strings.moveSourceDown, modifier = Modifier.size(16.dp))

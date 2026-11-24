@@ -176,6 +176,25 @@ class UserLibraryStore internal constructor(
         return preferences.getStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$profileId", emptySet()).orEmpty().toSet()
     }
 
+    fun categoryRevision(): Long = synchronized(preferences) { preferences.getLong("category_revision", 0L) }
+
+    fun saveCategoryCustomization(sourceId: String, hidden: Set<String>, order: List<String>) = synchronized(preferences) {
+        preferences.edit()
+            .putStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$sourceId", hidden.toSet())
+            .putString("${KEY_CATEGORY_ORDER_PREFIX}_$sourceId", order.joinToString("|"))
+            .putLong("category_revision", categoryRevision() + 1L)
+            .apply()
+    }
+
+    fun applyRemoteCategoryCustomization(sourceId: String, hidden: Set<String>, order: List<String>, expectedRevision: Long): Boolean = synchronized(preferences) {
+        if (categoryRevision() != expectedRevision) return@synchronized false
+        preferences.edit()
+            .putStringSet("${KEY_HIDDEN_CATEGORIES_PREFIX}_$sourceId", hidden.toSet())
+            .putString("${KEY_CATEGORY_ORDER_PREFIX}_$sourceId", order.joinToString("|"))
+            .apply()
+        true
+    }
+
     fun setCategoryHidden(profileId: String, group: String, hidden: Boolean): Set<String> {
         val updated = hiddenCategories(profileId).toMutableSet().apply {
             if (hidden) add(group) else remove(group)

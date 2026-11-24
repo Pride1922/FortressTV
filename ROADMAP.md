@@ -18,7 +18,7 @@ Phones, tablets, and Android TV share one application and APK. Tablet usability,
 |---|---|---|
 | Sources | Multiple M3U/M3U8 and Xtream sources; roles, enable/disable, ordering, independent caches/refreshes, encrypted credentials | `source/`, `playlist/`, `xtream/`, `SourceSyncWorkflow.kt` |
 | Live TV and EPG | Channel browsing, XMLTV, automatic matching, manual channel associations, schedule correction, configurable guide window, unmatched-channel tools | `ChannelBrowser.kt`, `ProgrammeGuideScreen.kt`, `EpgDialogs.kt`, `EpgTab.kt`, `epg/` |
-| User library | Favourite channels, Movie Watchlist, followed series, watched state, resume progress, recent channels, category hiding and ordering | `library/`, `FavoriteLibraryScreen.kt`, `ManageCategoriesDialog.kt` |
+| User library | Favourite channels, Movie Watchlist, followed series, watched state, resume progress, recent channels, per-source category hiding and ordering with cloud restoration | `library/`, `FavoriteLibraryScreen.kt`, `ManageCategoriesDialog.kt` |
 | Home | Continue Watching, next episodes, favourite/recent channels, unified search, configurable shelves and startup destination | `HomeScreen.kt`, `HomeShelvesStateHolder.kt`, `ui/CustomizeHomeDialog.kt` |
 | Movies and series | Cached catalogues, poster grids, search/sort, details, lazy episode loading, resume/restart, next episode and autoplay | `XtreamMoviesScreen.kt`, `XtreamSeriesScreen.kt`, `SeriesEpisodesDialog.kt`, `VodPlayerDialog.kt` |
 | Playback | Media3 with FFmpeg audio fallback, fullscreen controls, fullscreen-only PiP, audio/subtitle selection and language defaults, quality selection, Go Live, resilience controls, sleep timer | `FullscreenPlayer.kt`, `VodPlayerDialog.kt`, `PlaybackSleepTimer.kt`, `player/` |

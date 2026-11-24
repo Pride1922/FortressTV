@@ -1,5 +1,14 @@
 # FortressTV performance roadmap
 
+## Source-specific category visibility (2026-11-24)
+
+Category visibility now uses source-qualified UI keys, computed with the existing
+remembered channel-group counts. Source-local preferences are projected once when
+sources, profile, or customisation changes; channel rows perform no preference or
+network reads for category visibility. Run `channelListFling` and
+`programmeGuideFling` with two enabled sources for device validation. Physical
+before/after measurements for this category fix remain outstanding.
+
 ## Measured channel quality badges (2026-11-24)
 
 Channel rows read a bounded 500-variant cache, isolated per household/profile.

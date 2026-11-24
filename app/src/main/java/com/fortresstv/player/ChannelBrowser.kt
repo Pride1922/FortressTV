@@ -482,24 +482,23 @@ internal fun ChannelBrowser(
 
     val isCategoryHidden: (String) -> Boolean = remember(hiddenCategories, hideAdultContent) {
         { category ->
-            category in hiddenCategories || (hideAdultContent && isAdultContent(null, category))
+            category in hiddenCategories || (hideAdultContent && isAdultContent(null, sourceCategoryName(category)))
         }
     }
     val groupCounts = remember(playlist) {
-        playlist.channels.groupingBy { it.group.orEmpty() }.eachCount()
+        playlist.channels.groupingBy { it.categoryKey() }.eachCount()
     }
     val rawCategories = remember(playlist) {
         groupCounts.keys.filter { it.isNotBlank() }
     }
     val orderedCategories = remember(rawCategories, categoryOrder, hiddenCategories, hideAdultContent) {
         val nonHidden = rawCategories.filter { !isCategoryHidden(it) }
-        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
-        nonHidden.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
+        orderedSourceCategories(nonHidden, categoryOrder)
     }
     val allVisibleChannels = remember(playlist.channels, hiddenCategories, hideAdultContent) {
         playlist.channels.filter { channel ->
             val group = channel.group.orEmpty()
-            !isCategoryHidden(group) && (!hideAdultContent || !isAdultContent(channel.name, group))
+            !isCategoryHidden(channel.categoryKey()) && (!hideAdultContent || !isAdultContent(channel.name, group))
         }
     }
 
@@ -592,7 +591,7 @@ internal fun ChannelBrowser(
             .firstOrNull { it.id == selectedFilter.removePrefix("source:") }
             ?.name ?: strings.sources
         selectedFilter == uncategorizedFilter -> strings.uncategorized
-        selectedFilter.startsWith("group:") -> selectedFilter.removePrefix("group:")
+        selectedFilter.startsWith("group:") -> sourceCategoryName(selectedFilter.removePrefix("group:"))
         else -> strings.allChannels
     }
     val channelsInGroup = remember(playlist, allVisibleChannels, selectedFilter, recentChannels) {
@@ -606,7 +605,7 @@ internal fun ChannelBrowser(
             selectedFilter == uncategorizedFilter -> allVisibleChannels.filter { it.group.isNullOrBlank() }
             selectedFilter.startsWith("group:") -> {
                 val group = selectedFilter.removePrefix("group:")
-                allVisibleChannels.filter { it.group == group }
+                allVisibleChannels.filter { it.categoryKey() == group }
             }
             else -> allVisibleChannels
         }
@@ -656,7 +655,7 @@ internal fun ChannelBrowser(
 
     if (showProgrammeGuide) {
         val initialCategory = when {
-            selectedFilter.startsWith("group:") -> selectedFilter.removePrefix("group:")
+            selectedFilter.startsWith("group:") -> sourceCategoryName(selectedFilter.removePrefix("group:"))
             selectedFilter == recentFilter -> strings.navFavorites
             else -> strings.allChannels
         }
@@ -1046,7 +1045,7 @@ internal fun ChannelBrowser(
                     ) { group ->
                         val isSelected = selectedFilter == "group:$group"
                         GroupItem(
-                            name = group,
+                            name = sourceCategoryName(group),
                             count = groupCounts[group] ?: 0,
                             selected = isSelected,
                             modifier = if (isSelected) Modifier.focusRequester(categoryFocusRequester) else Modifier,
@@ -1471,6 +1470,10 @@ internal fun ChannelBrowser(
                 rawCategories.filter { isCategoryHidden(it) }.toSet()
             }
             ManageCategoriesDialog(
+                categoryLabels = rawCategories.associateWith { key ->
+                    val sourceName = enabledSources.firstOrNull { it.id == sourceCategoryParts(key)?.first }?.name
+                    if (enabledSources.size > 1 && sourceName != null) "${sourceCategoryName(key)} · $sourceName" else sourceCategoryName(key)
+                },
                 categories = rawCategories,
                 groupCounts = groupCounts,
                 hiddenCategories = effectivelyHidden,

@@ -415,7 +415,7 @@ internal fun EpgTab(
     val effectiveChannels = remember(playlist, hideAdultContent, hiddenCategories) {
         if (playlist == null) emptyList()
         else {
-            val base = if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+            val base = if (hiddenCategories.isEmpty()) playlist.channels else playlist.channels.filter { !it.hasHiddenCategory(hiddenCategories) }
             if (hideAdultContent) base.filterNot { isAdultContent(it.name, it.group) } else base
         }
     }

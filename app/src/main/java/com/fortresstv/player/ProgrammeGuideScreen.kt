@@ -473,7 +473,7 @@ internal fun ProgrammeGuideScreen(
 
     val allVisibleChannels = remember(playlist.channels, hiddenCategories) {
         if (hiddenCategories.isEmpty()) playlist.channels
-        else playlist.channels.filter { (it.group.orEmpty()) !in hiddenCategories }
+        else playlist.channels.filter { !it.hasHiddenCategory(hiddenCategories) }
     }
     val allGroup = strings.allChannels
     val favoritesGroup = "⭐ ${strings.navFavorites}"
@@ -483,7 +483,7 @@ internal fun ProgrammeGuideScreen(
     }
     val categories = remember(allVisibleChannels, categoryOrder, hiddenCategories) {
         val raw = allVisibleChannels.mapNotNull { it.group?.takeIf(String::isNotBlank) }.distinct().filter { it !in hiddenCategories }
-        val orderMap = categoryOrder.withIndex().associate { it.value to it.index }
+        val orderMap = categoryOrder.map(::sourceCategoryName).withIndex().associate { it.value to it.index }
         raw.sortedWith(compareBy({ orderMap[it] ?: Int.MAX_VALUE }, { it }))
     }
     var selectedGroup by remember(initialCategory) {

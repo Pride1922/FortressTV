@@ -361,8 +361,7 @@ class CloudLibrarySyncService internal constructor(
                             val orderList = mutableListOf<String>()
                             for (i in 0 until orderArr.length()) orderList.add(orderArr.getString(i))
 
-                            val validSourceUuid = runCatching { java.util.UUID.fromString(mutation.sourceId).toString() }.getOrNull()
-                                ?: java.util.UUID.nameUUIDFromBytes("source_${mutation.sourceId}".toByteArray()).toString()
+                            val validSourceUuid = categoryCloudSourceId(mutation.sourceId)
                             syncApi.saveProfileCategories(
                                 profileId = mutation.profileId,
                                 sourceId = validSourceUuid,
@@ -538,6 +537,8 @@ class CloudLibrarySyncService internal constructor(
         onUpdated: (() -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         coroutineContext.ensureActive()
+        val categoryRevision = userLibrary.categoryRevision()
+        val pendingCategoriesBefore = outbox.loadPending().filter { it.profileId == profileId && it.actionType == SyncActionType.UPSERT_CATEGORIES }.map { categoryCloudSourceId(it.sourceId) }.toSet()
         val remoteLibrary = pullRemoteLibrary(profileId)
         coroutineContext.ensureActive()
         val remoteProgress = pullRemoteProgress(profileId)
@@ -548,9 +549,12 @@ class CloudLibrarySyncService internal constructor(
         coroutineContext.ensureActive()
 
         if (remoteCategories.isNotEmpty()) {
+            val pendingCategories = pendingCategoriesBefore + outbox.loadPending().filter { it.profileId == profileId && it.actionType == SyncActionType.UPSERT_CATEGORIES }.map { categoryCloudSourceId(it.sourceId) }
+            val localSourceIds = com.fortresstv.player.source.SourceSettingsStore(context).getPlaylists().associate { categoryCloudSourceId(it.id) to it.id }
             for (custom in remoteCategories) {
-                userLibrary.setHiddenCategories(custom.sourceId, custom.hiddenCategories)
-                userLibrary.setCategoryOrder(custom.sourceId, custom.categoryOrder)
+                if (custom.sourceId in pendingCategories) continue
+                val localSourceId = localSourceIds[custom.sourceId] ?: custom.sourceId
+                userLibrary.applyRemoteCategoryCustomization(localSourceId, custom.hiddenCategories, custom.categoryOrder, categoryRevision)
             }
         }
 
