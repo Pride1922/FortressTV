@@ -66,14 +66,16 @@ class FeaturedSeriesShelfResolverTest {
             traktShow("First Popular", tmdbId = "101", imdbId = "tt101"),
             traktShow("Missing Locally", tmdbId = "999", imdbId = "tt999"),
             traktShow("Second Popular", tmdbId = "202", imdbId = "tt202"),
-            traktShow("Title Only Should Not Match", tmdbId = "303", imdbId = "tt303")
+            traktShow("Title Fallback Allowed", tmdbId = "303", imdbId = "tt303"),
+            traktShow("Conflicting Id Should Not Match", tmdbId = "404", imdbId = "tt404")
         )
         val sourceA = catalog(
             "sourceA",
             listOf(
                 series(1, "Second Popular A", imdbId = "TT202"),
-                series(2, "Title Only Should Not Match", tmdbId = null, imdbId = null),
-                series(3, "First Popular A", tmdbId = "101", imdbId = "tt101")
+                series(2, "Title Fallback Allowed", tmdbId = null, imdbId = null),
+                series(3, "First Popular A", tmdbId = "101", imdbId = "tt101"),
+                series(4, "Conflicting Id Should Not Match", tmdbId = "888", imdbId = null)
             )
         )
         val sourceB = catalog(
@@ -91,8 +93,8 @@ class FeaturedSeriesShelfResolverTest {
         )
 
         assertEquals(FeaturedSeriesMode.TRAKT_POPULAR, shelf.mode)
-        assertEquals(listOf("First Popular A", "Second Popular B"), shelf.items.map { it.series.name })
-        assertEquals(listOf("sourceA", "sourceB"), shelf.items.map { it.catalog.sourceId })
+        assertEquals(listOf("First Popular A", "Second Popular B", "Title Fallback Allowed"), shelf.items.map { it.series.name })
+        assertEquals(listOf("sourceA", "sourceB", "sourceA"), shelf.items.map { it.catalog.sourceId })
     }
 
     @Test

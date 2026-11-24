@@ -180,30 +180,38 @@ internal object FeaturedShelfMatcher {
 
         if (byTmdb.isEmpty() && byImdb.isEmpty() && byTitleYear.isEmpty()) return emptyList()
 
-        // Only fall back to title+year matching when the provider catalogue omits TMDB/IMDb IDs altogether.
-        val allowTitleFallback = byTmdb.isEmpty() && byImdb.isEmpty()
         val matched = ArrayList<T>(minOf(limit, popularItems.size))
         val matchedLibraryIds = HashSet<String>()
         val matchedTmdbIds = HashSet<String>()
         val matchedImdbIds = HashSet<String>()
+
+        fun hasConflictingIds(popularTmdb: String?, popularImdb: String?, candidate: IndexedItem<T>): Boolean {
+            val candTmdb = normalizeTmdbId(candidate.tmdbId)
+            val candImdb = normalizeImdbId(candidate.imdbId)
+            if (popularTmdb != null && candTmdb != null && popularTmdb != candTmdb) return true
+            if (popularImdb != null && candImdb != null && popularImdb != candImdb) return true
+            return false
+        }
 
         for (popular in popularItems) {
             if (popular.kind != expectedKind) continue
             val itemTmdb = normalizeTmdbId(popular.tmdbId)
             val itemImdb = normalizeImdbId(popular.imdbId)
             val normTitle = TraktRecommendationsService.normalizeTitle(popular.title)
-            if (itemTmdb == null && itemImdb == null && (!allowTitleFallback || normTitle.isBlank())) continue
+            if (itemTmdb == null && itemImdb == null && normTitle.isBlank()) continue
+
+            val titleMatch = if (normTitle.isNotBlank()) {
+                (popular.year?.let { byTitleYear["${normTitle}_$it"] })
+                    ?: (popular.year?.let { byTitleYear["${normTitle}_${it - 1}"] })
+                    ?: (popular.year?.let { byTitleYear["${normTitle}_${it + 1}"] })
+                    ?: byTitleYear["${normTitle}_"]
+            } else {
+                null
+            }
 
             val match = (itemTmdb?.let { byTmdb[it] })
                 ?: (itemImdb?.let { byImdb[it] })
-                ?: if (allowTitleFallback) {
-                    (popular.year?.let { byTitleYear["${normTitle}_$it"] })
-                        ?: (popular.year?.let { byTitleYear["${normTitle}_${it - 1}"] })
-                        ?: (popular.year?.let { byTitleYear["${normTitle}_${it + 1}"] })
-                        ?: normTitle.takeIf { it.isNotBlank() }?.let { byTitleYear["${it}_"] }
-                } else {
-                    null
-                }
+                ?: titleMatch?.takeUnless { hasConflictingIds(itemTmdb, itemImdb, it) }
                 ?: continue
 
             val matchTmdb = normalizeTmdbId(match.tmdbId)
