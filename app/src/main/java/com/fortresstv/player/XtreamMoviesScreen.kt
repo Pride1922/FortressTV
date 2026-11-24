@@ -724,6 +724,9 @@ internal fun XtreamMoviesScreen(
                                     VodPosterCard(
                                         title = entry.movie.name,
                                         posterUrl = entry.movie.posterUrl,
+                year = entry.movie.year,
+                tmdbId = entry.movie.tmdbId,
+                imdbId = entry.movie.imdbId,
                                         subtitle = formatVodMetadata(entry.movie.year, rating),
                                         imdbRating = rating,
                                         rottenTomatoes = cachedOmdb?.rottenTomatoes,
@@ -771,6 +774,9 @@ internal fun XtreamMoviesScreen(
             VodPosterCard(
                 title = entry.movie.name,
                 posterUrl = entry.movie.posterUrl,
+                year = entry.movie.year,
+                tmdbId = entry.movie.tmdbId,
+                imdbId = entry.movie.imdbId,
                 subtitle = formatVodMetadata(entry.movie.year, rating),
                 imdbRating = rating,
                 rottenTomatoes = cachedOmdb?.rottenTomatoes,

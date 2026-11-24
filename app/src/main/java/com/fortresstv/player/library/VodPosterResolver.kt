@@ -51,7 +51,7 @@ object VodPosterResolver {
         if (searchTitle.isBlank()) return@withContext null
 
         val effectiveYear = year ?: extractedYear
-        val cacheKey = "${if (isSeries) "tv" else "movie"}:${tmdbSettings?.language.orEmpty()}:$searchTitle:${effectiveYear.orEmpty()}"
+        val cacheKey = "${if (isSeries) "tv" else "movie"}:${tmdbSettings?.language.orEmpty()}:$searchTitle:${effectiveYear.orEmpty()}:${tmdbId.orEmpty()}:${imdbId.orEmpty()}"
         memoryCache[cacheKey]?.let { return@withContext it }
 
         // 1. Try TMDB if configured

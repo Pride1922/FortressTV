@@ -390,6 +390,9 @@ internal fun VodPosterCard(
     watchedContentDescription: String? = null,
     progressFraction: Float? = null,
     isSeries: Boolean = false,
+    year: String? = null,
+    tmdbId: String? = null,
+    imdbId: String? = null,
     modifier: Modifier = Modifier,
     loadPosterFallback: (suspend () -> String?)? = null,
     onClick: () -> Unit
@@ -404,6 +407,9 @@ internal fun VodPosterCard(
         loadPosterFallback,
         title,
         isSeries,
+        year,
+        tmdbId,
+        imdbId,
         tmdbSettings.preferCleanPosters,
         tmdbSettings.enabled,
         tmdbSettings.language
@@ -419,7 +425,10 @@ internal fun VodPosterCard(
                 rawTitle = title,
                 isSeries = isSeries,
                 context = context,
-                tmdbSettings = tmdbSettings
+                tmdbSettings = tmdbSettings,
+                year = year,
+                tmdbId = tmdbId,
+                imdbId = imdbId
             )
             if (!resolved.isNullOrBlank()) {
                 dynamicPosterUrl = resolved
